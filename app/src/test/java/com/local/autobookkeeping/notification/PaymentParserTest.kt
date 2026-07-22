@@ -444,6 +444,48 @@ class PaymentParserTest {
     }
 
     @Test
+    fun `candidate string representation redacts an extracted merchant`() {
+        val merchantSecret = "绝密商户甲乙"
+        val candidate = requireNotNull(
+            WechatParser.parse(
+                NotificationText(
+                    "微信支付",
+                    "支付成功 ￥28.00，商户：$merchantSecret",
+                    "com.tencent.mm",
+                    instant,
+                ),
+            ),
+        )
+
+        val rendered = candidate.toString()
+
+        assertEquals(merchantSecret, candidate.merchant)
+        assertFalse(rendered.contains(merchantSecret))
+        assertTrue(rendered.contains("merchant=<redacted>"))
+    }
+
+    @Test
+    fun `transaction string representation redacts merchant and note`() {
+        val merchantSecret = "私密商户"
+        val noteSecret = "不能记录到日志的私人备注"
+        val transaction = Transaction(
+            amountMinor = 2_800L,
+            direction = Direction.EXPENSE,
+            category = "餐饮",
+            occurredAt = instant,
+            merchant = merchantSecret,
+            note = noteSecret,
+        )
+
+        val rendered = transaction.toString()
+
+        assertFalse(rendered.contains(merchantSecret))
+        assertFalse(rendered.contains(noteSecret))
+        assertTrue(rendered.contains("merchant=<redacted>"))
+        assertTrue(rendered.contains("note=<redacted>"))
+    }
+
+    @Test
     fun `hashes use only explicit non sensitive signals`() {
         val first = requireNotNull(
             WechatParser.parse(

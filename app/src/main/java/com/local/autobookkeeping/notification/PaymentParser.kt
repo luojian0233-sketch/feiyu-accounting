@@ -34,6 +34,16 @@ data class PaymentCandidate(
         require(redactedDigest.matches(SHA_256_HEX))
         require(dedupeKey.matches(SHA_256_HEX))
     }
+
+    override fun toString(): String =
+        "PaymentCandidate(" +
+            "amountMinor=$amountMinor, " +
+            "direction=$direction, " +
+            "merchant=<redacted>, " +
+            "occurredAt=$occurredAt, " +
+            "sourcePackage=$sourcePackage, " +
+            "confidence=$confidence, " +
+            "eventKind=$eventKind)"
 }
 
 enum class PaymentEventKind {

@@ -33,4 +33,18 @@ data class Transaction(
         require(currency.matches(Regex("[A-Z]{3}")))
         require(category.isNotBlank())
     }
+
+    override fun toString(): String =
+        "Transaction(" +
+            "id=$id, " +
+            "amountMinor=$amountMinor, " +
+            "currency=$currency, " +
+            "direction=$direction, " +
+            "category=$category, " +
+            "occurredAt=$occurredAt, " +
+            "merchant=<redacted>, " +
+            "note=<redacted>, " +
+            "source=$source, " +
+            "pendingConfirmation=$pendingConfirmation, " +
+            "internalTransfer=$internalTransfer)"
 }
