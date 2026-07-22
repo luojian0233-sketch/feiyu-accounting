@@ -1,5 +1,6 @@
 package com.local.autobookkeeping.data
 
+import android.database.sqlite.SQLiteConstraintException
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -78,21 +79,38 @@ class LedgerRepositoryTest {
         try {
             repo.save(sampleTransaction(dedupeKey = "before-restore"))
 
-            var failed = false
-            try {
+            val constraint = try {
                 repo.replaceAllInTransaction(
                     listOf(
                         sampleTransaction(dedupeKey = "duplicate"),
                         sampleTransaction(dedupeKey = "duplicate", merchant = "Another merchant"),
                     ),
                 )
-            } catch (_: Exception) {
-                failed = true
+                throw AssertionError("Expected duplicate dedupe keys to violate the SQLite unique index")
+            } catch (exception: SQLiteConstraintException) {
+                exception
             }
 
-            assertTrue(failed)
+            assertTrue(constraint.message?.contains("UNIQUE constraint failed") == true)
             assertNotNull(repo.findByDedupeKey("before-restore"))
             assertNull(repo.findByDedupeKey("duplicate"))
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun builtInCategoriesSeedTheCompleteDirectionIndependentUnion() = runTest {
+        val db = Room.inMemoryDatabaseBuilder(
+            ApplicationProvider.getApplicationContext(),
+            AppDatabase::class.java,
+        ).addCallback(AppDatabase.categorySeedCallback()).build()
+
+        try {
+            assertEquals(
+                EXPECTED_BUILT_IN_CATEGORIES.sorted(),
+                db.transactionDao().categoryNames(),
+            )
         } finally {
             db.close()
         }
@@ -113,4 +131,12 @@ class LedgerRepositoryTest {
         account = "Cash",
         dedupeKey = dedupeKey,
     )
+
+    private companion object {
+        val EXPECTED_BUILT_IN_CATEGORIES = listOf(
+            "餐饮", "交通", "日用", "购物", "零食", "饮品", "蔬菜", "水果", "服饰", "娱乐", "美容", "通讯",
+            "医疗", "学习", "游戏", "住房", "礼品", "宠物", "汽车", "数码", "办公", "运动", "捐赠", "彩票",
+            "红包", "礼金", "转账", "其他", "工资", "奖金", "理财", "分红", "退款",
+        )
+    }
 }

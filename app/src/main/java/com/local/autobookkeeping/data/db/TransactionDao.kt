@@ -67,6 +67,9 @@ interface TransactionDao {
     @Query("SELECT * FROM categories WHERE name = :name LIMIT 1")
     suspend fun findCategoryByName(name: String): CategoryEntity?
 
+    @Query("SELECT name FROM categories ORDER BY name ASC")
+    suspend fun categoryNames(): List<String>
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertCategory(row: CategoryEntity): Long
 

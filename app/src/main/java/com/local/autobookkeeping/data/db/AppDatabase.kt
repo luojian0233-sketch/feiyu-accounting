@@ -22,24 +22,25 @@ abstract class AppDatabase : RoomDatabase() {
     companion object {
         private const val DATABASE_NAME = "autobookkeeping.db"
 
-        private val BUILT_IN_CATEGORIES = listOf(
-            "Food",
-            "Transport",
-            "Shopping",
-            "Entertainment",
-            "Housing",
-            "Utilities",
-            "Healthcare",
-            "Education",
-            "Salary",
-            "Other",
+        private val EXPENSE_BUILT_IN_CATEGORIES = listOf(
+            "餐饮", "交通", "日用", "购物", "零食", "饮品", "蔬菜", "水果", "服饰", "娱乐", "美容", "通讯",
+            "医疗", "学习", "游戏", "住房", "礼品", "宠物", "汽车", "数码", "办公", "运动", "捐赠", "彩票",
+            "红包", "礼金", "转账", "其他",
         )
+
+        private val INCOME_BUILT_IN_CATEGORIES = listOf(
+            "红包", "工资", "奖金", "理财", "分红", "礼金", "退款", "转账", "其他",
+        )
+
+        private val BUILT_IN_CATEGORIES = (EXPENSE_BUILT_IN_CATEGORIES + INCOME_BUILT_IN_CATEGORIES).distinct()
 
         fun create(context: Context): AppDatabase = Room.databaseBuilder(
             context.applicationContext,
             AppDatabase::class.java,
             DATABASE_NAME,
         ).addCallback(CategorySeedCallback).build()
+
+        fun categorySeedCallback(): Callback = CategorySeedCallback
     }
 
     private object CategorySeedCallback : Callback() {
