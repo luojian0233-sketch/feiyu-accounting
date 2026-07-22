@@ -20,6 +20,7 @@ class StatisticsEngineTest {
         direction: Direction,
         timestamp: String,
         internal: Boolean = false,
+        pending: Boolean = false,
         category: String = "Transfer",
         currency: String = "CNY",
     ) = Transaction(
@@ -30,6 +31,7 @@ class StatisticsEngineTest {
         category = category,
         occurredAt = Instant.parse(timestamp),
         internalTransfer = internal,
+        pendingConfirmation = pending,
     )
 
     @Test
@@ -43,6 +45,16 @@ class StatisticsEngineTest {
 
         assertEquals(10_000, StatisticsEngine.summarize(rows, range, Direction.INCOME).totalMinor)
         assertEquals(4_000, StatisticsEngine.summarize(rows, range, Direction.EXPENSE).totalMinor)
+    }
+
+    @Test
+    fun `pending placeholder direction is excluded from statistics`() {
+        val rows = listOf(
+            tx(1, 8_800, Direction.EXPENSE, "2026-07-22T04:00:00Z", pending = true),
+            tx(2, 1_200, Direction.EXPENSE, "2026-07-22T04:00:00Z"),
+        )
+
+        assertEquals(1_200, StatisticsEngine.summarize(rows, dayRange(), Direction.EXPENSE).totalMinor)
     }
 
     @Test

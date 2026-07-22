@@ -1,22 +1,20 @@
 package com.local.autobookkeeping.notification
 
-import com.local.autobookkeeping.domain.model.Direction
-
 object WechatParser : PaymentParser {
     override fun parse(notification: NotificationText): PaymentCandidate? {
         if (notification.packageName != WECHAT_PACKAGE) return null
-        val text = notification.title + "\n" + notification.body
-        val direction = when {
-            text.containsAny(EXPENSE_KEYWORDS) -> Direction.EXPENSE
-            text.containsAny(INCOME_KEYWORDS) -> Direction.INCOME
-            else -> return null
-        }
-        val amountMinor = parseCnyMinor(text) ?: return null
-        return buildCandidate(notification, amountMinor, direction, CONFIDENCE_WITHOUT_MERCHANT)
+        return parseSourceCandidate(
+            notification = notification,
+            expenseKeywords = EXPENSE_KEYWORDS,
+            incomeKeywords = INCOME_KEYWORDS,
+            clearConfidence = CLEAR_CONFIDENCE,
+            ambiguousConfidence = AMBIGUOUS_CONFIDENCE,
+        )
     }
 
     private const val WECHAT_PACKAGE = "com.tencent.mm"
-    private const val CONFIDENCE_WITHOUT_MERCHANT = 70
+    private const val CLEAR_CONFIDENCE = 90
+    private const val AMBIGUOUS_CONFIDENCE = 40
     private val EXPENSE_KEYWORDS = setOf("支付成功", "付款成功", "扣款成功")
-    private val INCOME_KEYWORDS = setOf("收款到账", "收款成功")
+    private val INCOME_KEYWORDS = setOf("收款到账", "收款成功", "退款到账", "退款成功", "退款")
 }

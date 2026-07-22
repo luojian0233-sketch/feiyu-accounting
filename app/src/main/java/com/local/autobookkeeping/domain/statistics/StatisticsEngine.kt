@@ -13,7 +13,12 @@ object StatisticsEngine {
         direction: Direction,
     ): StatisticsSummary {
         val categories = rows
-            .filter { !it.internalTransfer && it.direction == direction && range.contains(it.occurredAt) }
+            .filter {
+                !it.internalTransfer &&
+                    !it.pendingConfirmation &&
+                    it.direction == direction &&
+                    range.contains(it.occurredAt)
+            }
             .groupingBy { it.category }
             .fold(0L) { total, row -> Math.addExact(total, row.amountMinor) }
             .map { CategoryTotal(it.key, it.value) }

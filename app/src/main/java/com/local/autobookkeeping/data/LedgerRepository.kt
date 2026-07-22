@@ -1,5 +1,6 @@
 package com.local.autobookkeeping.data
 
+import android.database.sqlite.SQLiteConstraintException
 import androidx.room.withTransaction
 import com.local.autobookkeeping.data.db.AccountEntity
 import com.local.autobookkeeping.data.db.AppDatabase
@@ -22,6 +23,11 @@ interface LedgerRepository {
     suspend fun replaceAllInTransaction(transactions: List<Transaction>)
 }
 
+class DuplicateDedupeKeyException(
+    val dedupeKey: String,
+    cause: Throwable? = null,
+) : RuntimeException("A transaction with this dedupe key already exists", cause)
+
 class RoomLedgerRepository(
     private val database: AppDatabase,
 ) : LedgerRepository {
@@ -30,21 +36,33 @@ class RoomLedgerRepository(
     override fun observeTransactions(): Flow<List<Transaction>> = dao.observeAllRecords()
         .map { records -> records.map(TransactionRecord::toDomain) }
 
-    override suspend fun save(transaction: Transaction): Long = database.withTransaction {
-        val now = Instant.now().toEpochMilli()
-        val existing = if (transaction.id == 0L) null else dao.findById(transaction.id)
-        require(transaction.id == 0L || existing != null) { "Cannot update a transaction that does not exist" }
+    override suspend fun save(transaction: Transaction): Long {
+        return try {
+            database.withTransaction {
+                val now = Instant.now().toEpochMilli()
+                val existing = if (transaction.id == 0L) null else dao.findById(transaction.id)
+                require(transaction.id == 0L || existing != null) {
+                    "Cannot update a transaction that does not exist"
+                }
 
-        val row = transaction.toEntity(
-            categoryId = dao.categoryIdFor(transaction.category),
-            accountId = dao.accountIdFor(transaction.account),
-            createdAtEpochMillis = existing?.createdAtEpochMillis ?: now,
-            updatedAtEpochMillis = now,
-            redactedNotificationDigest = existing?.redactedNotificationDigest,
-        )
-        if (existing == null) dao.insert(row) else {
-            check(dao.update(row) == 1) { "Transaction disappeared during update" }
-            row.id
+                val row = transaction.toEntity(
+                    categoryId = dao.categoryIdFor(transaction.category),
+                    accountId = dao.accountIdFor(transaction.account),
+                    createdAtEpochMillis = existing?.createdAtEpochMillis ?: now,
+                    updatedAtEpochMillis = now,
+                    redactedNotificationDigest = existing?.redactedNotificationDigest,
+                )
+                if (existing == null) dao.insert(row) else {
+                    check(dao.update(row) == 1) { "Transaction disappeared during update" }
+                    row.id
+                }
+            }
+        } catch (failure: SQLiteConstraintException) {
+            val dedupeKey = transaction.dedupeKey
+            if (dedupeKey != null && dao.findByDedupeKey(dedupeKey) != null) {
+                throw DuplicateDedupeKeyException(dedupeKey, failure)
+            }
+            throw failure
         }
     }
 
