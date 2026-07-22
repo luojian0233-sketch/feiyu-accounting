@@ -12,6 +12,9 @@ class BankNotificationParser(
             expenseKeywords = EXPENSE_KEYWORDS,
             incomeKeywords = INCOME_KEYWORDS,
             fallbackContextKeywords = TRANSACTION_CONTEXT_KEYWORDS,
+            expenseEventKind = PaymentEventKind.DEBIT,
+            incomeEventKind = PaymentEventKind.CREDIT,
+            refundKeywords = REFUND_KEYWORDS,
             clearConfidence = CLEAR_CONFIDENCE,
             ambiguousConfidence = AMBIGUOUS_CONFIDENCE,
         )
@@ -30,7 +33,8 @@ class BankNotificationParser(
             "transaction",
             "balance",
         )
-        val EXPENSE_KEYWORDS = setOf("消费", "支出", "扣款", "付款", "转出", "借记", "debit")
-        val INCOME_KEYWORDS = setOf("收入", "入账", "到账", "收款", "转入", "贷记", "退款", "credit")
+        val EXPENSE_KEYWORDS = setOf("消费", "支出", "扣款", "付款", "借记", "debit")
+        val INCOME_KEYWORDS = setOf("收入", "入账", "到账", "收款", "贷记", "credit")
+        val REFUND_KEYWORDS = setOf("退款")
     }
 }

@@ -7,6 +7,7 @@ object AlipayParser : PaymentParser {
             notification = notification,
             expenseKeywords = EXPENSE_KEYWORDS,
             incomeKeywords = INCOME_KEYWORDS,
+            refundKeywords = REFUND_KEYWORDS,
             clearConfidence = CLEAR_CONFIDENCE,
             ambiguousConfidence = AMBIGUOUS_CONFIDENCE,
         )
@@ -16,5 +17,6 @@ object AlipayParser : PaymentParser {
     private const val CLEAR_CONFIDENCE = 90
     private const val AMBIGUOUS_CONFIDENCE = 40
     private val EXPENSE_KEYWORDS = setOf("付款成功", "支付成功", "扣款成功")
-    private val INCOME_KEYWORDS = setOf("收款到账", "收款成功", "收益到账", "退款到账", "退款成功", "退款")
+    private val INCOME_KEYWORDS = setOf("收款到账", "收款成功", "收益到账")
+    private val REFUND_KEYWORDS = setOf("退款到账", "退款成功", "退款")
 }

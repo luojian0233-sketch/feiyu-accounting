@@ -29,6 +29,7 @@ class PaymentParserTest {
 
         assertEquals(2_800L, candidate?.amountMinor)
         assertEquals(Direction.EXPENSE, candidate?.direction)
+        assertEquals(PaymentEventKind.PAYMENT, candidate?.eventKind)
     }
 
     @Test
@@ -76,6 +77,7 @@ class PaymentParserTest {
 
         assertEquals(6_850L, candidate?.amountMinor)
         assertEquals(Direction.EXPENSE, candidate?.direction)
+        assertEquals(PaymentEventKind.DEBIT, candidate?.eventKind)
     }
 
     @Test
@@ -87,6 +89,22 @@ class PaymentParserTest {
 
         assertEquals(10_000L, candidate?.amountMinor)
         assertEquals(Direction.INCOME, candidate?.direction)
+        assertEquals(PaymentEventKind.CREDIT, candidate?.eventKind)
+    }
+
+    @Test
+    fun `bank refund remains a refund event despite generic credit wording`() {
+        val candidate = BankNotificationParser(setOf("com.example.bank")).parse(
+            NotificationText(
+                "账户变动",
+                "退款入账人民币28.00，商户：便利店",
+                "com.example.bank",
+                instant,
+            ),
+        )
+
+        assertEquals(Direction.INCOME, candidate?.direction)
+        assertEquals(PaymentEventKind.REFUND, candidate?.eventKind)
     }
 
     @Test
@@ -106,6 +124,7 @@ class PaymentParserTest {
 
         assertNotNull(candidate)
         assertNull(candidate?.direction)
+        assertEquals(PaymentEventKind.AMBIGUOUS, candidate?.eventKind)
         assertTrue(candidate!!.confidence < CandidateProcessor.DIRECT_SAVE_CONFIDENCE)
     }
 
@@ -153,6 +172,14 @@ class PaymentParserTest {
             "支付成功 +￥12.34",
             "支付成功 ￥-12.34",
             "支付成功 ￥+12.34",
+            "支付成功 −￥12.34",
+            "支付成功 －￥12.34",
+            "支付成功 ﹣￥12.34",
+            "支付成功 负￥12.34",
+            "支付成功 ￥−12.34",
+            "支付成功 ￥－12.34",
+            "支付成功 ￥﹣12.34",
+            "支付成功 ￥负12.34",
             "支付成功 ￥1,23.45",
             "支付成功 ￥12,34,567.89",
         )
@@ -183,6 +210,34 @@ class PaymentParserTest {
         )
 
         assertEquals(2_800L, candidate?.amountMinor)
+    }
+
+    @Test
+    fun `explicit transaction amount wins over account balance`() {
+        val candidate = BankNotificationParser(setOf("com.example.bank")).parse(
+            NotificationText(
+                "账户变动",
+                "账户余额人民币1000.00，交易金额人民币28.00，商户：便利店",
+                "com.example.bank",
+                instant,
+            ),
+        )
+
+        assertEquals(2_800L, candidate?.amountMinor)
+    }
+
+    @Test
+    fun `equally safe amount associations are rejected rather than arbitrarily selected`() {
+        assertNull(
+            WechatParser.parse(
+                NotificationText(
+                    "微信支付",
+                    "支付成功，实付￥28.00，实付￥29.00，商户：便利店",
+                    "com.tencent.mm",
+                    instant,
+                ),
+            ),
+        )
     }
 
     @Test
@@ -233,6 +288,122 @@ class PaymentParserTest {
     }
 
     @Test
+    fun `payment with discount parses the explicitly paid amount`() {
+        val candidate = WechatParser.parse(
+            NotificationText(
+                "微信支付",
+                "支付成功，优惠￥2.00，实付￥28.00，商户：便利店",
+                "com.tencent.mm",
+                instant,
+            ),
+        )
+
+        assertEquals(2_800L, candidate?.amountMinor)
+        assertEquals(Direction.EXPENSE, candidate?.direction)
+    }
+
+    @Test
+    fun `credit card bill language never becomes confirmed income`() {
+        val parser = BankNotificationParser(setOf("com.example.bank"))
+        val english = parser.parse(
+            NotificationText(
+                "Credit card payment",
+                "Credit CNY 100.00",
+                "com.example.bank",
+                instant,
+            ),
+        )
+        val chinese = parser.parse(
+            NotificationText(
+                "贷记卡账单",
+                "还款入账人民币100.00",
+                "com.example.bank",
+                instant,
+            ),
+        )
+
+        listOfNotNull(english, chinese).forEach { candidate ->
+            assertTrue(candidate.confidence < CandidateProcessor.DIRECT_SAVE_CONFIDENCE)
+        }
+    }
+
+    @Test
+    fun `unknown transfers are transfer events and always pending`() = runBlocking {
+        val parser = BankNotificationParser(setOf("com.example.bank"))
+        val outgoing = requireNotNull(
+            parser.parse(
+                NotificationText(
+                    "账户变动",
+                    "转出人民币28.00，收款方：张三",
+                    "com.example.bank",
+                    instant,
+                ),
+            ),
+        )
+        val incoming = requireNotNull(
+            parser.parse(
+                NotificationText(
+                    "账户变动",
+                    "转入人民币28.00，付款给张三",
+                    "com.example.bank",
+                    instant.plusSeconds(1),
+                ),
+            ),
+        )
+
+        assertEquals(PaymentEventKind.TRANSFER, outgoing.eventKind)
+        assertEquals(PaymentEventKind.TRANSFER, incoming.eventKind)
+        listOf(outgoing, incoming).forEach { candidate ->
+            assertTrue(candidate.confidence < CandidateProcessor.DIRECT_SAVE_CONFIDENCE)
+            val repository = RecordingRepository()
+            CandidateProcessor(repository).process(candidate)
+            assertTrue(repository.saved.single().pendingConfirmation)
+            assertFalse(repository.saved.single().internalTransfer)
+        }
+    }
+
+    @Test
+    fun `unlabeled merchant remains private and forces pending`() = runBlocking {
+        val candidate = requireNotNull(
+            WechatParser.parse(
+                NotificationText(
+                    "微信支付",
+                    "支付成功 ￥28.00 星巴克",
+                    "com.tencent.mm",
+                    instant,
+                ),
+            ),
+        )
+        val repository = RecordingRepository()
+
+        CandidateProcessor(repository).process(candidate)
+
+        assertNull(candidate.merchant)
+        assertTrue(repository.saved.single().pendingConfirmation)
+    }
+
+    @Test
+    fun `strict explicit merchant extraction allows direct save`() = runBlocking {
+        val candidate = requireNotNull(
+            WechatParser.parse(
+                NotificationText(
+                    "微信支付",
+                    "付款给星巴克，支付成功 ￥28.00",
+                    "com.tencent.mm",
+                    instant,
+                ),
+            ),
+        )
+        val repository = RecordingRepository()
+
+        CandidateProcessor(repository).process(candidate)
+
+        assertEquals("星巴克", candidate.merchant)
+        assertFalse(repository.saved.single().pendingConfirmation)
+        assertEquals("星巴克", repository.saved.single().merchant)
+    }
+
+    @Test
     fun `bank english keywords are normalized with root locale`() {
         val parser = BankNotificationParser(setOf("com.example.bank"))
         val debit = parser.parse(
@@ -273,7 +444,7 @@ class PaymentParserTest {
     }
 
     @Test
-    fun `hashes use only explicit non sensitive signals and match known vectors`() {
+    fun `hashes use only explicit non sensitive signals`() {
         val first = requireNotNull(
             WechatParser.parse(
                 NotificationText("匿名标题甲", "支付成功 ￥28.00 匿名商户甲", "com.tencent.mm", instant),
@@ -285,14 +456,30 @@ class PaymentParserTest {
             ),
         )
 
-        assertEquals("13152155a760c0b7d97244e26ff1292f484bd92941d1322ef0a7a8a8d7812a43", first.redactedDigest)
-        assertEquals("3a0603d2c652d33ea9caeec72abaa5eca66c9b1440a1c38a264388e7db37f761", first.dedupeKey)
         assertEquals(first.redactedDigest, second.redactedDigest)
         assertEquals(first.dedupeKey, second.dedupeKey)
     }
 
     @Test
-    fun `dedupe key uses normalized redacted title and two minute bucket`() {
+    fun `merchant is never part of either hash`() {
+        val first = requireNotNull(
+            WechatParser.parse(
+                NotificationText("微信支付", "支付成功 ￥28.00，商户：甲乙店", "com.tencent.mm", instant),
+            ),
+        )
+        val second = requireNotNull(
+            WechatParser.parse(
+                NotificationText("微信支付", "支付成功 ￥28.00，商户：丙丁店", "com.tencent.mm", instant),
+            ),
+        )
+
+        assertNotEquals(first.merchant, second.merchant)
+        assertEquals(first.redactedDigest, second.redactedDigest)
+        assertEquals(first.dedupeKey, second.dedupeKey)
+    }
+
+    @Test
+    fun `dedupe key distinguishes different posted seconds within a two minute bucket`() {
         val first = requireNotNull(
             WechatParser.parse(
                 NotificationText(" 微信  支付 1234 ", "支付成功 ￥28.00", "com.tencent.mm", instant),
@@ -319,8 +506,42 @@ class PaymentParserTest {
             ),
         )
 
-        assertEquals(first.dedupeKey, normalizedSameBucket.dedupeKey)
+        assertNotEquals(first.dedupeKey, normalizedSameBucket.dedupeKey)
         assertNotEquals(first.dedupeKey, laterBucket.dedupeKey)
+    }
+
+    @Test
+    fun `identical event timestamp produces the same dedupe key`() {
+        val first = requireNotNull(
+            WechatParser.parse(
+                NotificationText("微信支付", "支付成功 ￥28.00", "com.tencent.mm", instant),
+            ),
+        )
+        val duplicate = requireNotNull(
+            WechatParser.parse(
+                NotificationText("另一标题", "支付成功 ￥28.00", "com.tencent.mm", instant),
+            ),
+        )
+
+        assertEquals(first.dedupeKey, duplicate.dedupeKey)
+    }
+
+    @Test
+    fun `receipt and refund use different event dedupe signals`() {
+        val receipt = requireNotNull(
+            WechatParser.parse(
+                NotificationText("微信支付", "收款到账 ￥28.00", "com.tencent.mm", instant),
+            ),
+        )
+        val refund = requireNotNull(
+            WechatParser.parse(
+                NotificationText("微信支付", "退款到账 ￥28.00", "com.tencent.mm", instant),
+            ),
+        )
+
+        assertEquals(PaymentEventKind.RECEIPT, receipt.eventKind)
+        assertEquals(PaymentEventKind.REFUND, refund.eventKind)
+        assertNotEquals(receipt.dedupeKey, refund.dedupeKey)
     }
 
     @Test
@@ -355,7 +576,14 @@ class PaymentParserTest {
     @Test
     fun `clear source specific pattern reaches direct save path`() = runBlocking {
         val candidate = requireNotNull(
-            WechatParser.parse(NotificationText("微信支付", "支付成功 ￥28.00", "com.tencent.mm", instant)),
+            WechatParser.parse(
+                NotificationText(
+                    "微信支付",
+                    "支付成功 ￥28.00，商户：便利店",
+                    "com.tencent.mm",
+                    instant,
+                ),
+            ),
         )
         val repository = RecordingRepository()
 

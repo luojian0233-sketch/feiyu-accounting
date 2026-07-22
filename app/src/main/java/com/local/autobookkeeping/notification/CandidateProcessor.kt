@@ -15,7 +15,10 @@ class CandidateProcessor(
         // Direction is required by the Task 2 domain model. EXPENSE is only a storage
         // placeholder for direction-unknown rows, which always remain pending and are
         // excluded from statistics until a user confirms their direction.
-        val pendingConfirmation = candidate.direction == null || candidate.confidence < DIRECT_SAVE_CONFIDENCE
+        val pendingConfirmation = candidate.direction == null ||
+            candidate.merchant == null ||
+            candidate.eventKind == PaymentEventKind.TRANSFER ||
+            candidate.confidence < DIRECT_SAVE_CONFIDENCE
         val transaction = Transaction(
             amountMinor = candidate.amountMinor,
             direction = candidate.direction ?: Direction.EXPENSE,

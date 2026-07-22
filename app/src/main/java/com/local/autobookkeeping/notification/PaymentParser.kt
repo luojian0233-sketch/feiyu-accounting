@@ -25,6 +25,7 @@ data class PaymentCandidate(
     val confidence: Int,
     val redactedDigest: String,
     val dedupeKey: String,
+    val eventKind: PaymentEventKind,
 ) {
     init {
         require(amountMinor > 0)
@@ -35,6 +36,16 @@ data class PaymentCandidate(
     }
 }
 
+enum class PaymentEventKind {
+    PAYMENT,
+    RECEIPT,
+    REFUND,
+    DEBIT,
+    CREDIT,
+    TRANSFER,
+    AMBIGUOUS,
+}
+
 fun interface PaymentParser {
     fun parse(notification: NotificationText): PaymentCandidate?
 }
@@ -42,6 +53,7 @@ fun interface PaymentParser {
 private data class KeywordSignal(
     val direction: Direction,
     val range: IntRange,
+    val eventKind: PaymentEventKind,
 )
 
 private data class ParsedAmount(
@@ -62,6 +74,31 @@ private val PROMOTION_KEYWORDS = setOf(
     "coupon",
     "offer",
 )
+private val ACTUAL_AMOUNT_LABELS = setOf(
+    "实付",
+    "交易金额",
+    "支付金额",
+    "消费金额",
+    "收款金额",
+    "入账金额",
+    "amount paid",
+    "transaction amount",
+)
+private val BILL_CONTEXT_KEYWORDS = setOf(
+    "信用卡账单",
+    "贷记卡账单",
+    "信用卡还款",
+    "贷记卡还款",
+    "credit card payment",
+    "credit card bill",
+    "repayment",
+)
+private val TRANSFER_KEYWORDS = setOf("转入", "转出", "转账", "transfer")
+private val SIGN_MARKERS = setOf('+', '-', '−', '－', '﹣', '负')
+private val MERCHANT_PATTERNS = listOf(
+    Regex("(?:商户|收款方)\\s*[：:]\\s*([\\p{L}\\p{N}·&（）()\\-]{2,32})(?=$|[，,。；;\\n])"),
+    Regex("付款给\\s*([\\p{L}\\p{N}·&（）()\\-]{2,32})(?=$|[，,。；;\\n])"),
+)
 
 internal fun parseCnyMinor(text: String): Long? = findCnyAmounts(text).singleOrNull()?.minor
 
@@ -70,15 +107,29 @@ internal fun parseSourceCandidate(
     expenseKeywords: Set<String>,
     incomeKeywords: Set<String>,
     fallbackContextKeywords: Set<String> = emptySet(),
+    expenseEventKind: PaymentEventKind = PaymentEventKind.PAYMENT,
+    incomeEventKind: PaymentEventKind = PaymentEventKind.RECEIPT,
+    refundKeywords: Set<String> = emptySet(),
+    transferKeywords: Set<String> = TRANSFER_KEYWORDS,
     clearConfidence: Int,
     ambiguousConfidence: Int,
 ): PaymentCandidate? {
     val text = notification.title + "\n" + notification.body
     val normalized = text.lowercase(Locale.ROOT)
-    if (normalized.containsAny(PROMOTION_KEYWORDS)) return null
+    if (normalized.containsAny(BILL_CONTEXT_KEYWORDS)) return null
+    val amountLabelRanges = ACTUAL_AMOUNT_LABELS.flatMap { normalized.rangesOf(it) }
+    if (normalized.containsAny(PROMOTION_KEYWORDS) && amountLabelRanges.isEmpty()) return null
 
-    val signals = findSignals(normalized, expenseKeywords, Direction.EXPENSE) +
-        findSignals(normalized, incomeKeywords, Direction.INCOME)
+    val transferSignals = findSignals(
+        normalized,
+        transferKeywords,
+        Direction.EXPENSE,
+        PaymentEventKind.TRANSFER,
+    )
+    val expenseSignals = findSignals(normalized, expenseKeywords, Direction.EXPENSE, expenseEventKind)
+    val incomeSignals = findSignals(normalized, incomeKeywords, Direction.INCOME, incomeEventKind)
+    val refundSignals = findSignals(normalized, refundKeywords, Direction.INCOME, PaymentEventKind.REFUND)
+    val signals = expenseSignals + incomeSignals + refundSignals + transferSignals
     val contextRanges = fallbackContextKeywords.flatMap { keyword ->
         normalized.rangesOf(keyword.lowercase(Locale.ROOT))
     }
@@ -86,18 +137,47 @@ internal fun parseSourceCandidate(
 
     val amounts = findCnyAmounts(text)
     if (amounts.isEmpty()) return null
-    val anchors = signals.map(KeywordSignal::range).ifEmpty { contextRanges }
-    val amount = amounts.minByOrNull { candidate ->
-        anchors.minOf { anchor -> contextualDistance(text, candidate.range, anchor) }
-    } ?: return null
-    val directions = signals.map(KeywordSignal::direction).toSet()
+    val amount = selectSafelyAssociatedAmount(
+        text = text,
+        amounts = amounts,
+        labelRanges = amountLabelRanges,
+        signalRanges = signals.map(KeywordSignal::range),
+        contextRanges = contextRanges,
+    ) ?: return null
+    val directions = signals.filterNot { it.eventKind == PaymentEventKind.TRANSFER }
+        .map(KeywordSignal::direction)
+        .toSet()
+    val transferDirection = when {
+        normalized.contains("转入") -> Direction.INCOME
+        normalized.contains("转出") -> Direction.EXPENSE
+        else -> null
+    }
     val direction = directions.singleOrNull()
-    val confidence = if (direction == null) ambiguousConfidence else clearConfidence
+        ?: transferDirection
+    val signalKinds = signals.filterNot { it.eventKind == PaymentEventKind.TRANSFER }
+        .map(KeywordSignal::eventKind)
+        .toSet()
+    val eventKind = when {
+        transferSignals.isNotEmpty() -> PaymentEventKind.TRANSFER
+        direction == null -> PaymentEventKind.AMBIGUOUS
+        refundSignals.isNotEmpty() && expenseSignals.isEmpty() -> PaymentEventKind.REFUND
+        signalKinds.size != 1 -> PaymentEventKind.AMBIGUOUS
+        else -> signalKinds.single()
+    }
+    val merchant = extractMerchant(text)
+    val confidence = when {
+        eventKind == PaymentEventKind.TRANSFER -> ambiguousConfidence
+        direction == null || eventKind == PaymentEventKind.AMBIGUOUS -> ambiguousConfidence
+        merchant == null -> ambiguousConfidence
+        else -> clearConfidence
+    }
     return buildCandidate(
         notification = notification,
         amountMinor = amount.minor,
         direction = direction,
         confidence = confidence,
+        merchant = merchant,
+        eventKind = eventKind,
     )
 }
 
@@ -106,24 +186,28 @@ internal fun buildCandidate(
     amountMinor: Long,
     direction: Direction?,
     confidence: Int,
+    merchant: String?,
+    eventKind: PaymentEventKind,
 ): PaymentCandidate {
     val bucket = notification.postedAt.epochSecond / DEDUPE_BUCKET_SECONDS
-    val eventSignal = direction?.name ?: AMBIGUOUS_EVENT_SIGNAL
+    val eventSignal = "${notification.packageName}:${eventKind.name}"
     val signalFields = listOf(
         notification.packageName,
         amountMinor.toString(),
         eventSignal,
         bucket.toString(),
+        notification.postedAt.epochSecond.toString(),
     ).joinToString("|")
     return PaymentCandidate(
         amountMinor = amountMinor,
         direction = direction,
-        merchant = null,
+        merchant = merchant,
         occurredAt = notification.postedAt,
         sourcePackage = notification.packageName,
         confidence = confidence,
         redactedDigest = "digest-v1|$signalFields".sha256(),
         dedupeKey = "dedupe-v1|$signalFields".sha256(),
+        eventKind = eventKind,
     )
 }
 
@@ -133,9 +217,62 @@ private fun findSignals(
     normalizedText: String,
     keywords: Set<String>,
     direction: Direction,
+    eventKind: PaymentEventKind,
 ): List<KeywordSignal> = keywords.flatMap { keyword ->
-    normalizedText.rangesOf(keyword.lowercase(Locale.ROOT)).map { range -> KeywordSignal(direction, range) }
+    normalizedText.rangesOf(keyword.lowercase(Locale.ROOT)).map { range ->
+        KeywordSignal(direction, range, eventKind)
+    }
 }
+
+private data class AmountAssociation(val amount: ParsedAmount, val rank: Int, val distance: Int)
+
+private fun selectSafelyAssociatedAmount(
+    text: String,
+    amounts: List<ParsedAmount>,
+    labelRanges: List<IntRange>,
+    signalRanges: List<IntRange>,
+    contextRanges: List<IntRange>,
+): ParsedAmount? {
+    val associations = amounts.mapNotNull { amount ->
+        val precedingLabels = labelRanges.filter { label ->
+            label.last < amount.range.first && sameClause(text, label, amount.range)
+        }
+        when {
+            precedingLabels.isNotEmpty() -> {
+                val distance = precedingLabels.minOf { distanceBetween(it, amount.range) }
+                AmountAssociation(amount, 0, distance)
+            }
+            signalRanges.any { sameClause(text, it, amount.range) } -> {
+                val distance = signalRanges.filter { sameClause(text, it, amount.range) }
+                    .minOf { distanceBetween(it, amount.range) }
+                AmountAssociation(amount, 1, distance)
+            }
+            contextRanges.any { sameClause(text, it, amount.range) } -> {
+                val distance = contextRanges.filter { sameClause(text, it, amount.range) }
+                    .minOf { distanceBetween(it, amount.range) }
+                AmountAssociation(amount, 2, distance)
+            }
+            else -> null
+        }
+    }
+    val bestRank = associations.minOfOrNull(AmountAssociation::rank) ?: return null
+    val ranked = associations.filter { it.rank == bestRank }
+    val bestDistance = ranked.minOf(AmountAssociation::distance)
+    return ranked.filter { it.distance == bestDistance }.singleOrNull()?.amount
+}
+
+private fun sameClause(text: String, first: IntRange, second: IntRange): Boolean {
+    val gap = when {
+        first.last < second.first -> text.substring(first.last + 1, second.first)
+        second.last < first.first -> text.substring(second.last + 1, first.first)
+        else -> ""
+    }
+    return gap.none { it in CLAUSE_BOUNDARIES }
+}
+
+private fun extractMerchant(text: String): String? = MERCHANT_PATTERNS.asSequence()
+    .mapNotNull { pattern -> pattern.find(text)?.groupValues?.get(1)?.trim() }
+    .firstOrNull()
 
 private fun String.rangesOf(keyword: String): List<IntRange> {
     if (keyword.isEmpty()) return emptyList()
@@ -152,7 +289,7 @@ private fun findCnyAmounts(text: String): List<ParsedAmount> = CURRENCY_TOKEN.fi
     if (hasAdjacentSignBefore(text, token.range.first)) return@mapNotNull null
     var amountStart = token.range.last + 1
     while (amountStart < text.length && text[amountStart].isWhitespace()) amountStart++
-    if (amountStart >= text.length || text[amountStart] == '+' || text[amountStart] == '-') return@mapNotNull null
+    if (amountStart >= text.length || text[amountStart] in SIGN_MARKERS) return@mapNotNull null
 
     val match = AMOUNT_AFTER_TOKEN.matchAt(text, amountStart) ?: return@mapNotNull null
     val next = text.getOrNull(match.range.last + 1)
@@ -175,7 +312,7 @@ private fun findCnyAmounts(text: String): List<ParsedAmount> = CURRENCY_TOKEN.fi
 private fun hasAdjacentSignBefore(text: String, tokenStart: Int): Boolean {
     var index = tokenStart - 1
     while (index >= 0 && text[index].isWhitespace()) index--
-    return index >= 0 && (text[index] == '+' || text[index] == '-')
+    return index >= 0 && text[index] in SIGN_MARKERS
 }
 
 private fun distanceBetween(first: IntRange, second: IntRange): Int = when {
@@ -184,21 +321,9 @@ private fun distanceBetween(first: IntRange, second: IntRange): Int = when {
     else -> 0
 }
 
-private fun contextualDistance(text: String, first: IntRange, second: IntRange): Int {
-    val gap = when {
-        first.last < second.first -> text.substring(first.last + 1, second.first)
-        second.last < first.first -> text.substring(second.last + 1, first.first)
-        else -> ""
-    }
-    val clauseBoundaryPenalty = gap.count { it in CLAUSE_BOUNDARIES } * CLAUSE_BOUNDARY_PENALTY
-    return distanceBetween(first, second) + clauseBoundaryPenalty
-}
-
 private fun String.sha256(): String = MessageDigest.getInstance("SHA-256")
     .digest(toByteArray(Charsets.UTF_8))
     .joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
 
-private const val AMBIGUOUS_EVENT_SIGNAL = "AMBIGUOUS"
-private const val CLAUSE_BOUNDARY_PENALTY = 1_000
 private val CLAUSE_BOUNDARIES = setOf('，', ',', '。', '；', ';', '\n')
 private const val DEDUPE_BUCKET_SECONDS = 120L
