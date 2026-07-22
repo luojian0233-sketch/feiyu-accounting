@@ -15,12 +15,12 @@ object StatisticsEngine {
         val categories = rows
             .filter { !it.internalTransfer && it.direction == direction && range.contains(it.occurredAt) }
             .groupingBy { it.category }
-            .fold(0L) { total, row -> total + row.amountMinor }
+            .fold(0L) { total, row -> Math.addExact(total, row.amountMinor) }
             .map { CategoryTotal(it.key, it.value) }
-            .sortedByDescending { it.amountMinor }
+            .sortedWith(compareByDescending<CategoryTotal> { it.amountMinor }.thenBy { it.category })
 
         return StatisticsSummary(
-            totalMinor = categories.sumOf { it.amountMinor },
+            totalMinor = categories.fold(0L) { total, category -> Math.addExact(total, category.amountMinor) },
             categories = categories,
         )
     }

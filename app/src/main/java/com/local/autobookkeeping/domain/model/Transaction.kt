@@ -30,6 +30,7 @@ data class Transaction(
 ) {
     init {
         require(amountMinor > 0)
-        require(currency.length == 3)
+        require(currency.matches(Regex("[A-Z]{3}")))
+        require(category.isNotBlank())
     }
 }

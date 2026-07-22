@@ -5,6 +5,7 @@ import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.domain.model.Transaction
 import com.local.autobookkeeping.domain.statistics.StatisticsEngine
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import java.time.Instant
 import java.time.LocalDate
@@ -19,12 +20,14 @@ class StatisticsEngineTest {
         direction: Direction,
         timestamp: String,
         internal: Boolean = false,
+        category: String = "Transfer",
+        currency: String = "CNY",
     ) = Transaction(
         id = id,
         amountMinor = cents,
-        currency = "CNY",
+        currency = currency,
         direction = direction,
-        category = "Transfer",
+        category = category,
         occurredAt = Instant.parse(timestamp),
         internalTransfer = internal,
     )
@@ -54,4 +57,59 @@ class StatisticsEngineTest {
 
         assertEquals(300, StatisticsEngine.summarize(rows, range, Direction.EXPENSE).totalMinor)
     }
+
+    @Test
+    fun `category accumulation throws instead of wrapping on overflow`() {
+        val rows = listOf(
+            tx(1, Long.MAX_VALUE, Direction.EXPENSE, "2026-07-22T04:00:00Z"),
+            tx(2, 1, Direction.EXPENSE, "2026-07-22T04:00:00Z"),
+        )
+
+        assertThrows(ArithmeticException::class.java) {
+            StatisticsEngine.summarize(rows, dayRange(), Direction.EXPENSE)
+        }
+    }
+
+    @Test
+    fun `grand total throws instead of wrapping on overflow`() {
+        val rows = listOf(
+            tx(1, Long.MAX_VALUE, Direction.EXPENSE, "2026-07-22T04:00:00Z", category = "A"),
+            tx(2, 1, Direction.EXPENSE, "2026-07-22T04:00:00Z", category = "B"),
+        )
+
+        assertThrows(ArithmeticException::class.java) {
+            StatisticsEngine.summarize(rows, dayRange(), Direction.EXPENSE)
+        }
+    }
+
+    @Test
+    fun `equal category totals sort by category name independent of row order`() {
+        val rows = listOf(
+            tx(1, 100, Direction.EXPENSE, "2026-07-22T04:00:00Z", category = "Food"),
+            tx(2, 100, Direction.EXPENSE, "2026-07-22T04:00:00Z", category = "Bills"),
+        )
+
+        val categories = StatisticsEngine.summarize(rows, dayRange(), Direction.EXPENSE).categories
+
+        assertEquals(listOf("Bills", "Food"), categories.map { it.category })
+    }
+
+    @Test
+    fun `transaction rejects blank category`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            tx(1, 100, Direction.EXPENSE, "2026-07-22T04:00:00Z", category = "   ")
+        }
+    }
+
+    @Test
+    fun `transaction rejects currency outside three uppercase letters`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            tx(1, 100, Direction.EXPENSE, "2026-07-22T04:00:00Z", currency = "usd")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            tx(2, 100, Direction.EXPENSE, "2026-07-22T04:00:00Z", currency = "US1")
+        }
+    }
+
+    private fun dayRange() = DateRange(LocalDate.of(2026, 7, 22), LocalDate.of(2026, 7, 22), zone)
 }
