@@ -41,11 +41,15 @@ fun AutoBookkeepingRoot() {
                     NavigationBarItem(
                         selected = current == destination,
                         onClick = { current = destination },
-                        modifier = if (destination == AppDestination.ENTRY) {
-                            Modifier.semantics { contentDescription = "\u7471\u9881\u7AF4\u7ED7?" }
-                        } else {
-                            Modifier
-                        },
+                        modifier = Modifier
+                            .testTag("nav-${destination.name}")
+                            .then(
+                                if (destination == AppDestination.ENTRY) {
+                                    Modifier.semantics { contentDescription = "\u7471\u9881\u7AF4\u7ED7?" }
+                                } else {
+                                    Modifier
+                                },
+                            ),
                         icon = {
                             Text(if (destination == AppDestination.ENTRY) "\u951B?" else destination.label.take(1))
                         },

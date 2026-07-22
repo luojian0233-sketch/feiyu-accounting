@@ -2,11 +2,10 @@ package com.local.autobookkeeping
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.local.autobookkeeping.ui.navigation.AppDestination
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -19,15 +18,15 @@ class NavigationTest {
     @Test
     fun opensEveryBottomDestination() {
         listOf(
-            "\u68E3\u682D\u3009",
-            "\u7490\uFE40\u5D1F",
-            "\u7F01\u71BB\uE178",
-            "\u7471\u5267\u7586",
-        ).forEach { label ->
-            compose.onNodeWithText(label).performClick()
-            compose.onNodeWithTag("screen-$label").assertIsDisplayed()
+            AppDestination.HOME,
+            AppDestination.LEDGER,
+            AppDestination.STATISTICS,
+            AppDestination.SETTINGS,
+        ).forEach { destination ->
+            compose.onNodeWithTag("nav-${destination.name}").performClick()
+            compose.onNodeWithTag("screen-${destination.label}").assertIsDisplayed()
         }
-        compose.onNodeWithContentDescription("\u7471\u9881\u7AF4\u7ED7?").performClick()
-        compose.onNodeWithTag("screen-\u7471\u9881\u7AF4\u7ED7?").assertIsDisplayed()
+        compose.onNodeWithTag("nav-${AppDestination.ENTRY.name}").performClick()
+        compose.onNodeWithTag("screen-${AppDestination.ENTRY.label}").assertIsDisplayed()
     }
 }
