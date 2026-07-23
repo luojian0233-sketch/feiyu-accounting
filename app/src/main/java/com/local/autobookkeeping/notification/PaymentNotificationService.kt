@@ -19,26 +19,31 @@ class PaymentNotificationService : NotificationListenerService() {
         if (sbn == null) return
         val sourcePackage = sbn.packageName ?: return
         val postedAt = sbn.postTime
-        val title = sbn.notification.extras
-            .getCharSequence(Notification.EXTRA_TITLE)
-            ?.toString()
-            .orEmpty()
-        val body = sbn.notification.extras
-            .getCharSequence(Notification.EXTRA_TEXT)
-            ?.toString()
-            .orEmpty()
 
         serviceScope.launch {
             val graph = (application as? AutoBookkeepingApplication)?.applicationGraph ?: return@launch
             try {
+                if (!graph.notificationRouter.isSourceEnabled(sourcePackage)) return@launch
+                val notification = sbn.notification
+                val extras = notification.extras
+                val payload = NotificationPayloadExtractor.extract(
+                    flags = notification.flags,
+                    title = extras.getCharSequence(Notification.EXTRA_TITLE),
+                    bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT),
+                    text = extras.getCharSequence(Notification.EXTRA_TEXT),
+                ) ?: return@launch
                 val input = NotificationText(
-                    title = title,
-                    body = body,
+                    title = payload.title,
+                    body = payload.body,
                     packageName = sourcePackage,
                     postedAt = Instant.ofEpochMilli(postedAt),
                 )
                 graph.notificationRouter.route(input)?.let { candidate ->
-                    graph.candidateProcessor.process(candidate)
+                    PendingConfirmationCoordinator.process(
+                        candidate = candidate,
+                        persist = graph.candidateProcessor::process,
+                        notifyPending = graph.pendingConfirmationNotifier::notifyPending,
+                    )
                 }
             } catch (cancellation: CancellationException) {
                 throw cancellation

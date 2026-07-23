@@ -31,8 +31,7 @@ class SettingsRepository(
         .map { preferences ->
             preferences[ENABLED_BANK_PACKAGES]
                 .orEmpty()
-                .filterTo(linkedSetOf()) { it.isNotBlank() }
-                .toSet()
+                .let(::sanitizeBankPackages)
         }
         .distinctUntilChanged()
 
@@ -41,7 +40,7 @@ class SettingsRepository(
     suspend fun setAlipayEnabled(enabled: Boolean) = setBoolean(ALIPAY_ENABLED, enabled)
 
     suspend fun setEnabledBankPackages(packages: Set<String>) {
-        val sanitized = packages.filterTo(linkedSetOf()) { it.isNotBlank() }.toSet()
+        val sanitized = sanitizeBankPackages(packages)
         dataStore.edit { preferences -> preferences[ENABLED_BANK_PACKAGES] = sanitized }
     }
 
@@ -60,3 +59,13 @@ class SettingsRepository(
         val ENABLED_BANK_PACKAGES = stringSetPreferencesKey("enabled_bank_packages")
     }
 }
+
+internal fun sanitizeBankPackages(packages: Set<String>): Set<String> = packages
+    .asSequence()
+    .map(String::trim)
+    .filter(BANK_PACKAGE_NAME::matches)
+    .toCollection(linkedSetOf())
+    .toSet()
+
+private val BANK_PACKAGE_NAME =
+    Regex("[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)+")

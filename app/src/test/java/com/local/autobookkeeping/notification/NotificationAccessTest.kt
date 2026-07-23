@@ -19,21 +19,66 @@ class NotificationAccessTest {
     fun `matching listener component grants access`() {
         val setting = "com.other/.Listener:com.local.autobookkeeping/.notification.PaymentNotificationService"
 
-        assertTrue(NotificationAccess.isEnabled("com.local.autobookkeeping", setting))
+        assertTrue(
+            NotificationAccess.isEnabled(
+                "com.local.autobookkeeping",
+                "com.local.autobookkeeping.notification.PaymentNotificationService",
+                setting,
+            ),
+        )
+    }
+
+    @Test
+    fun `same package with wrong listener class does not grant access`() {
+        val setting = "com.local.autobookkeeping/.notification.UnrelatedListener"
+
+        assertFalse(
+            NotificationAccess.isEnabled(
+                "com.local.autobookkeeping",
+                "com.local.autobookkeeping.notification.PaymentNotificationService",
+                setting,
+            ),
+        )
+    }
+
+    @Test
+    fun `fully qualified listener class grants access`() {
+        val setting =
+            "com.local.autobookkeeping/com.local.autobookkeeping.notification.PaymentNotificationService"
+
+        assertTrue(
+            NotificationAccess.isEnabled(
+                "com.local.autobookkeeping",
+                "com.local.autobookkeeping.notification.PaymentNotificationService",
+                setting,
+            ),
+        )
     }
 
     @Test
     fun `malformed listener setting does not grant access`() {
         val setting = "not-a-component:com.local.autobookkeeping:/.broken"
 
-        assertFalse(NotificationAccess.isEnabled("com.local.autobookkeeping", setting))
+        assertFalse(
+            NotificationAccess.isEnabled(
+                "com.local.autobookkeeping",
+                "com.local.autobookkeeping.notification.PaymentNotificationService",
+                setting,
+            ),
+        )
     }
 
     @Test
     fun `similarly prefixed package does not grant access`() {
         val setting = "com.local.autobookkeeping.evil/.Listener"
 
-        assertFalse(NotificationAccess.isEnabled("com.local.autobookkeeping", setting))
+        assertFalse(
+            NotificationAccess.isEnabled(
+                "com.local.autobookkeeping",
+                "com.local.autobookkeeping.notification.PaymentNotificationService",
+                setting,
+            ),
+        )
     }
 
     @Test
@@ -94,6 +139,17 @@ class NotificationAccessTest {
 
         assertNull(router.route(notification("com.bank.unlisted")))
         assertEquals(bankPackage, router.route(notification(bankPackage))?.sourcePackage)
+    }
+
+    @Test
+    fun `source gate rejects disabled package before payload extraction`() = runTest {
+        val router = NotificationRouter(
+            settings = FakeSettingsRepository(wechat = false),
+            wechatParser = PaymentParser { error("parser must not run") },
+            alipayParser = PaymentParser { null },
+        )
+
+        assertFalse(router.isSourceEnabled(WECHAT_PACKAGE))
     }
 
     @Test

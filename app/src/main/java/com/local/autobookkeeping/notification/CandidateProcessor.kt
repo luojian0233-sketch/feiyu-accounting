@@ -15,10 +15,7 @@ class CandidateProcessor(
         // Direction is required by the Task 2 domain model. EXPENSE is only a storage
         // placeholder for direction-unknown rows, which always remain pending and are
         // excluded from statistics until a user confirms their direction.
-        val pendingConfirmation = candidate.direction == null ||
-            candidate.merchant == null ||
-            candidate.eventKind == PaymentEventKind.TRANSFER ||
-            candidate.confidence < DIRECT_SAVE_CONFIDENCE
+        val pendingConfirmation = requiresConfirmation(candidate)
         val transaction = Transaction(
             amountMinor = candidate.amountMinor,
             direction = candidate.direction ?: Direction.EXPENSE,
@@ -38,6 +35,12 @@ class CandidateProcessor(
 
     companion object {
         const val DIRECT_SAVE_CONFIDENCE = 80
+        fun requiresConfirmation(candidate: PaymentCandidate): Boolean =
+            candidate.direction == null ||
+                candidate.merchant == null ||
+                candidate.eventKind == PaymentEventKind.TRANSFER ||
+                candidate.confidence < DIRECT_SAVE_CONFIDENCE
+
         private const val PENDING_CATEGORY = "待确认"
         private const val DEFAULT_CATEGORY = "其他"
     }

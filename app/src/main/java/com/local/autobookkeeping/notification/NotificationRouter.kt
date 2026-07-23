@@ -35,14 +35,8 @@ class NotificationRouter(
     private val bankParserFactory: (Set<String>) -> PaymentParser = ::BankNotificationParser,
 ) {
     suspend fun route(notification: NotificationText): PaymentCandidate? {
-        val parser = try {
-            parserFor(notification.packageName)
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (_: Exception) {
-            diagnostics.record(NotificationDiagnostic.SETTINGS_FAILURE)
-            null
-        } ?: return null
+        if (!isSourceEnabled(notification.packageName)) return null
+        val parser = parserForEnabledSource(notification.packageName)
 
         return try {
             parser.parse(notification)
@@ -54,13 +48,23 @@ class NotificationRouter(
         }
     }
 
-    private suspend fun parserFor(packageName: String): PaymentParser? = when (packageName) {
-        WECHAT_PACKAGE -> wechatParser.takeIf { settings.wechatEnabled.first() }
-        ALIPAY_PACKAGE -> alipayParser.takeIf { settings.alipayEnabled.first() }
-        else -> {
-            val enabledBanks = settings.enabledBankPackages.first()
-            bankParserFactory(enabledBanks).takeIf { packageName in enabledBanks }
+    suspend fun isSourceEnabled(packageName: String): Boolean = try {
+        when (packageName) {
+            WECHAT_PACKAGE -> settings.wechatEnabled.first()
+            ALIPAY_PACKAGE -> settings.alipayEnabled.first()
+            else -> packageName in settings.enabledBankPackages.first()
         }
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (_: Exception) {
+        diagnostics.record(NotificationDiagnostic.SETTINGS_FAILURE)
+        false
+    }
+
+    private fun parserForEnabledSource(packageName: String): PaymentParser = when (packageName) {
+        WECHAT_PACKAGE -> wechatParser
+        ALIPAY_PACKAGE -> alipayParser
+        else -> bankParserFactory(setOf(packageName))
     }
 
     companion object {
