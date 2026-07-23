@@ -147,8 +147,96 @@ class StatisticsViewModelTest {
 
     @Test
     fun `UTC picker millis convert to calendar date without device zone drift`() {
-        val millis = LocalDate.parse("2026-07-22").atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
-        assertEquals(LocalDate.parse("2026-07-22"), utcPickerMillisToLocalDate(millis))
+        val date = LocalDate.parse("2026-07-22")
+        val millis = date.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+        assertEquals(date, utcPickerMillisToLocalDate(millis))
+        assertEquals(millis, localDateToUtcPickerMillis(date))
+    }
+
+    @Test
+    fun `restored selection recreates the same chart state`() = runTest(dispatcher) {
+        val range = com.local.autobookkeeping.domain.model.DateRange(
+            LocalDate.parse("2026-02-01"),
+            LocalDate.parse("2026-02-28"),
+            zone,
+        )
+        val viewModel = StatisticsViewModel(
+            repository = FakeLedgerRepository(
+                listOf(tx(21, 4_200, Direction.INCOME, "工资", "2026-02-10")),
+            ),
+            clock = clock,
+            zone = zone,
+            initialSelection = StatisticsSelection(RangeMode.MONTH, range, Direction.INCOME),
+        )
+        advanceUntilIdle()
+
+        assertEquals(RangeMode.MONTH, viewModel.state.value.rangeMode)
+        assertEquals(range, viewModel.state.value.range)
+        assertEquals(Direction.INCOME, viewModel.state.value.direction)
+        assertEquals(4_200L, viewModel.state.value.summary.totalMinor)
+    }
+
+    @Test
+    fun `range movement at calendar limits preserves range and exposes compact error`() = runTest(dispatcher) {
+        val viewModel = StatisticsViewModel(FakeLedgerRepository(), clock, zone)
+
+        viewModel.selectDate(LocalDate.MAX)
+        val day = viewModel.state.value.range
+        viewModel.moveRange(1)
+        assertEquals(day, viewModel.state.value.range)
+        assertEquals("日期范围超出支持范围", viewModel.state.value.errorMessage)
+
+        viewModel.selectDate(LocalDate.of(999_999_999, 12, 31))
+        viewModel.selectMode(RangeMode.MONTH)
+        val month = viewModel.state.value.range
+        viewModel.moveRange(1)
+        assertEquals(month, viewModel.state.value.range)
+
+        viewModel.selectMode(RangeMode.YEAR)
+        val year = viewModel.state.value.range
+        viewModel.moveRange(1)
+        assertEquals(year, viewModel.state.value.range)
+
+        assertTrue(viewModel.selectCustom(LocalDate.MIN, LocalDate.MAX))
+        val custom = viewModel.state.value.range
+        viewModel.moveRange(Int.MAX_VALUE)
+        assertEquals(custom, viewModel.state.value.range)
+        assertEquals("日期范围超出支持范围", viewModel.state.value.errorMessage)
+    }
+
+    @Test
+    fun `aggregate overflow reports error and later repository emission recovers`() = runTest(dispatcher) {
+        val repository = FakeLedgerRepository(
+            listOf(
+                tx(31, Long.MAX_VALUE, Direction.EXPENSE, "餐饮", "2026-07-22"),
+                tx(32, 1, Direction.EXPENSE, "交通", "2026-07-22"),
+            ),
+        )
+        val viewModel = StatisticsViewModel(repository, clock, zone)
+        advanceUntilIdle()
+
+        assertEquals("统计金额过大，请检查记录", viewModel.state.value.errorMessage)
+        assertEquals(0L, viewModel.state.value.summary.totalMinor)
+
+        repository.emit(listOf(tx(33, 2_000, Direction.EXPENSE, "餐饮", "2026-07-22")))
+        advanceUntilIdle()
+        assertEquals(null, viewModel.state.value.errorMessage)
+        assertEquals(2_000L, viewModel.state.value.summary.totalMinor)
+    }
+
+    @Test
+    fun `huge pie descriptors use geometry sweeps without long total overflow`() {
+        val descriptors = pieSliceDescriptors(
+            listOf(
+                com.local.autobookkeeping.domain.model.CategoryTotal("餐饮", Long.MAX_VALUE),
+                com.local.autobookkeeping.domain.model.CategoryTotal("交通", Long.MAX_VALUE),
+            ),
+        )
+
+        assertEquals(listOf(180.0, 180.0), descriptors.map { it.sweepDegrees })
+        assertTrue(descriptors.all { it.percentage.isFinite() })
+        assertEquals(100.0, descriptors.sumOf { it.percentage }, 0.0)
+        assertEquals("餐饮，92233720368547758.07元，50.0%", descriptors.first().accessibilityText)
     }
 
     private fun assertRange(

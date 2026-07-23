@@ -11,6 +11,7 @@ import com.local.autobookkeeping.domain.statistics.StatisticsEngine
 import com.local.autobookkeeping.ui.BOOKKEEPING_ZONE
 import java.time.Clock
 import java.time.DayOfWeek
+import java.time.DateTimeException
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -34,21 +35,37 @@ data class StatisticsUiState(
     val range: DateRange,
     val direction: Direction,
     val summary: StatisticsSummary = StatisticsSummary(0, emptyList()),
+    val errorMessage: String? = null,
+)
+
+data class StatisticsSelection(
+    val rangeMode: RangeMode,
+    val range: DateRange,
+    val direction: Direction,
+    val category: String? = null,
 )
 
 class StatisticsViewModel(
     repository: LedgerRepository,
     private val clock: Clock = Clock.system(BOOKKEEPING_ZONE),
     private val zone: ZoneId = BOOKKEEPING_ZONE,
+    initialSelection: StatisticsSelection? = null,
 ) : ViewModel() {
     private var rows: List<Transaction> = emptyList()
     private val today: LocalDate = LocalDate.now(clock.withZone(zone))
-    private val mutableState = MutableStateFlow(
+    private val initialState = initialSelection?.let { selection ->
         StatisticsUiState(
-            rangeMode = RangeMode.DAY,
-            range = rangeFor(RangeMode.DAY, today, zone),
-            direction = Direction.EXPENSE,
-        ),
+            rangeMode = selection.rangeMode,
+            range = selection.range,
+            direction = selection.direction,
+        )
+    } ?: StatisticsUiState(
+        rangeMode = RangeMode.DAY,
+        range = rangeFor(RangeMode.DAY, today, zone),
+        direction = Direction.EXPENSE,
+    )
+    private val mutableState = MutableStateFlow(
+        initialState,
     )
     val state: StateFlow<StatisticsUiState> = mutableState.asStateFlow()
 
@@ -63,12 +80,14 @@ class StatisticsViewModel(
 
     fun selectMode(mode: RangeMode) {
         val current = mutableState.value
-        val range = if (mode == RangeMode.CUSTOM) {
-            current.range
-        } else {
-            rangeFor(mode, current.range.start, zone)
+        safelyChangeRange {
+            val range = if (mode == RangeMode.CUSTOM) {
+                current.range
+            } else {
+                rangeFor(mode, current.range.start, zone)
+            }
+            current.copy(rangeMode = mode, range = range)
         }
-        update(current.copy(rangeMode = mode, range = range))
     }
 
     fun selectDirection(direction: Direction) {
@@ -78,7 +97,9 @@ class StatisticsViewModel(
     fun selectDate(date: LocalDate) {
         val current = mutableState.value
         val mode = current.rangeMode.takeUnless { it == RangeMode.CUSTOM } ?: RangeMode.DAY
-        update(current.copy(rangeMode = mode, range = rangeFor(mode, date, zone)))
+        safelyChangeRange {
+            current.copy(rangeMode = mode, range = rangeFor(mode, date, zone))
+        }
     }
 
     fun selectCustom(start: LocalDate, endInclusive: LocalDate): Boolean {
@@ -95,34 +116,64 @@ class StatisticsViewModel(
     fun moveRange(offset: Int) {
         if (offset == 0) return
         val current = mutableState.value
-        val shifted = when (current.rangeMode) {
-            RangeMode.DAY -> rangeFor(RangeMode.DAY, current.range.start.plusDays(offset.toLong()), zone)
-            RangeMode.WEEK -> rangeFor(RangeMode.WEEK, current.range.start.plusWeeks(offset.toLong()), zone)
-            RangeMode.MONTH -> rangeFor(RangeMode.MONTH, current.range.start.plusMonths(offset.toLong()), zone)
-            RangeMode.YEAR -> rangeFor(RangeMode.YEAR, current.range.start.plusYears(offset.toLong()), zone)
-            RangeMode.CUSTOM -> {
-                val inclusiveDays = current.range.endInclusive.toEpochDay() - current.range.start.toEpochDay() + 1
-                val delta = Math.multiplyExact(inclusiveDays, offset.toLong())
-                DateRange(
-                    current.range.start.plusDays(delta),
-                    current.range.endInclusive.plusDays(delta),
-                    zone,
-                )
+        safelyChangeRange {
+            val shifted = when (current.rangeMode) {
+                RangeMode.DAY -> rangeFor(RangeMode.DAY, current.range.start.plusDays(offset.toLong()), zone)
+                RangeMode.WEEK -> rangeFor(RangeMode.WEEK, current.range.start.plusWeeks(offset.toLong()), zone)
+                RangeMode.MONTH -> rangeFor(RangeMode.MONTH, current.range.start.plusMonths(offset.toLong()), zone)
+                RangeMode.YEAR -> rangeFor(RangeMode.YEAR, current.range.start.plusYears(offset.toLong()), zone)
+                RangeMode.CUSTOM -> {
+                    val inclusiveDays = Math.addExact(
+                        Math.subtractExact(
+                            current.range.endInclusive.toEpochDay(),
+                            current.range.start.toEpochDay(),
+                        ),
+                        1,
+                    )
+                    val delta = Math.multiplyExact(inclusiveDays, offset.toLong())
+                    DateRange(
+                        current.range.start.plusDays(delta),
+                        current.range.endInclusive.plusDays(delta),
+                        zone,
+                    )
+                }
             }
+            current.copy(range = shifted)
         }
-        update(current.copy(range = shifted))
     }
 
     private fun update(state: StatisticsUiState) {
-        mutableState.value = state.copy(
-            summary = StatisticsEngine.summarize(rows, state.range, state.direction),
-        )
+        mutableState.value = try {
+            state.copy(
+                summary = StatisticsEngine.summarize(rows, state.range, state.direction),
+                errorMessage = null,
+            )
+        } catch (_: ArithmeticException) {
+            state.copy(
+                summary = StatisticsSummary(0, emptyList()),
+                errorMessage = AGGREGATE_ERROR,
+            )
+        }
     }
 
     private fun recompute() {
         update(mutableState.value)
     }
+
+    private inline fun safelyChangeRange(change: () -> StatisticsUiState) {
+        val previous = mutableState.value
+        try {
+            update(change())
+        } catch (_: ArithmeticException) {
+            mutableState.value = previous.copy(errorMessage = DATE_RANGE_ERROR)
+        } catch (_: DateTimeException) {
+            mutableState.value = previous.copy(errorMessage = DATE_RANGE_ERROR)
+        }
+    }
 }
+
+private const val DATE_RANGE_ERROR = "日期范围超出支持范围"
+private const val AGGREGATE_ERROR = "统计金额过大，请检查记录"
 
 internal fun rangeFor(mode: RangeMode, anchor: LocalDate, zone: ZoneId): DateRange = when (mode) {
     RangeMode.DAY -> DateRange(anchor, anchor, zone)

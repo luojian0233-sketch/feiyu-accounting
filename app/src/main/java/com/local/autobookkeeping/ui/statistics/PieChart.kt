@@ -21,6 +21,13 @@ private val chartColors = listOf(
     Color(0xFF4E9B9B),
 )
 
+data class PieSliceDescriptor(
+    val item: CategoryTotal,
+    val sweepDegrees: Double,
+    val percentage: Double,
+    val accessibilityText: String,
+)
+
 fun calculatePieSweeps(amounts: List<Long>): List<Double> {
     if (amounts.isEmpty() || amounts.none { it > 0L }) return amounts.map { 0.0 }
     val maximum = amounts.maxOrNull()!!.toDouble()
@@ -41,28 +48,45 @@ fun calculatePieSweeps(amounts: List<Long>): List<Double> {
     }
 }
 
+fun pieSliceDescriptors(items: List<CategoryTotal>): List<PieSliceDescriptor> {
+    val sweeps = calculatePieSweeps(items.map { it.amountMinor })
+    val lastVisible = sweeps.indexOfLast { it > 0.0 }
+    var accumulatedPercentage = 0.0
+    return items.mapIndexed { index, item ->
+        val percentage = when {
+            sweeps[index] <= 0.0 -> 0.0
+            index == lastVisible -> (100.0 - accumulatedPercentage).coerceAtLeast(0.0)
+            else -> (sweeps[index] / 360.0 * 100.0)
+                .coerceIn(0.0, 100.0 - accumulatedPercentage)
+                .also { accumulatedPercentage += it }
+        }
+        PieSliceDescriptor(
+            item = item,
+            sweepDegrees = sweeps[index],
+            percentage = percentage,
+            accessibilityText = "${item.category}，${formatUnsignedMoney(item.amountMinor)}元，" +
+                String.format(Locale.CHINA, "%.1f%%", percentage),
+        )
+    }
+}
+
 @Composable
 fun PieChart(
     items: List<CategoryTotal>,
     modifier: Modifier = Modifier,
 ) {
-    val sweeps = calculatePieSweeps(items.map { it.amountMinor })
-    val total = items.sumOf { it.amountMinor }
-    val description = items.joinToString("；") { item ->
-        val percentage = item.amountMinor.toDouble() / total.toDouble() * 100.0
-        "${item.category}，${formatUnsignedMoney(item.amountMinor)}元，" +
-            String.format(Locale.CHINA, "%.1f%%", percentage)
-    }
+    val descriptors = pieSliceDescriptors(items)
+    val description = descriptors.joinToString("；", transform = PieSliceDescriptor::accessibilityText)
     Canvas(
         modifier
             .testTag("statistics-pie")
             .semantics { contentDescription = description },
     ) {
         var startAngle = -90f
-        items.forEachIndexed { index, item ->
-            val sweep = sweeps[index].toFloat()
+        descriptors.forEach { descriptor ->
+            val sweep = descriptor.sweepDegrees.toFloat()
             drawArc(
-                color = categoryChartColor(item.category),
+                color = categoryChartColor(descriptor.item.category),
                 startAngle = startAngle,
                 sweepAngle = sweep,
                 useCenter = true,

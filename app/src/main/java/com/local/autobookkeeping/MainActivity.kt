@@ -20,6 +20,7 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -49,6 +50,7 @@ import com.local.autobookkeeping.ui.ledger.statisticsDrilldownFilter
 import com.local.autobookkeeping.ui.navigation.AppDestination
 import com.local.autobookkeeping.ui.navigation.AppNavigator
 import com.local.autobookkeeping.ui.statistics.StatisticsScreen
+import com.local.autobookkeeping.ui.statistics.StatisticsSelection
 import com.local.autobookkeeping.ui.statistics.StatisticsViewModel
 import kotlinx.coroutines.launch
 
@@ -80,13 +82,47 @@ fun AutoBookkeepingRoot(
             notificationPermission = notificationPermission,
         )
     }
-    val ledgerViewModel = viewModel { LedgerViewModel(repository) }
+    val ledgerViewModel = viewModel {
+        val restored = navigator.statisticsSelection
+        val restoredFilter = if (
+            navigator.isStatisticsDrilldownActive &&
+            !restored?.category.isNullOrBlank()
+        ) {
+            val selection = checkNotNull(restored)
+            statisticsDrilldownFilter(
+                category = checkNotNull(selection.category),
+                range = selection.range,
+                direction = selection.direction,
+            )
+        } else {
+            null
+        }
+        LedgerViewModel(repository, initialStatisticsDrilldown = restoredFilter)
+    }
     val entryViewModel = viewModel { EntryViewModel(repository) }
-    val statisticsViewModel = viewModel { StatisticsViewModel(repository) }
+    val statisticsViewModel = viewModel {
+        StatisticsViewModel(
+            repository = repository,
+            initialSelection = navigator.statisticsSelection?.copy(category = null),
+        )
+    }
     val homeState by homeViewModel.state.collectAsStateWithLifecycle()
     val ledgerState by ledgerViewModel.state.collectAsStateWithLifecycle()
     val entryState by entryViewModel.state.collectAsStateWithLifecycle()
     val statisticsState by statisticsViewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(
+        statisticsState.rangeMode,
+        statisticsState.range,
+        statisticsState.direction,
+    ) {
+        navigator.updateStatisticsSelection(
+            StatisticsSelection(
+                rangeMode = statisticsState.rangeMode,
+                range = statisticsState.range,
+                direction = statisticsState.direction,
+            ),
+        )
+    }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, homeViewModel) {
         val observer = LifecycleEventObserver { _, event ->
@@ -96,6 +132,12 @@ fun AutoBookkeepingRoot(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     BackHandler(enabled = navigator.canHandleBack) {
+        if (
+            navigator.isStatisticsDrilldownActive &&
+            current == AppDestination.LEDGER
+        ) {
+            ledgerViewModel.closeStatisticsDrilldown()
+        }
         navigator.handleBack()
     }
 
@@ -117,6 +159,12 @@ fun AutoBookkeepingRoot(
                         NavigationBarItem(
                             selected = current == destination,
                             onClick = {
+                                if (
+                                    navigator.isStatisticsDrilldownActive &&
+                                    destination != AppDestination.ENTRY
+                                ) {
+                                    ledgerViewModel.closeStatisticsDrilldown()
+                                }
                                 if (destination == AppDestination.ENTRY && current != AppDestination.ENTRY) {
                                     entryViewModel.startNew()
                                 }
@@ -194,6 +242,9 @@ fun AutoBookkeepingRoot(
                         onSave = { confirm ->
                             scope.launch {
                                 if (entryViewModel.save(confirmPending = confirm).isSuccess) {
+                                    if (navigator.isStatisticsDrilldownActive) {
+                                        ledgerViewModel.closeStatisticsDrilldown()
+                                    }
                                     navigator.select(AppDestination.LEDGER)
                                 }
                             }
@@ -202,6 +253,9 @@ fun AutoBookkeepingRoot(
                         onConfirmDelete = {
                             scope.launch {
                                 if (entryViewModel.delete().isSuccess) {
+                                    if (navigator.isStatisticsDrilldownActive) {
+                                        ledgerViewModel.closeStatisticsDrilldown()
+                                    }
                                     navigator.select(AppDestination.LEDGER)
                                 }
                             }
@@ -219,14 +273,20 @@ fun AutoBookkeepingRoot(
                             statisticsViewModel.selectCustom(start, end)
                         },
                         onCategoryClick = { category ->
-                            ledgerViewModel.updateFilters {
+                            val selection = StatisticsSelection(
+                                rangeMode = statisticsState.rangeMode,
+                                range = statisticsState.range,
+                                direction = statisticsState.direction,
+                                category = category.category,
+                            )
+                            ledgerViewModel.openStatisticsDrilldown(
                                 statisticsDrilldownFilter(
                                     category = category.category,
                                     range = statisticsState.range,
                                     direction = statisticsState.direction,
-                                )
-                            }
-                            navigator.openLedgerFromStatistics()
+                                ),
+                            )
+                            navigator.openLedgerFromStatistics(selection)
                         },
                     )
                     AppDestination.SETTINGS -> PlaceholderScreen("设置与界面风格将在后续完成")

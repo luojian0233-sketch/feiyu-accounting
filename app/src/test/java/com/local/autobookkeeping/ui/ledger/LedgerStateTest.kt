@@ -118,7 +118,11 @@ class LedgerStateTest {
         )
 
         val result = filterTransactions(
-            rows + tx(11, Direction.EXPENSE, "餐饮", "", "", "", "2026-07-23T04:00:00Z"),
+            rows + listOf(
+                tx(11, Direction.EXPENSE, "餐饮", "", "", "", "2026-07-23T04:00:00Z"),
+                tx(12, Direction.EXPENSE, "餐饮", "", "", "", "2026-07-22T05:00:00Z", pending = true),
+                tx(13, Direction.EXPENSE, "餐饮", "", "", "", "2026-07-22T06:00:00Z", internal = true),
+            ),
             filters,
             zone,
         )
@@ -126,6 +130,48 @@ class LedgerStateTest {
         assertEquals(listOf(1L), result.map { it.id })
         assertEquals(Direction.EXPENSE, filters.direction)
         assertEquals("餐饮", filters.category)
+        assertTrue(filters.statisticsEligibleOnly)
+    }
+
+    @Test
+    fun `ordinary ledger keeps pending and internal rows while drilldown excludes them`() {
+        val specialRows = listOf(
+            tx(12, Direction.EXPENSE, "餐饮", "", "", "", "2026-07-22T05:00:00Z", pending = true),
+            tx(13, Direction.EXPENSE, "餐饮", "", "", "", "2026-07-22T06:00:00Z", internal = true),
+        )
+
+        assertEquals(listOf(13L, 12L), filterTransactions(specialRows, LedgerFilterState(), zone).map { it.id })
+        assertEquals(
+            emptyList<Long>(),
+            filterTransactions(
+                specialRows,
+                statisticsDrilldownFilter(
+                    "餐饮",
+                    DateRange(LocalDate.parse("2026-07-22"), LocalDate.parse("2026-07-22"), zone),
+                    Direction.EXPENSE,
+                ),
+                zone,
+            ).map { it.id },
+        )
+    }
+
+    @Test
+    fun `temporary statistics filters restore ordinary ledger filters on close`() {
+        val original = LedgerFilterState(query = "午餐", account = "支付宝")
+        val session = LedgerFilterSession(original)
+        val drilldown = statisticsDrilldownFilter(
+            "餐饮",
+            DateRange(LocalDate.parse("2026-07-21"), LocalDate.parse("2026-07-22"), zone),
+            Direction.EXPENSE,
+        )
+
+        session.openStatisticsDrilldown(drilldown)
+        assertTrue(session.isStatisticsDrilldownActive)
+        assertEquals(drilldown, session.state.value)
+        session.closeStatisticsDrilldown()
+
+        assertFalse(session.isStatisticsDrilldownActive)
+        assertEquals(original, session.state.value)
     }
 
     private fun tx(

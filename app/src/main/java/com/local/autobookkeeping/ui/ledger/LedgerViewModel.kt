@@ -25,6 +25,7 @@ data class LedgerFilterState(
     val category: String? = null,
     val account: String? = null,
     val pendingOnly: Boolean = false,
+    val statisticsEligibleOnly: Boolean = false,
 )
 
 data class LedgerGroup(
@@ -68,6 +69,8 @@ fun filterTransactions(
         (filters.category.isNullOrBlank() || transaction.category == filters.category) &&
         (filters.account.isNullOrBlank() || transaction.account == filters.account) &&
         (!filters.pendingOnly || transaction.pendingConfirmation) &&
+        (!filters.statisticsEligibleOnly ||
+            (!transaction.pendingConfirmation && !transaction.internalTransfer)) &&
         queryMatches
 }.sortedByDescending { it.occurredAt }
 
@@ -119,13 +122,49 @@ fun statisticsDrilldownFilter(
     dateRange = range,
     direction = direction,
     category = category,
+    statisticsEligibleOnly = true,
 )
+
+class LedgerFilterSession(initial: LedgerFilterState = LedgerFilterState()) {
+    val state = MutableStateFlow(initial)
+    private var filtersBeforeStatistics: LedgerFilterState? = null
+
+    val isStatisticsDrilldownActive: Boolean
+        get() = filtersBeforeStatistics != null
+
+    fun update(transform: (LedgerFilterState) -> LedgerFilterState) {
+        state.value = transform(state.value)
+    }
+
+    fun openStatisticsDrilldown(filters: LedgerFilterState) {
+        if (filtersBeforeStatistics == null) filtersBeforeStatistics = state.value
+        state.value = filters.copy(statisticsEligibleOnly = true)
+    }
+
+    fun closeStatisticsDrilldown() {
+        val restored = filtersBeforeStatistics ?: return
+        filtersBeforeStatistics = null
+        state.value = restored
+    }
+
+    fun clear() {
+        filtersBeforeStatistics = null
+        state.value = LedgerFilterState()
+    }
+}
 
 class LedgerViewModel(
     repository: LedgerRepository,
     private val zone: ZoneId = BOOKKEEPING_ZONE,
+    initialStatisticsDrilldown: LedgerFilterState? = null,
 ) : ViewModel() {
-    private val filters = MutableStateFlow(LedgerFilterState())
+    private val filterSession = LedgerFilterSession().apply {
+        initialStatisticsDrilldown?.let(::openStatisticsDrilldown)
+    }
+    private val filters = filterSession.state
+
+    val isStatisticsDrilldownActive: Boolean
+        get() = filterSession.isStatisticsDrilldownActive
 
     val state: StateFlow<LedgerUiState> = combine(repository.observeTransactions(), filters) { rows, activeFilters ->
         val filtered = filterTransactions(rows, activeFilters, zone)
@@ -139,11 +178,19 @@ class LedgerViewModel(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LedgerUiState())
 
     fun updateFilters(transform: (LedgerFilterState) -> LedgerFilterState) {
-        filters.value = transform(filters.value)
+        filterSession.update(transform)
+    }
+
+    fun openStatisticsDrilldown(filters: LedgerFilterState) {
+        filterSession.openStatisticsDrilldown(filters)
+    }
+
+    fun closeStatisticsDrilldown() {
+        filterSession.closeStatisticsDrilldown()
     }
 
     fun clearFilters() {
-        filters.value = LedgerFilterState()
+        filterSession.clear()
     }
 }
 

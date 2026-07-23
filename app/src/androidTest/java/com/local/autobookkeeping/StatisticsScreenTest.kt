@@ -77,6 +77,20 @@ class StatisticsScreenTest {
         }
     }
 
+    @Test
+    fun compactStatisticsErrorIsVisible() {
+        compose.setContent {
+            StatisticsScreen(
+                state = state(StatisticsSummary(0, emptyList())).copy(
+                    errorMessage = "统计金额过大，请检查记录",
+                ),
+            )
+        }
+
+        compose.onNodeWithTag("statistics-error").assertIsDisplayed()
+        compose.onNodeWithText("统计金额过大，请检查记录").assertIsDisplayed()
+    }
+
     private fun state(summary: StatisticsSummary) = StatisticsUiState(
         rangeMode = RangeMode.MONTH,
         range = DateRange(
