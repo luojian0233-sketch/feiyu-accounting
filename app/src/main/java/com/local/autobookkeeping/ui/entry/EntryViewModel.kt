@@ -1,17 +1,21 @@
 package com.local.autobookkeeping.ui.entry
 
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
 import com.local.autobookkeeping.data.LedgerRepository
 import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.domain.model.Source
 import com.local.autobookkeeping.domain.model.Transaction
 import java.math.BigDecimal
 import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalTime
+import java.time.ZoneId
+import com.local.autobookkeeping.ui.BOOKKEEPING_ZONE
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 
 class EntryValidationException(message: String) : IllegalArgumentException(message)
 
@@ -93,6 +97,7 @@ data class EntryUiState(
 class EntryViewModel(private val repository: LedgerRepository) : ViewModel() {
     private val mutableState = MutableStateFlow(EntryUiState())
     val state: StateFlow<EntryUiState> = mutableState.asStateFlow()
+    private val operationMutex = Mutex()
 
     fun startNew() {
         mutableState.value = EntryUiState()
@@ -119,54 +124,76 @@ class EntryViewModel(private val repository: LedgerRepository) : ViewModel() {
         mutableState.value = mutableState.value.copy(showDeleteConfirmation = false)
     }
 
-    fun save(confirmPending: Boolean = false, onSaved: (Long) -> Unit = {}) {
+    suspend fun save(confirmPending: Boolean = false): Result<Long> {
         val transaction = try {
             mutableState.value.draft.toTransaction(confirmPending)
         } catch (failure: EntryValidationException) {
             mutableState.value = mutableState.value.copy(error = failure.message)
-            return
+            return Result.failure(failure)
         }
+        if (!operationMutex.tryLock()) return Result.failure(EntryOperationInProgressException())
         mutableState.value = mutableState.value.copy(saving = true, error = null)
-        viewModelScope.launch {
-            runCatching { repository.save(transaction) }
-                .onSuccess { id ->
-                    mutableState.value = mutableState.value.copy(saving = false)
-                    onSaved(id)
-                }
-                .onFailure { failure ->
-                    mutableState.value = mutableState.value.copy(
-                        saving = false,
-                        error = failure.message ?: "保存失败，请稍后重试",
-                    )
-                }
+        return try {
+            val id = repository.save(transaction)
+            mutableState.value = mutableState.value.copy(saving = false)
+            Result.success(id)
+        } catch (failure: CancellationException) {
+            mutableState.value = mutableState.value.copy(saving = false)
+            throw failure
+        } catch (failure: Throwable) {
+            mutableState.value = mutableState.value.copy(
+                saving = false,
+                error = failure.message ?: "保存失败，请稍后重试",
+            )
+            Result.failure(failure)
+        } finally {
+            operationMutex.unlock()
         }
     }
 
-    fun confirmDelete(onDeleted: () -> Unit = {}) {
-        val id = mutableState.value.draft.id ?: return
+    suspend fun confirmPending(): Result<Long> = save(confirmPending = true)
+
+    suspend fun delete(): Result<Unit> {
+        val id = mutableState.value.draft.id
+            ?: return Result.failure(IllegalStateException("没有可删除的记录"))
+        if (!operationMutex.tryLock()) return Result.failure(EntryOperationInProgressException())
         mutableState.value = mutableState.value.copy(
             deleting = true,
             showDeleteConfirmation = false,
             error = null,
         )
-        viewModelScope.launch {
-            runCatching { repository.delete(id) }
-                .onSuccess {
-                    mutableState.value = mutableState.value.copy(deleting = false)
-                    onDeleted()
-                }
-                .onFailure { failure ->
-                    mutableState.value = mutableState.value.copy(
-                        deleting = false,
-                        error = failure.message ?: "删除失败，请稍后重试",
-                    )
-                }
+        return try {
+            repository.delete(id)
+            mutableState.value = mutableState.value.copy(deleting = false)
+            Result.success(Unit)
+        } catch (failure: CancellationException) {
+            mutableState.value = mutableState.value.copy(deleting = false)
+            throw failure
+        } catch (failure: Throwable) {
+            mutableState.value = mutableState.value.copy(
+                deleting = false,
+                error = failure.message ?: "删除失败，请稍后重试",
+            )
+            Result.failure(failure)
+        } finally {
+            operationMutex.unlock()
         }
     }
 }
+
+class EntryOperationInProgressException : IllegalStateException("正在处理，请稍候")
 
 private val AMOUNT_PATTERN = Regex("""(?:0|[1-9]\d*)(?:\.\d{1,2})?""")
 private const val AMOUNT_ERROR = "请输入大于 0 且最多两位小数的金额"
 
 internal fun formatAmountInput(amountMinor: Long): String =
     "${amountMinor / 100}.${(amountMinor % 100).toString().padStart(2, '0')}"
+
+fun replaceLocalDate(
+    instant: Instant,
+    selectedDate: LocalDate,
+    zone: ZoneId = BOOKKEEPING_ZONE,
+): Instant {
+    val existingTime: LocalTime = instant.atZone(zone).toLocalTime()
+    return selectedDate.atTime(existingTime).atZone(zone).toInstant()
+}

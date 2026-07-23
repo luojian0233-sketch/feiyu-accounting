@@ -5,6 +5,7 @@ import com.local.autobookkeeping.domain.model.Transaction
 import java.time.Instant
 import java.time.YearMonth
 import java.time.ZoneId
+import java.util.TimeZone
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -59,6 +60,51 @@ class LedgerStateTest {
         assertEquals(listOf("2026-07-22", "2026-07-21", "2026-06-21"), groups.map { it.date.toString() })
         assertEquals(listOf(1L, 2L, 3L), groups.flatMap { it.transactions }.map { it.id })
         assertTrue(groups.flatMap { it.transactions }.all { it.id > 0 })
+    }
+
+    @Test
+    fun `default bookkeeping date remains Shanghai when device zone differs`() {
+        val original = TimeZone.getDefault()
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("America/Los_Angeles"))
+            val groups = groupTransactionsByDate(
+                listOf(tx(7, Direction.EXPENSE, "Food", "", "", "", "2026-07-21T16:30:00Z")),
+            )
+
+            assertEquals("2026-07-22", groups.single().date.toString())
+        } finally {
+            TimeZone.setDefault(original)
+        }
+    }
+
+    @Test
+    fun `home summary includes confirmed daily balance`() {
+        val summary = calculateHomeSummary(
+            listOf(
+                tx(8, Direction.INCOME, "Salary", "", "", "", "2026-07-22T03:00:00Z")
+                    .copy(amountMinor = 2_500),
+                tx(9, Direction.EXPENSE, "Food", "", "", "", "2026-07-22T04:00:00Z"),
+            ),
+            Instant.parse("2026-07-22T08:00:00Z"),
+        )
+
+        assertEquals(1_500L, summary.balanceMinor)
+    }
+
+    @Test
+    fun `search matches formatted amount queries without floating point`() {
+        val amountRows = listOf(
+            tx(10, Direction.EXPENSE, "Food", "", "", "", "2026-07-22T04:00:00Z")
+                .copy(amountMinor = 2_800),
+        )
+
+        listOf("28", "28.00", "¥28.00").forEach { query ->
+            assertEquals(
+                listOf(10L),
+                filterTransactions(amountRows, LedgerFilterState(query = query), zone).map { it.id },
+                query,
+            )
+        }
     }
 
     private fun tx(

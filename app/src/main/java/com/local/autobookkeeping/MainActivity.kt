@@ -3,11 +3,14 @@ package com.local.autobookkeeping
 import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
+import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -18,11 +21,11 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -34,35 +37,48 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.local.autobookkeeping.notification.NotificationAccess
+import com.local.autobookkeeping.data.LedgerRepository
 import com.local.autobookkeeping.ui.entry.EntryScreen
 import com.local.autobookkeeping.ui.entry.EntryViewModel
 import com.local.autobookkeeping.ui.home.HomeScreen
 import com.local.autobookkeeping.ui.home.HomeViewModel
+import com.local.autobookkeeping.ui.home.NotificationPermissionProvider
 import com.local.autobookkeeping.ui.ledger.LedgerScreen
 import com.local.autobookkeeping.ui.ledger.LedgerViewModel
 import com.local.autobookkeeping.ui.navigation.AppDestination
+import com.local.autobookkeeping.ui.navigation.AppNavigator
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val graph = (application as AutoBookkeepingApplication).applicationGraph
-        setContent { AutoBookkeepingRoot(graph) }
+        setContent {
+            AutoBookkeepingRoot(
+                repository = graph.ledgerRepository,
+                notificationPermission = graph.notificationPermissionProvider,
+            )
+        }
     }
 }
 
 @Composable
-fun AutoBookkeepingRoot(graph: ApplicationGraph) {
-    var current by rememberSaveable { mutableStateOf(AppDestination.HOME) }
+fun AutoBookkeepingRoot(
+    repository: LedgerRepository,
+    notificationPermission: NotificationPermissionProvider,
+) {
+    val navigator = remember { AppNavigator() }
+    val current = navigator.current
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val homeViewModel = viewModel {
         HomeViewModel(
-            repository = graph.ledgerRepository,
-            notificationAccess = { NotificationAccess.isEnabled(context) },
+            repository = repository,
+            notificationPermission = notificationPermission,
         )
     }
-    val ledgerViewModel = viewModel { LedgerViewModel(graph.ledgerRepository) }
-    val entryViewModel = viewModel { EntryViewModel(graph.ledgerRepository) }
+    val ledgerViewModel = viewModel { LedgerViewModel(repository) }
+    val entryViewModel = viewModel { EntryViewModel(repository) }
     val homeState by homeViewModel.state.collectAsStateWithLifecycle()
     val ledgerState by ledgerViewModel.state.collectAsStateWithLifecycle()
     val entryState by entryViewModel.state.collectAsStateWithLifecycle()
@@ -73,6 +89,9 @@ fun AutoBookkeepingRoot(graph: ApplicationGraph) {
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    BackHandler(enabled = current == AppDestination.ENTRY) {
+        navigator.handleBack()
     }
 
     MaterialTheme(
@@ -96,7 +115,7 @@ fun AutoBookkeepingRoot(graph: ApplicationGraph) {
                                 if (destination == AppDestination.ENTRY && current != AppDestination.ENTRY) {
                                     entryViewModel.startNew()
                                 }
-                                current = destination
+                                navigator.select(destination)
                             },
                             modifier = Modifier
                                 .testTag("nav-${destination.name}")
@@ -105,19 +124,23 @@ fun AutoBookkeepingRoot(graph: ApplicationGraph) {
                                         Modifier.semantics { contentDescription = "记一笔" }
                                     } else {
                                         Modifier
-                                    },
+                                }
                                 ),
                             icon = {
-                                Text(
-                                    text = when (destination) {
+                                if (destination == AppDestination.ENTRY) {
+                                    FlatAddIcon()
+                                } else {
+                                    Text(
+                                        text = when (destination) {
                                         AppDestination.HOME -> "⌂"
                                         AppDestination.LEDGER -> "≡"
-                                        AppDestination.ENTRY -> "＋"
                                         AppDestination.STATISTICS -> "▥"
                                         AppDestination.SETTINGS -> "⚙"
-                                    },
-                                    fontSize = if (destination == AppDestination.ENTRY) 22.sp else 17.sp,
-                                )
+                                        AppDestination.ENTRY -> ""
+                                        },
+                                        fontSize = 17.sp,
+                                    )
+                                }
                             },
                             label = {
                                 if (destination != AppDestination.ENTRY) {
@@ -142,14 +165,14 @@ fun AutoBookkeepingRoot(graph: ApplicationGraph) {
                             ledgerViewModel.updateFilters {
                                 it.copy(query = "", month = null, pendingOnly = true)
                             }
-                            current = AppDestination.LEDGER
+                            navigator.select(AppDestination.LEDGER)
                         },
                         onOpenNotificationSettings = {
                             context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                         },
                         onEdit = {
                             entryViewModel.edit(it)
-                            current = AppDestination.ENTRY
+                            navigator.openEntry()
                         },
                     )
                     AppDestination.LEDGER -> LedgerScreen(
@@ -157,30 +180,59 @@ fun AutoBookkeepingRoot(graph: ApplicationGraph) {
                         onFiltersChanged = ledgerViewModel::updateFilters,
                         onEdit = {
                             entryViewModel.edit(it)
-                            current = AppDestination.ENTRY
+                            navigator.openEntry()
                         },
                     )
                     AppDestination.ENTRY -> EntryScreen(
                         state = entryState,
                         onUpdate = entryViewModel::update,
                         onSave = { confirm ->
-                            entryViewModel.save(confirmPending = confirm) {
-                                current = AppDestination.LEDGER
+                            scope.launch {
+                                if (entryViewModel.save(confirmPending = confirm).isSuccess) {
+                                    navigator.select(AppDestination.LEDGER)
+                                }
                             }
                         },
                         onRequestDelete = entryViewModel::requestDelete,
                         onConfirmDelete = {
-                            entryViewModel.confirmDelete {
-                                current = AppDestination.LEDGER
+                            scope.launch {
+                                if (entryViewModel.delete().isSuccess) {
+                                    navigator.select(AppDestination.LEDGER)
+                                }
                             }
                         },
                         onDismissDelete = entryViewModel::dismissDelete,
+                        onBack = { navigator.handleBack() },
                     )
                     AppDestination.STATISTICS -> PlaceholderScreen("统计功能将在下一步完成")
                     AppDestination.SETTINGS -> PlaceholderScreen("设置与界面风格将在后续完成")
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun FlatAddIcon() {
+    val color = androidx.compose.material3.LocalContentColor.current
+    Canvas(Modifier.size(24.dp)) {
+        val length = size.minDimension * 0.28f
+        val centerX = size.width / 2
+        val centerY = size.height / 2
+        drawLine(
+            color = color,
+            start = androidx.compose.ui.geometry.Offset(centerX - length, centerY),
+            end = androidx.compose.ui.geometry.Offset(centerX + length, centerY),
+            strokeWidth = 3.dp.toPx(),
+            cap = StrokeCap.Round,
+        )
+        drawLine(
+            color = color,
+            start = androidx.compose.ui.geometry.Offset(centerX, centerY - length),
+            end = androidx.compose.ui.geometry.Offset(centerX, centerY + length),
+            strokeWidth = 3.dp.toPx(),
+            cap = StrokeCap.Round,
+        )
     }
 }
 

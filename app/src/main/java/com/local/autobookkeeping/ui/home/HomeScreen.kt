@@ -61,6 +61,14 @@ fun HomeScreen(
                 ) {
                     SummaryCell("今日支出", formatMoney(state.summary.expenseMinor, Direction.EXPENSE))
                     SummaryCell("今日收入", formatMoney(state.summary.incomeMinor, Direction.INCOME))
+                    SummaryCell(
+                        "今日结余",
+                        if (state.summary.balanceMinor >= 0) {
+                            formatMoney(state.summary.balanceMinor, Direction.INCOME)
+                        } else {
+                            formatMoney(-state.summary.balanceMinor, Direction.EXPENSE)
+                        },
+                    )
                 }
             }
         }

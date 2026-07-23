@@ -3,6 +3,7 @@ package com.local.autobookkeeping.ui.entry
 import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.domain.model.Source
 import java.time.Instant
+import java.time.LocalDate
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -64,6 +65,16 @@ class EntryDraftTest {
 
         assertTrue(draft.toTransaction(confirmPending = false).pendingConfirmation)
         assertFalse(draft.toTransaction(confirmPending = true).pendingConfirmation)
+    }
+
+    @Test
+    fun `selecting date from leap day constructs selected local date safely`() {
+        val changed = replaceLocalDate(
+            Instant.parse("2024-02-29T04:30:00Z"),
+            LocalDate.of(2025, 2, 28),
+        )
+
+        assertEquals(Instant.parse("2025-02-28T04:30:00Z"), changed)
     }
 
     private fun draft(

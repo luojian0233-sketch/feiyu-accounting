@@ -8,6 +8,8 @@ import com.local.autobookkeeping.notification.CandidateProcessor
 import com.local.autobookkeeping.notification.InMemoryNotificationDiagnostics
 import com.local.autobookkeeping.notification.NotificationRouter
 import com.local.autobookkeeping.notification.PendingConfirmationNotifier
+import com.local.autobookkeeping.notification.NotificationAccess
+import com.local.autobookkeeping.ui.home.NotificationPermissionProvider
 
 class AutoBookkeepingApplication : Application() {
     val applicationGraph: ApplicationGraph by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
@@ -27,4 +29,7 @@ class ApplicationGraph(application: Application) {
     }
     val candidateProcessor by lazy { CandidateProcessor(ledgerRepository) }
     val pendingConfirmationNotifier by lazy { PendingConfirmationNotifier(appContext) }
+    val notificationPermissionProvider = NotificationPermissionProvider {
+        NotificationAccess.isEnabled(appContext)
+    }
 }

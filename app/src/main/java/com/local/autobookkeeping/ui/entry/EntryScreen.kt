@@ -33,7 +33,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.local.autobookkeeping.domain.model.Direction
-import java.time.ZoneId
+import com.local.autobookkeeping.ui.BOOKKEEPING_ZONE
+import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 private val defaultCategories = listOf(
@@ -51,11 +52,12 @@ fun EntryScreen(
     onRequestDelete: () -> Unit,
     onConfirmDelete: () -> Unit,
     onDismissDelete: () -> Unit,
+    onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val draft = state.draft
     val context = LocalContext.current
-    val zone = ZoneId.systemDefault()
+    val zone = BOOKKEEPING_ZONE
     val dateTime = draft.occurredAt.atZone(zone)
 
     LazyColumn(
@@ -65,12 +67,22 @@ fun EntryScreen(
         verticalArrangement = Arrangement.spacedBy(11.dp),
     ) {
         item {
-            Text(
-                if (draft.id == null) "记一笔" else "编辑记录",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(top = 16.dp),
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                TextButton(
+                    onClick = onBack,
+                    modifier = Modifier.testTag("entry-back"),
+                ) { Text("‹ 返回") }
+                Text(
+                    if (draft.id == null) "记一笔" else "编辑记录",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(top = 10.dp),
+                )
+                TextButton(onClick = {}, enabled = false) { Text("　　") }
+            }
         }
         if (draft.pendingConfirmation) {
             item {
@@ -151,11 +163,10 @@ fun EntryScreen(
                         DatePickerDialog(
                             context,
                             { _, year, month, day ->
-                                val changed = dateTime
-                                    .withYear(year)
-                                    .withMonth(month + 1)
-                                    .withDayOfMonth(day)
-                                    .toInstant()
+                                val changed = replaceLocalDate(
+                                    draft.occurredAt,
+                                    LocalDate.of(year, month + 1, day),
+                                )
                                 onUpdate { it.copy(occurredAt = changed) }
                             },
                             dateTime.year,

@@ -29,4 +29,13 @@ class NavigationTest {
         compose.onNodeWithTag("nav-${AppDestination.ENTRY.name}").performClick()
         compose.onNodeWithTag("screen-${AppDestination.ENTRY.label}").assertIsDisplayed()
     }
+
+    @Test
+    fun systemBackFromEntryReturnsHomeInsteadOfFinishingActivity() {
+        compose.onNodeWithTag("nav-${AppDestination.ENTRY.name}").performClick()
+
+        compose.activity.onBackPressedDispatcher.onBackPressed()
+
+        compose.onNodeWithTag("screen-${AppDestination.HOME.label}").assertIsDisplayed()
+    }
 }

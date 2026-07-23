@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.local.autobookkeeping.data.LedgerRepository
 import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.domain.model.Transaction
+import com.local.autobookkeeping.ui.BOOKKEEPING_ZONE
 import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
@@ -40,6 +41,7 @@ data class LedgerUiState(
 data class HomeSummary(
     val incomeMinor: Long,
     val expenseMinor: Long,
+    val balanceMinor: Long,
     val pendingCount: Int,
     val recent: List<Transaction>,
 )
@@ -47,7 +49,7 @@ data class HomeSummary(
 fun filterTransactions(
     transactions: List<Transaction>,
     filters: LedgerFilterState,
-    zone: ZoneId,
+    zone: ZoneId = BOOKKEEPING_ZONE,
 ): List<Transaction> = transactions.filter { transaction ->
     val monthMatches = filters.month == null ||
         YearMonth.from(transaction.occurredAt.atZone(zone)) == filters.month
@@ -57,7 +59,7 @@ fun filterTransactions(
         transaction.account,
         transaction.merchant,
         transaction.note,
-    ).any { it.contains(query, ignoreCase = true) }
+    ).any { it.contains(query, ignoreCase = true) } || amountMatches(transaction, query)
     monthMatches &&
         (filters.direction == null || transaction.direction == filters.direction) &&
         (filters.category.isNullOrBlank() || transaction.category == filters.category) &&
@@ -68,7 +70,7 @@ fun filterTransactions(
 
 fun groupTransactionsByDate(
     transactions: List<Transaction>,
-    zone: ZoneId,
+    zone: ZoneId = BOOKKEEPING_ZONE,
 ): List<LedgerGroup> = transactions
     .sortedByDescending { it.occurredAt }
     .groupBy { it.occurredAt.atZone(zone).toLocalDate() }
@@ -78,7 +80,7 @@ fun groupTransactionsByDate(
 fun calculateHomeSummary(
     transactions: List<Transaction>,
     now: Instant,
-    zone: ZoneId,
+    zone: ZoneId = BOOKKEEPING_ZONE,
 ): HomeSummary {
     val today = now.atZone(zone).toLocalDate()
     val confirmedToday = transactions.filter {
@@ -86,13 +88,16 @@ fun calculateHomeSummary(
             !it.pendingConfirmation &&
             !it.internalTransfer
     }
-    return HomeSummary(
-        incomeMinor = confirmedToday
+    val income = confirmedToday
             .filter { it.direction == Direction.INCOME }
-            .fold(0L) { total, row -> Math.addExact(total, row.amountMinor) },
-        expenseMinor = confirmedToday
+            .fold(0L) { total, row -> Math.addExact(total, row.amountMinor) }
+    val expense = confirmedToday
             .filter { it.direction == Direction.EXPENSE }
-            .fold(0L) { total, row -> Math.addExact(total, row.amountMinor) },
+            .fold(0L) { total, row -> Math.addExact(total, row.amountMinor) }
+    return HomeSummary(
+        incomeMinor = income,
+        expenseMinor = expense,
+        balanceMinor = Math.subtractExact(income, expense),
         pendingCount = transactions.count { it.pendingConfirmation },
         recent = transactions
             .asSequence()
@@ -105,7 +110,7 @@ fun calculateHomeSummary(
 
 class LedgerViewModel(
     repository: LedgerRepository,
-    private val zone: ZoneId = ZoneId.systemDefault(),
+    private val zone: ZoneId = BOOKKEEPING_ZONE,
 ) : ViewModel() {
     private val filters = MutableStateFlow(LedgerFilterState())
 
@@ -127,4 +132,12 @@ class LedgerViewModel(
     fun clearFilters() {
         filters.value = LedgerFilterState()
     }
+}
+
+private fun amountMatches(transaction: Transaction, query: String): Boolean {
+    if (query.isEmpty()) return false
+    val yuan = "${transaction.amountMinor / 100}.${(transaction.amountMinor % 100).toString().padStart(2, '0')}"
+    val signed = if (transaction.direction == Direction.INCOME) "+$yuan" else "-$yuan"
+    return listOf(yuan, "¥$yuan", signed, signed.replace("-", "-¥").replace("+", "+¥"))
+        .any { it.contains(query, ignoreCase = true) }
 }
