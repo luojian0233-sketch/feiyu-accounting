@@ -18,7 +18,7 @@ class AutoBookkeepingApplication : Application() {
 class ApplicationGraph(application: Application) {
     private val appContext = application.applicationContext
     private val database by lazy { AppDatabase.create(appContext) }
-    private val ledgerRepository by lazy { RoomLedgerRepository(database) }
+    val ledgerRepository by lazy { RoomLedgerRepository(database) }
 
     val settingsRepository by lazy { SettingsRepository(appContext) }
     val notificationDiagnostics = InMemoryNotificationDiagnostics()
