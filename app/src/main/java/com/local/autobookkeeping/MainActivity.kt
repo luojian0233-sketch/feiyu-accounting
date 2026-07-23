@@ -45,8 +45,11 @@ import com.local.autobookkeeping.ui.home.HomeViewModel
 import com.local.autobookkeeping.ui.home.NotificationPermissionProvider
 import com.local.autobookkeeping.ui.ledger.LedgerScreen
 import com.local.autobookkeeping.ui.ledger.LedgerViewModel
+import com.local.autobookkeeping.ui.ledger.statisticsDrilldownFilter
 import com.local.autobookkeeping.ui.navigation.AppDestination
 import com.local.autobookkeeping.ui.navigation.AppNavigator
+import com.local.autobookkeeping.ui.statistics.StatisticsScreen
+import com.local.autobookkeeping.ui.statistics.StatisticsViewModel
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -79,9 +82,11 @@ fun AutoBookkeepingRoot(
     }
     val ledgerViewModel = viewModel { LedgerViewModel(repository) }
     val entryViewModel = viewModel { EntryViewModel(repository) }
+    val statisticsViewModel = viewModel { StatisticsViewModel(repository) }
     val homeState by homeViewModel.state.collectAsStateWithLifecycle()
     val ledgerState by ledgerViewModel.state.collectAsStateWithLifecycle()
     val entryState by entryViewModel.state.collectAsStateWithLifecycle()
+    val statisticsState by statisticsViewModel.state.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, homeViewModel) {
         val observer = LifecycleEventObserver { _, event ->
@@ -90,7 +95,7 @@ fun AutoBookkeepingRoot(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    BackHandler(enabled = current == AppDestination.ENTRY) {
+    BackHandler(enabled = navigator.canHandleBack) {
         navigator.handleBack()
     }
 
@@ -204,7 +209,26 @@ fun AutoBookkeepingRoot(
                         onDismissDelete = entryViewModel::dismissDelete,
                         onBack = { navigator.handleBack() },
                     )
-                    AppDestination.STATISTICS -> PlaceholderScreen("统计功能将在下一步完成")
+                    AppDestination.STATISTICS -> StatisticsScreen(
+                        state = statisticsState,
+                        onModeSelected = statisticsViewModel::selectMode,
+                        onDirectionSelected = statisticsViewModel::selectDirection,
+                        onMoveRange = statisticsViewModel::moveRange,
+                        onDateSelected = statisticsViewModel::selectDate,
+                        onCustomRangeSelected = { start, end ->
+                            statisticsViewModel.selectCustom(start, end)
+                        },
+                        onCategoryClick = { category ->
+                            ledgerViewModel.updateFilters {
+                                statisticsDrilldownFilter(
+                                    category = category.category,
+                                    range = statisticsState.range,
+                                    direction = statisticsState.direction,
+                                )
+                            }
+                            navigator.openLedgerFromStatistics()
+                        },
+                    )
                     AppDestination.SETTINGS -> PlaceholderScreen("设置与界面风格将在后续完成")
                 }
             }

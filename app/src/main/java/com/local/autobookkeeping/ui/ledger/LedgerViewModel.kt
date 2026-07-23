@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.local.autobookkeeping.data.LedgerRepository
 import com.local.autobookkeeping.domain.model.Direction
+import com.local.autobookkeeping.domain.model.DateRange
 import com.local.autobookkeeping.domain.model.Transaction
 import com.local.autobookkeeping.ui.BOOKKEEPING_ZONE
 import java.time.Instant
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.stateIn
 data class LedgerFilterState(
     val query: String = "",
     val month: YearMonth? = null,
+    val dateRange: DateRange? = null,
     val direction: Direction? = null,
     val category: String? = null,
     val account: String? = null,
@@ -53,6 +55,7 @@ fun filterTransactions(
 ): List<Transaction> = transactions.filter { transaction ->
     val monthMatches = filters.month == null ||
         YearMonth.from(transaction.occurredAt.atZone(zone)) == filters.month
+    val rangeMatches = filters.dateRange?.contains(transaction.occurredAt) != false
     val query = filters.query.trim()
     val queryMatches = query.isEmpty() || listOf(
         transaction.category,
@@ -60,7 +63,7 @@ fun filterTransactions(
         transaction.merchant,
         transaction.note,
     ).any { it.contains(query, ignoreCase = true) } || amountMatches(transaction, query)
-    monthMatches &&
+    monthMatches && rangeMatches &&
         (filters.direction == null || transaction.direction == filters.direction) &&
         (filters.category.isNullOrBlank() || transaction.category == filters.category) &&
         (filters.account.isNullOrBlank() || transaction.account == filters.account) &&
@@ -107,6 +110,16 @@ fun calculateHomeSummary(
             .toList(),
     )
 }
+
+fun statisticsDrilldownFilter(
+    category: String,
+    range: DateRange,
+    direction: Direction,
+): LedgerFilterState = LedgerFilterState(
+    dateRange = range,
+    direction = direction,
+    category = category,
+)
 
 class LedgerViewModel(
     repository: LedgerRepository,

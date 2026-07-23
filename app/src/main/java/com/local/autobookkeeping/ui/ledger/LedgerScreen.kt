@@ -106,6 +106,16 @@ private fun FilterRow(
                 active = state.filters.month,
             ) { value -> onFiltersChanged { it.copy(month = value) } }
         }
+        state.filters.dateRange?.let { range ->
+            item {
+                ToggleFilterChip(
+                    "${range.start} - ${range.endInclusive}",
+                    selected = true,
+                ) {
+                    onFiltersChanged { it.copy(dateRange = null) }
+                }
+            }
+        }
         item {
             ToggleFilterChip(
                 when (state.filters.direction) {

@@ -44,4 +44,17 @@ class AppNavigatorTest {
         assertEquals(AppDestination.HOME, malformed.current)
         assertFalse(malformed.handleBack())
     }
+
+    @Test
+    fun `statistics drilldown back returns to statistics and survives recreation`() {
+        val navigator = AppNavigator(AppDestination.STATISTICS)
+        navigator.openLedgerFromStatistics()
+
+        val restored = AppNavigator.restore(navigator.saveableState())
+
+        assertEquals(AppDestination.LEDGER, restored.current)
+        assertTrue(restored.canHandleBack)
+        assertTrue(restored.handleBack())
+        assertEquals(AppDestination.STATISTICS, restored.current)
+    }
 }

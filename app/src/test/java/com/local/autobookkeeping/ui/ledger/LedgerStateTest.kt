@@ -1,8 +1,10 @@
 package com.local.autobookkeeping.ui.ledger
 
 import com.local.autobookkeeping.domain.model.Direction
+import com.local.autobookkeeping.domain.model.DateRange
 import com.local.autobookkeeping.domain.model.Transaction
 import java.time.Instant
+import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
 import java.util.TimeZone
@@ -105,6 +107,25 @@ class LedgerStateTest {
                 query,
             )
         }
+    }
+
+    @Test
+    fun `statistics drilldown filters exact category inclusive range and direction`() {
+        val filters = statisticsDrilldownFilter(
+            category = "餐饮",
+            range = DateRange(LocalDate.parse("2026-07-21"), LocalDate.parse("2026-07-22"), zone),
+            direction = Direction.EXPENSE,
+        )
+
+        val result = filterTransactions(
+            rows + tx(11, Direction.EXPENSE, "餐饮", "", "", "", "2026-07-23T04:00:00Z"),
+            filters,
+            zone,
+        )
+
+        assertEquals(listOf(1L), result.map { it.id })
+        assertEquals(Direction.EXPENSE, filters.direction)
+        assertEquals("餐饮", filters.category)
     }
 
     private fun tx(

@@ -11,12 +11,18 @@ class AppNavigator(initial: AppDestination = AppDestination.HOME) {
         private set
 
     private var entryReturnDestination: AppDestination = initial
+    private var statisticsDrilldownActive: Boolean = false
+
+    val canHandleBack: Boolean
+        get() = current == AppDestination.ENTRY ||
+            (current == AppDestination.LEDGER && statisticsDrilldownActive)
 
     fun select(destination: AppDestination) {
         if (destination == AppDestination.ENTRY) {
             openEntry()
         } else {
             current = destination
+            statisticsDrilldownActive = false
         }
     }
 
@@ -25,13 +31,31 @@ class AppNavigator(initial: AppDestination = AppDestination.HOME) {
         current = AppDestination.ENTRY
     }
 
-    fun handleBack(): Boolean {
-        if (current != AppDestination.ENTRY) return false
-        current = entryReturnDestination
-        return true
+    fun openLedgerFromStatistics() {
+        current = AppDestination.LEDGER
+        statisticsDrilldownActive = true
     }
 
-    fun saveableState(): List<String> = listOf(current.name, entryReturnDestination.name)
+    fun handleBack(): Boolean {
+        return when {
+            current == AppDestination.ENTRY -> {
+                current = entryReturnDestination
+                true
+            }
+            current == AppDestination.LEDGER && statisticsDrilldownActive -> {
+                statisticsDrilldownActive = false
+                current = AppDestination.STATISTICS
+                true
+            }
+            else -> false
+        }
+    }
+
+    fun saveableState(): List<String> = listOf(
+        current.name,
+        entryReturnDestination.name,
+        statisticsDrilldownActive.toString(),
+    )
 
     companion object {
         val Saver: ComposeSaver<AppNavigator, Any> = listSaver(
@@ -44,6 +68,7 @@ class AppNavigator(initial: AppDestination = AppDestination.HOME) {
             val restoredReturn = saved.getOrNull(1).toDestinationOrNull() ?: AppDestination.HOME
             return AppNavigator(restoredCurrent).also {
                 it.entryReturnDestination = restoredReturn
+                it.statisticsDrilldownActive = saved.getOrNull(2).toBoolean()
             }
         }
 
