@@ -195,3 +195,13 @@ fun utcPickerMillisToLocalDate(utcMillis: Long): LocalDate =
 
 fun localDateToUtcPickerMillis(date: LocalDate): Long =
     date.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+
+fun utcPickerRangeOrNull(
+    startUtcMillis: Long?,
+    endUtcMillis: Long?,
+): Pair<LocalDate, LocalDate>? {
+    if (startUtcMillis == null || endUtcMillis == null) return null
+    val start = utcPickerMillisToLocalDate(startUtcMillis)
+    val end = utcPickerMillisToLocalDate(endUtcMillis)
+    return if (end.isBefore(start)) null else start to end
+}

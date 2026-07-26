@@ -47,6 +47,7 @@ import com.local.autobookkeeping.ui.home.NotificationPermissionProvider
 import com.local.autobookkeeping.ui.ledger.LedgerScreen
 import com.local.autobookkeeping.ui.ledger.LedgerViewModel
 import com.local.autobookkeeping.ui.ledger.statisticsDrilldownFilter
+import com.local.autobookkeeping.ui.ledger.toFilterState
 import com.local.autobookkeeping.ui.navigation.AppDestination
 import com.local.autobookkeeping.ui.navigation.AppNavigator
 import com.local.autobookkeeping.ui.statistics.StatisticsScreen
@@ -84,6 +85,7 @@ fun AutoBookkeepingRoot(
     }
     val ledgerViewModel = viewModel {
         val restored = navigator.statisticsSelection
+        val restoredOrdinaryFilters = navigator.ledgerFilterSnapshot?.toFilterState()
         val restoredFilter = if (
             navigator.isStatisticsDrilldownActive &&
             !restored?.category.isNullOrBlank()
@@ -97,7 +99,12 @@ fun AutoBookkeepingRoot(
         } else {
             null
         }
-        LedgerViewModel(repository, initialStatisticsDrilldown = restoredFilter)
+        LedgerViewModel(
+            repository = repository,
+            initialStatisticsDrilldown = restoredFilter,
+            initialOrdinaryFilters = restoredOrdinaryFilters
+                ?: com.local.autobookkeeping.ui.ledger.LedgerFilterState(),
+        )
     }
     val entryViewModel = viewModel { EntryViewModel(repository) }
     val statisticsViewModel = viewModel {
@@ -122,6 +129,14 @@ fun AutoBookkeepingRoot(
                 direction = statisticsState.direction,
             ),
         )
+    }
+    LaunchedEffect(
+        ledgerState.filters,
+        navigator.isStatisticsDrilldownActive,
+    ) {
+        if (!navigator.isStatisticsDrilldownActive) {
+            navigator.updateLedgerFilterSnapshot(ledgerViewModel.ordinaryFilterSnapshot())
+        }
     }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, homeViewModel) {
@@ -286,7 +301,10 @@ fun AutoBookkeepingRoot(
                                     direction = statisticsState.direction,
                                 ),
                             )
-                            navigator.openLedgerFromStatistics(selection)
+                            navigator.openLedgerFromStatistics(
+                                selection,
+                                ledgerViewModel.ordinaryFilterSnapshot(),
+                            )
                         },
                     )
                     AppDestination.SETTINGS -> PlaceholderScreen("设置与界面风格将在后续完成")

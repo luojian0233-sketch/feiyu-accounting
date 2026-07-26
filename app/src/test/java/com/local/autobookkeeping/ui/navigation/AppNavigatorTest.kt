@@ -4,7 +4,9 @@ import com.local.autobookkeeping.domain.model.DateRange
 import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.ui.statistics.RangeMode
 import com.local.autobookkeeping.ui.statistics.StatisticsSelection
+import com.local.autobookkeeping.ui.ledger.LedgerFilterSnapshot
 import java.time.LocalDate
+import java.time.YearMonth
 import java.time.ZoneId
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -96,6 +98,101 @@ class AppNavigatorTest {
         assertFalse(navigator.isStatisticsDrilldownActive)
         assertEquals(null, navigator.statisticsSelection?.category)
         assertFalse(navigator.canHandleBack)
+    }
+
+    @Test
+    fun `malformed and inverted saved dates safely downgrade active drilldown`() {
+        val navigator = AppNavigator(AppDestination.STATISTICS)
+        navigator.openLedgerFromStatistics(statisticsSelection(category = "餐饮"))
+        val nonDate = navigator.saveableState().toMutableList().also { it[4] = "not-a-date" }
+        val inverted = navigator.saveableState().toMutableList().also {
+            it[4] = "2026-08-02"
+            it[5] = "2026-08-01"
+        }
+
+        listOf(nonDate, inverted).forEach { saved ->
+            val restored = AppNavigator.restore(saved)
+            assertEquals(AppDestination.STATISTICS, restored.current)
+            assertFalse(restored.isStatisticsDrilldownActive)
+            assertEquals(null, restored.statisticsSelection)
+        }
+    }
+
+    @Test
+    fun `entry opened from active drilldown restores and returns to filtered ledger`() {
+        val navigator = AppNavigator(AppDestination.STATISTICS)
+        val selection = statisticsSelection(category = "餐饮")
+        navigator.openLedgerFromStatistics(selection)
+        navigator.openEntry()
+
+        val restored = AppNavigator.restore(navigator.saveableState())
+
+        assertEquals(AppDestination.ENTRY, restored.current)
+        assertTrue(restored.isStatisticsDrilldownActive)
+        assertEquals(selection, restored.statisticsSelection)
+        assertTrue(restored.handleBack())
+        assertEquals(AppDestination.LEDGER, restored.current)
+        assertTrue(restored.isStatisticsDrilldownActive)
+        assertTrue(restored.handleBack())
+        assertEquals(AppDestination.STATISTICS, restored.current)
+    }
+
+    @Test
+    fun `pre-drilldown ledger filters survive process recreation exactly`() {
+        val navigator = AppNavigator(AppDestination.STATISTICS)
+        val ordinary = LedgerFilterSnapshot(
+            query = "午餐",
+            month = YearMonth.of(2026, 7),
+            direction = Direction.EXPENSE,
+            category = "餐饮",
+            account = "支付宝",
+            dateRange = DateRange(
+                LocalDate.parse("2026-07-10"),
+                LocalDate.parse("2026-07-20"),
+                ZoneId.of("Asia/Shanghai"),
+            ),
+            pendingOnly = true,
+        )
+        navigator.openLedgerFromStatistics(statisticsSelection(category = "餐饮"), ordinary)
+
+        val restored = AppNavigator.restore(navigator.saveableState())
+
+        assertEquals(ordinary, restored.ledgerFilterSnapshot)
+        assertFalse(restored.ledgerFilterSnapshot!!.statisticsEligibleOnly)
+    }
+
+    @Test
+    fun `malformed ordinary filter pieces are sanitized independently`() {
+        val navigator = AppNavigator(AppDestination.STATISTICS)
+        navigator.openLedgerFromStatistics(
+            statisticsSelection(category = "餐饮"),
+            LedgerFilterSnapshot(
+                query = "午餐",
+                month = YearMonth.of(2026, 7),
+                direction = Direction.EXPENSE,
+                category = "餐饮",
+                account = "支付宝",
+                dateRange = DateRange(
+                    LocalDate.parse("2026-07-10"),
+                    LocalDate.parse("2026-07-20"),
+                    ZoneId.of("Asia/Shanghai"),
+                ),
+            ),
+        )
+        val malformed = navigator.saveableState().toMutableList().also {
+            it[9] = "bad-month"
+            it[10] = "bad-direction"
+            it[13] = "bad-start"
+            it[14] = "bad-end"
+        }
+
+        val restored = AppNavigator.restore(malformed)
+
+        assertEquals("午餐", restored.ledgerFilterSnapshot?.query)
+        assertEquals(null, restored.ledgerFilterSnapshot?.month)
+        assertEquals(null, restored.ledgerFilterSnapshot?.direction)
+        assertEquals(null, restored.ledgerFilterSnapshot?.dateRange)
+        assertEquals("支付宝", restored.ledgerFilterSnapshot?.account)
     }
 
     private fun statisticsSelection(category: String?) = StatisticsSelection(

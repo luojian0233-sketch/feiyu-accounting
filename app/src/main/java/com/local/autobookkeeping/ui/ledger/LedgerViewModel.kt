@@ -28,6 +28,39 @@ data class LedgerFilterState(
     val statisticsEligibleOnly: Boolean = false,
 )
 
+data class LedgerFilterSnapshot(
+    val query: String = "",
+    val month: YearMonth? = null,
+    val direction: Direction? = null,
+    val category: String? = null,
+    val account: String? = null,
+    val dateRange: DateRange? = null,
+    val pendingOnly: Boolean = false,
+    val statisticsEligibleOnly: Boolean = false,
+)
+
+fun LedgerFilterState.toSafeSnapshot(): LedgerFilterSnapshot = LedgerFilterSnapshot(
+    query = query,
+    month = month,
+    direction = direction,
+    category = category,
+    account = account,
+    dateRange = dateRange,
+    pendingOnly = pendingOnly,
+    statisticsEligibleOnly = false,
+)
+
+fun LedgerFilterSnapshot.toFilterState(): LedgerFilterState = LedgerFilterState(
+    query = query,
+    month = month,
+    dateRange = dateRange,
+    direction = direction,
+    category = category,
+    account = account,
+    pendingOnly = pendingOnly,
+    statisticsEligibleOnly = false,
+)
+
 data class LedgerGroup(
     val date: LocalDate,
     val transactions: List<Transaction>,
@@ -136,8 +169,13 @@ class LedgerFilterSession(initial: LedgerFilterState = LedgerFilterState()) {
         state.value = transform(state.value)
     }
 
-    fun openStatisticsDrilldown(filters: LedgerFilterState) {
-        if (filtersBeforeStatistics == null) filtersBeforeStatistics = state.value
+    fun openStatisticsDrilldown(
+        filters: LedgerFilterState,
+        restoreTarget: LedgerFilterState? = null,
+    ) {
+        if (filtersBeforeStatistics == null) {
+            filtersBeforeStatistics = (restoreTarget ?: state.value).copy(statisticsEligibleOnly = false)
+        }
         state.value = filters.copy(statisticsEligibleOnly = true)
     }
 
@@ -151,15 +189,23 @@ class LedgerFilterSession(initial: LedgerFilterState = LedgerFilterState()) {
         filtersBeforeStatistics = null
         state.value = LedgerFilterState()
     }
+
+    fun ordinaryFilters(): LedgerFilterState =
+        filtersBeforeStatistics ?: state.value.copy(statisticsEligibleOnly = false)
 }
 
 class LedgerViewModel(
     repository: LedgerRepository,
     private val zone: ZoneId = BOOKKEEPING_ZONE,
     initialStatisticsDrilldown: LedgerFilterState? = null,
+    initialOrdinaryFilters: LedgerFilterState = LedgerFilterState(),
 ) : ViewModel() {
-    private val filterSession = LedgerFilterSession().apply {
-        initialStatisticsDrilldown?.let(::openStatisticsDrilldown)
+    private val filterSession = LedgerFilterSession(
+        initialOrdinaryFilters.copy(statisticsEligibleOnly = false),
+    ).apply {
+        initialStatisticsDrilldown?.let {
+            openStatisticsDrilldown(it, restoreTarget = initialOrdinaryFilters)
+        }
     }
     private val filters = filterSession.state
 
@@ -188,6 +234,9 @@ class LedgerViewModel(
     fun closeStatisticsDrilldown() {
         filterSession.closeStatisticsDrilldown()
     }
+
+    fun ordinaryFilterSnapshot(): LedgerFilterSnapshot =
+        filterSession.ordinaryFilters().toSafeSnapshot()
 
     fun clearFilters() {
         filterSession.clear()

@@ -154,6 +154,19 @@ class StatisticsViewModelTest {
     }
 
     @Test
+    fun `picker range helper accepts inclusive UTC dates and rejects incomplete or inverted input`() {
+        val start = localDateToUtcPickerMillis(LocalDate.parse("2026-07-01"))
+        val end = localDateToUtcPickerMillis(LocalDate.parse("2026-07-22"))
+
+        assertEquals(
+            LocalDate.parse("2026-07-01") to LocalDate.parse("2026-07-22"),
+            utcPickerRangeOrNull(start, end),
+        )
+        assertEquals(null, utcPickerRangeOrNull(null, end))
+        assertEquals(null, utcPickerRangeOrNull(end, start))
+    }
+
+    @Test
     fun `restored selection recreates the same chart state`() = runTest(dispatcher) {
         val range = com.local.autobookkeeping.domain.model.DateRange(
             LocalDate.parse("2026-02-01"),

@@ -174,6 +174,33 @@ class LedgerStateTest {
         assertEquals(original, session.state.value)
     }
 
+    @Test
+    fun `restored session retains exact ordinary filters behind drilldown`() {
+        val original = LedgerFilterState(
+            query = "午餐",
+            month = YearMonth.of(2026, 7),
+            dateRange = DateRange(LocalDate.parse("2026-07-10"), LocalDate.parse("2026-07-20"), zone),
+            direction = Direction.EXPENSE,
+            category = "餐饮",
+            account = "支付宝",
+            pendingOnly = true,
+        )
+        val session = LedgerFilterSession(original)
+        session.openStatisticsDrilldown(
+            statisticsDrilldownFilter(
+                "餐饮",
+                DateRange(LocalDate.parse("2026-07-01"), LocalDate.parse("2026-07-31"), zone),
+                Direction.EXPENSE,
+            ),
+            restoreTarget = original,
+        )
+
+        session.closeStatisticsDrilldown()
+
+        assertEquals(original, session.state.value)
+        assertFalse(session.state.value.statisticsEligibleOnly)
+    }
+
     private fun tx(
         id: Long,
         direction: Direction,

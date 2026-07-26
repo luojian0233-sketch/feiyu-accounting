@@ -317,13 +317,11 @@ private fun CustomRangeDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    val startMillis = picker.selectedStartDateMillis
-                    val endMillis = picker.selectedEndDateMillis
-                    if (startMillis != null && endMillis != null) {
-                        onConfirm(
-                            utcPickerMillisToLocalDate(startMillis),
-                            utcPickerMillisToLocalDate(endMillis),
-                        )
+                    utcPickerRangeOrNull(
+                        picker.selectedStartDateMillis,
+                        picker.selectedEndDateMillis,
+                    )?.let { (selectedStart, selectedEnd) ->
+                        onConfirm(selectedStart, selectedEnd)
                     }
                 },
             ) { Text("确定") }
