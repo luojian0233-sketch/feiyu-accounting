@@ -2,6 +2,8 @@ package com.local.autobookkeeping.backup
 
 import java.io.InputStream
 import java.io.OutputStream
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -92,14 +94,148 @@ class BackupJsonCodec(
     }
 
     fun decode(input: InputStream): BackupDocument {
-        val text = input.readBytes().toString(Charsets.UTF_8)
+        val text = decodeStrictUtf8(input.readBytes())
         return try {
+            DuplicateKeyJsonScanner(text).check()
             json.parseToJsonElement(text).jsonObject.toBackupDocument()
         } catch (failure: BackupFormatException) {
             throw failure
         } catch (failure: RuntimeException) {
             throw BackupFormatException("备份文件不是有效 JSON", failure)
         }
+    }
+}
+
+private fun decodeStrictUtf8(bytes: ByteArray): String = try {
+    Charsets.UTF_8.newDecoder()
+        .onMalformedInput(CodingErrorAction.REPORT)
+        .onUnmappableCharacter(CodingErrorAction.REPORT)
+        .decode(ByteBuffer.wrap(bytes))
+        .toString()
+} catch (failure: java.nio.charset.CharacterCodingException) {
+    throw BackupFormatException("备份文件不是有效 UTF-8", failure)
+}
+
+private class DuplicateKeyJsonScanner(
+    private val source: String,
+) {
+    private var index = 0
+
+    fun check() {
+        skipWhitespace()
+        scanValue()
+        skipWhitespace()
+        if (index != source.length) invalidJson()
+    }
+
+    private fun scanValue() {
+        skipWhitespace()
+        when (source.getOrNull(index)) {
+            '{' -> scanObject()
+            '[' -> scanArray()
+            '"' -> parseString()
+            null -> invalidJson()
+            else -> scanPrimitive()
+        }
+    }
+
+    private fun scanObject() {
+        expect('{')
+        skipWhitespace()
+        if (consumeIf('}')) return
+        val names = hashSetOf<String>()
+        while (true) {
+            skipWhitespace()
+            if (source.getOrNull(index) != '"') invalidJson()
+            val name = parseString()
+            if (!names.add(name)) throw BackupFormatException("备份对象包含重复字段")
+            skipWhitespace()
+            expect(':')
+            scanValue()
+            skipWhitespace()
+            when {
+                consumeIf(',') -> Unit
+                consumeIf('}') -> return
+                else -> invalidJson()
+            }
+        }
+    }
+
+    private fun scanArray() {
+        expect('[')
+        skipWhitespace()
+        if (consumeIf(']')) return
+        while (true) {
+            scanValue()
+            skipWhitespace()
+            when {
+                consumeIf(',') -> Unit
+                consumeIf(']') -> return
+                else -> invalidJson()
+            }
+        }
+    }
+
+    private fun scanPrimitive() {
+        val start = index
+        while (index < source.length && source[index] !in VALUE_DELIMITERS) index += 1
+        if (start == index) invalidJson()
+    }
+
+    private fun parseString(): String {
+        expect('"')
+        val decoded = StringBuilder()
+        while (index < source.length) {
+            val value = source[index++]
+            when {
+                value == '"' -> return decoded.toString()
+                value == '\\' -> decoded.append(parseEscape())
+                value.code < 0x20 -> invalidJson()
+                else -> decoded.append(value)
+            }
+        }
+        invalidJson()
+    }
+
+    private fun parseEscape(): Char {
+        val escaped = source.getOrNull(index++) ?: invalidJson()
+        return when (escaped) {
+            '"', '\\', '/' -> escaped
+            'b' -> '\b'
+            'f' -> '\u000C'
+            'n' -> '\n'
+            'r' -> '\r'
+            't' -> '\t'
+            'u' -> {
+                if (index + 4 > source.length) invalidJson()
+                val hex = source.substring(index, index + 4)
+                if (hex.any { it.digitToIntOrNull(16) == null }) invalidJson()
+                index += 4
+                hex.toInt(16).toChar()
+            }
+            else -> invalidJson()
+        }
+    }
+
+    private fun skipWhitespace() {
+        while (source.getOrNull(index) in JSON_WHITESPACE) index += 1
+    }
+
+    private fun expect(expected: Char) {
+        if (!consumeIf(expected)) invalidJson()
+    }
+
+    private fun consumeIf(expected: Char): Boolean {
+        if (source.getOrNull(index) != expected) return false
+        index += 1
+        return true
+    }
+
+    private fun invalidJson(): Nothing = throw BackupFormatException("备份文件不是有效 JSON")
+
+    private companion object {
+        val JSON_WHITESPACE = setOf(' ', '\t', '\r', '\n')
+        val VALUE_DELIMITERS = setOf(' ', '\t', '\r', '\n', ',', ']', '}')
     }
 }
 

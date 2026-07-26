@@ -128,6 +128,10 @@ class SettingsViewModel(
     suspend fun exportBackup(output: OutputStream): Result<Unit> {
         val backup = backupOperations
             ?: return Result.failure(IllegalStateException("备份功能未配置"))
+        return exportBackup { backup.export(output) }
+    }
+
+    suspend fun exportBackup(operation: suspend () -> Unit): Result<Unit> {
         if (!operationMutex.tryLock()) {
             return Result.failure(SettingsOperationInProgressException())
         }
@@ -136,7 +140,7 @@ class SettingsViewModel(
             backupStatus = null,
         )
         return try {
-            backup.export(output)
+            operation()
             mutableState.value = mutableState.value.copy(
                 backupStatus = "备份导出成功",
                 backupStatusIsError = false,
@@ -154,24 +158,32 @@ class SettingsViewModel(
     }
 
     suspend fun confirmBackupRestore(input: InputStream): Result<RestoreResult> {
+        val backup = backupOperations
+            ?: return Result.failure(IllegalStateException("备份功能未配置"))
+        return confirmBackupRestore { backup.restore(input) }
+    }
+
+    suspend fun confirmBackupRestore(
+        operation: suspend () -> RestoreResult,
+    ): Result<RestoreResult> {
         if (!mutableState.value.showBackupRestoreConfirmation) {
             return Result.failure(IllegalStateException("请先确认恢复操作"))
         }
         mutableState.value = mutableState.value.copy(showBackupRestoreConfirmation = false)
-        val backup = backupOperations
-            ?: return Result.failure(IllegalStateException("备份功能未配置"))
         if (!operationMutex.tryLock()) {
             return Result.failure(SettingsOperationInProgressException())
         }
         mutableState.value = mutableState.value.copy(busy = true, backupStatus = null)
         return try {
-            val result = backup.restore(input)
+            val result = operation()
             mutableState.value = mutableState.value.copy(
                 backupStatus = when (result) {
                     is RestoreResult.Success ->
                         "备份恢复成功，共恢复 ${result.transactionCount} 笔交易"
                     is RestoreResult.Invalid -> "备份文件无效，未替换当前数据"
                     is RestoreResult.Failed -> "备份恢复失败，当前数据已保留"
+                    is RestoreResult.RollbackFailed ->
+                        "自动回滚失败，数据状态不确定。请勿继续编辑，并重新尝试恢复备份。"
                 },
                 backupStatusIsError = result !is RestoreResult.Success,
             )

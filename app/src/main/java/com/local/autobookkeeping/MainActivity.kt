@@ -61,9 +61,6 @@ import com.local.autobookkeeping.ui.settings.SettingsViewModel
 import com.local.autobookkeeping.ui.theme.AutoBookkeepingTheme
 import com.local.autobookkeeping.ui.theme.ThemeStyle
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -142,19 +139,16 @@ fun AutoBookkeepingRoot(
     ) { uri ->
         if (uri != null && settingsViewModel != null) {
             scope.launch {
-                try {
-                    val output = withContext(Dispatchers.IO) {
-                        context.contentResolver.openOutputStream(uri, "wt")
-                    }
-                    if (output == null) {
-                        settingsViewModel.reportBackupExportFailure()
-                    } else {
-                        output.use { settingsViewModel.exportBackup(it) }
-                    }
-                } catch (failure: CancellationException) {
-                    throw failure
-                } catch (_: Throwable) {
-                    settingsViewModel.reportBackupExportFailure()
+                settingsViewModel.exportBackup {
+                    checkNotNull(
+                        withBackupOutputStreamOnIo(
+                            open = {
+                                context.contentResolver.openOutputStream(uri, "wt")
+                            },
+                        ) { output ->
+                            checkNotNull(backupOperations).export(output)
+                        },
+                    ) { "无法打开备份输出流" }
                 }
             }
         }
@@ -424,23 +418,18 @@ fun AutoBookkeepingRoot(
                                 pendingRestoreUri = null
                                 if (selected != null) {
                                     scope.launch {
-                                        try {
-                                            val input = withContext(Dispatchers.IO) {
-                                                context.contentResolver.openInputStream(
-                                                    Uri.parse(selected),
-                                                )
-                                            }
-                                            if (input == null) {
-                                                settingsViewModel.reportBackupRestoreFailure()
-                                            } else {
-                                                input.use {
-                                                    settingsViewModel.confirmBackupRestore(it)
-                                                }
-                                            }
-                                        } catch (failure: CancellationException) {
-                                            throw failure
-                                        } catch (_: Throwable) {
-                                            settingsViewModel.reportBackupRestoreFailure()
+                                        settingsViewModel.confirmBackupRestore {
+                                            checkNotNull(
+                                                withBackupInputStreamOnIo(
+                                                    open = {
+                                                        context.contentResolver.openInputStream(
+                                                            Uri.parse(selected),
+                                                        )
+                                                    },
+                                                ) { input ->
+                                                    checkNotNull(backupOperations).restore(input)
+                                                },
+                                            ) { "无法打开备份输入流" }
                                         }
                                     }
                                 }

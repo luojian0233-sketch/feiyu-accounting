@@ -14,12 +14,15 @@ import java.io.OutputStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.InternalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import androidx.room.withTransaction
+import kotlin.coroutines.coroutineContext
 
 interface BackupOperations {
     suspend fun export(output: OutputStream)
@@ -36,6 +39,7 @@ sealed interface RestoreResult {
     data class Success(val transactionCount: Int) : RestoreResult
     data class Invalid(val reason: String) : RestoreResult
     data class Failed(val reason: String) : RestoreResult
+    data class RollbackFailed(val cause: Throwable) : RestoreResult
 }
 
 class BackupManager(
@@ -65,44 +69,87 @@ class BackupManager(
     }
 
     override suspend fun restore(input: InputStream): RestoreResult = operationMutex.withLock {
-        withContext(ioDispatcher) {
-            val document = try {
-                codec.decode(input).also(::validate)
-            } catch (failure: CancellationException) {
-                throw failure
-            } catch (failure: BackupFormatException) {
-                return@withContext RestoreResult.Invalid(INVALID_BACKUP_REASON)
-            } catch (_: Throwable) {
-                return@withContext RestoreResult.Failed(RESTORE_FAILURE_REASON)
+        var safety: BackupData? = null
+        var mutationStarted = false
+        var compensationAttempted = false
+        try {
+            withContext(ioDispatcher) {
+                val document = try {
+                    codec.decode(input).also(::validate)
+                } catch (failure: CancellationException) {
+                    throw failure
+                } catch (failure: BackupFormatException) {
+                    return@withContext RestoreResult.Invalid(INVALID_BACKUP_REASON)
+                } catch (_: Throwable) {
+                    return@withContext RestoreResult.Failed(RESTORE_FAILURE_REASON)
+                }
+                val replacement = document.toData()
+                safety = try {
+                    store.read()
+                } catch (failure: CancellationException) {
+                    throw failure
+                } catch (_: Throwable) {
+                    return@withContext RestoreResult.Failed(RESTORE_FAILURE_REASON)
+                }
+                try {
+                    mutationStarted = true
+                    store.replaceRoomData(replacement)
+                    store.replaceTheme(replacement.theme)
+                    RestoreResult.Success(replacement.transactions.size)
+                } catch (failure: Throwable) {
+                    compensationAttempted = true
+                    val compensationFailures = compensate(checkNotNull(safety))
+                    if (failure is CancellationException) {
+                        attachCancellationDiagnostics(failure, compensationFailures)
+                        throw failure
+                    }
+                    compensationFailures.forEach(failure::addSuppressed)
+                    if (compensationFailures.isEmpty()) {
+                        RestoreResult.Failed(RESTORE_FAILURE_REASON)
+                    } else {
+                        RestoreResult.RollbackFailed(failure)
+                    }
+                }
             }
-            val replacement = document.toData()
-            val safety = try {
-                store.read()
-            } catch (failure: CancellationException) {
-                throw failure
-            } catch (_: Throwable) {
-                return@withContext RestoreResult.Failed(RESTORE_FAILURE_REASON)
+        } catch (failure: CancellationException) {
+            if (mutationStarted && !compensationAttempted) {
+                compensationAttempted = true
+                attachCancellationDiagnostics(
+                    failure,
+                    compensate(checkNotNull(safety)),
+                )
             }
-            try {
-                store.replaceRoomData(replacement)
-                store.replaceTheme(replacement.theme)
-                RestoreResult.Success(replacement.transactions.size)
-            } catch (failure: Throwable) {
-                compensate(safety, failure)
-                if (failure is CancellationException) throw failure
-                RestoreResult.Failed(RESTORE_FAILURE_REASON)
-            }
+            throw failure
         }
     }
 
-    private suspend fun compensate(safety: BackupData, originalFailure: Throwable) {
+    private suspend fun compensate(safety: BackupData): List<Throwable> {
+        val failures = mutableListOf<Throwable>()
         withContext(NonCancellable) {
             runCatching { store.replaceRoomData(safety) }
                 .exceptionOrNull()
-                ?.let(originalFailure::addSuppressed)
+                ?.let(failures::add)
             runCatching { store.replaceTheme(safety.theme) }
                 .exceptionOrNull()
-                ?.let(originalFailure::addSuppressed)
+                ?.let(failures::add)
+        }
+        return failures
+    }
+
+    @OptIn(InternalCoroutinesApi::class)
+    private suspend fun attachCancellationDiagnostics(
+        cancellation: CancellationException,
+        diagnostics: List<Throwable>,
+    ) {
+        diagnostics.forEach(cancellation::addSuppressed)
+        val job = coroutineContext[Job]
+        val jobCancellation = if (job?.isCancelled == true) {
+            job.getCancellationException()
+        } else {
+            null
+        }
+        if (jobCancellation != null && jobCancellation !== cancellation) {
+            diagnostics.forEach(jobCancellation::addSuppressed)
         }
     }
 

@@ -220,6 +220,32 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun `rollback failure status says data is uncertain without exposing diagnostics`() = runTest(dispatcher) {
+        val backup = FakeBackupOperations(
+            restoreResult = RestoreResult.RollbackFailed(
+                IllegalStateException("/data/user/0/private.db rollback detail"),
+            ),
+        )
+        val viewModel = SettingsViewModel(
+            repository = FakeSettingsOperations(),
+            backupOperations = backup,
+            notificationAccess = { false },
+        )
+        viewModel.requestBackupRestoreConfirmation()
+
+        assertTrue(viewModel.confirmBackupRestore("{}".byteInputStream()).isSuccess)
+
+        val status = viewModel.state.value.backupStatus.orEmpty()
+        assertEquals(
+            "自动回滚失败，数据状态不确定。请勿继续编辑，并重新尝试恢复备份。",
+            status,
+        )
+        assertTrue(viewModel.state.value.backupStatusIsError)
+        assertFalse(status.contains("当前数据已保留"))
+        assertFalse(status.contains("/data/user"))
+    }
+
+    @Test
     fun `backup export uses stable Chinese success and failure status`() = runTest(dispatcher) {
         val successBackup = FakeBackupOperations()
         val successViewModel = SettingsViewModel(

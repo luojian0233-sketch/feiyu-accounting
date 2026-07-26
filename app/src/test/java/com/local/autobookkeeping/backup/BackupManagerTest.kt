@@ -3,9 +3,13 @@ package com.local.autobookkeeping.backup
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import kotlin.coroutines.CoroutineContext
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -61,6 +65,69 @@ class BackupManagerTest {
         assertEquals(existing, store.current)
         assertEquals(0, store.roomMutationCount)
         assertEquals(0, store.themeMutationCount)
+    }
+
+    @Test
+    fun `duplicate top-level member is invalid before mutation`() = runTest {
+        val existing = completeData()
+        val store = FakeBackupStore(current = existing)
+        val valid = encodedBytes(document()).toString(Charsets.UTF_8)
+        val duplicateTheme = valid.dropLast(1) + ",\"theme\":\"CLEAR_MINT\"}"
+
+        val result = manager(store).restore(duplicateTheme.byteInputStream())
+
+        assertInstanceOf(RestoreResult.Invalid::class.java, result)
+        assertEquals(existing, store.current)
+        assertEquals(0, store.roomMutationCount)
+    }
+
+    @Test
+    fun `escaped duplicate nested member is invalid before mutation`() = runTest {
+        val existing = completeData()
+        val store = FakeBackupStore(current = existing)
+        val valid = encodedBytes(document()).toString(Charsets.UTF_8)
+        val escapedDuplicate = valid.replaceFirst(
+            "\"amountMinor\":2688",
+            "\"amountMinor\":2688,\"\\u0061mountMinor\":1",
+        )
+
+        val result = manager(store).restore(escapedDuplicate.byteInputStream())
+
+        assertInstanceOf(RestoreResult.Invalid::class.java, result)
+        assertEquals(existing, store.current)
+        assertEquals(0, store.roomMutationCount)
+    }
+
+    @Test
+    fun `normal escaped string values remain valid`() = runTest {
+        val store = FakeBackupStore(current = emptyData("CLEAR_MINT"))
+        val valid = encodedBytes(document()).toString(Charsets.UTF_8)
+        val escapedValue = valid.replaceFirst(
+            "\"note\":\"周末采购\"",
+            "\"note\":\"escaped \\\\ slash and \\\" quote\"",
+        )
+
+        val result = manager(store).restore(escapedValue.byteInputStream())
+
+        assertEquals(RestoreResult.Success(2), result)
+        assertEquals("escaped \\ slash and \" quote", store.current.transactions.first().note)
+    }
+
+    @Test
+    fun `malformed raw UTF-8 is invalid before mutation`() = runTest {
+        val existing = completeData()
+        val store = FakeBackupStore(current = existing)
+        val valid = encodedBytes(document())
+        val malformed = valid.replaceBytes(
+            needle = "餐饮".toByteArray(Charsets.UTF_8),
+            replacement = byteArrayOf(0xC3.toByte(), 0x28),
+        )
+
+        val result = manager(store).restore(malformed.inputStream())
+
+        assertInstanceOf(RestoreResult.Invalid::class.java, result)
+        assertEquals(existing, store.current)
+        assertEquals(0, store.roomMutationCount)
     }
 
     @Test
@@ -268,17 +335,116 @@ class BackupManagerTest {
         assertEquals(2, store.themeMutationCount)
     }
 
-    private fun manager(store: BackupStore) = BackupManager(
+    @Test
+    fun `dispatcher handoff cancellation after both mutations compensates and is rethrown`() {
+        val callerDispatcher = QueueDispatcher()
+        val ioDispatcher = QueueDispatcher()
+        val safety = completeData()
+        val replacement = emptyData("PAPER_MINIMAL")
+        val store = FakeBackupStore(current = safety)
+
+        runBlocking {
+            val restore = async(callerDispatcher) {
+                manager(store, ioDispatcher).restore(encoded(document(replacement)))
+            }
+            callerDispatcher.runAll()
+            ioDispatcher.runAll()
+            assertEquals(replacement, store.current)
+            assertEquals(1, store.roomMutationCount)
+            assertEquals(1, store.themeMutationCount)
+
+            restore.cancel(CancellationException("cancel return handoff"))
+            callerDispatcher.runAll()
+            val failure = runCatching { restore.await() }.exceptionOrNull()
+
+            assertTrue(failure is CancellationException)
+        }
+        assertEquals(safety, store.current)
+        assertEquals(2, store.roomMutationCount)
+        assertEquals(2, store.themeMutationCount)
+    }
+
+    @Test
+    fun `handoff cancellation keeps rollback failure as suppressed diagnostic`() {
+        val callerDispatcher = QueueDispatcher()
+        val ioDispatcher = QueueDispatcher()
+        val compensationFailure = IOException("private rollback diagnostic")
+        val store = FakeBackupStore(
+            current = completeData(),
+            roomCompensationFailure = compensationFailure,
+        )
+
+        runBlocking {
+            val restore = async(callerDispatcher) {
+                manager(store, ioDispatcher).restore(
+                    encoded(document(emptyData("PAPER_MINIMAL"))),
+                )
+            }
+            callerDispatcher.runAll()
+            ioDispatcher.runAll()
+
+            val cancellation = CancellationException("cancel return handoff")
+            restore.cancel(cancellation)
+            callerDispatcher.runAll()
+            val failure = runCatching { restore.await() }.exceptionOrNull()
+
+            assertTrue(failure is CancellationException)
+            assertTrue(cancellation.suppressed.contains(compensationFailure))
+        }
+        assertEquals(2, store.roomMutationCount)
+        assertEquals(2, store.themeMutationCount)
+    }
+
+    @Test
+    fun `Room compensation failure returns distinct diagnostic result`() = runTest {
+        val originalFailure = IOException("original restore failure")
+        val compensationFailure = IOException("room rollback failure")
+        val store = FakeBackupStore(
+            current = completeData(),
+            themeFailureAfterMutation = originalFailure,
+            roomCompensationFailure = compensationFailure,
+        )
+
+        val result = manager(store).restore(encoded(document(emptyData("PAPER_MINIMAL"))))
+
+        val rollbackFailed = assertInstanceOf(RestoreResult.RollbackFailed::class.java, result)
+        assertEquals(originalFailure, rollbackFailed.cause)
+        assertTrue(originalFailure.suppressed.contains(compensationFailure))
+    }
+
+    @Test
+    fun `theme compensation failure returns distinct diagnostic result`() = runTest {
+        val originalFailure = IOException("original restore failure")
+        val compensationFailure = IOException("theme rollback failure")
+        val store = FakeBackupStore(
+            current = completeData(),
+            themeFailureAfterMutation = originalFailure,
+            themeCompensationFailure = compensationFailure,
+        )
+
+        val result = manager(store).restore(encoded(document(emptyData("PAPER_MINIMAL"))))
+
+        val rollbackFailed = assertInstanceOf(RestoreResult.RollbackFailed::class.java, result)
+        assertEquals(originalFailure, rollbackFailed.cause)
+        assertTrue(originalFailure.suppressed.contains(compensationFailure))
+    }
+
+    private fun manager(
+        store: BackupStore,
+        dispatcher: kotlinx.coroutines.CoroutineDispatcher = UnconfinedTestDispatcher(),
+    ) = BackupManager(
         store = store,
         codec = BackupJsonCodec(),
         currentTimeMillis = { 1_785_038_400_000 },
-        ioDispatcher = UnconfinedTestDispatcher(),
+        ioDispatcher = dispatcher,
     )
 
     private fun encoded(document: BackupDocument) =
-        ByteArrayOutputStream().also { BackupJsonCodec().encode(document, it) }
-            .toByteArray()
+        encodedBytes(document)
             .inputStream()
+
+    private fun encodedBytes(document: BackupDocument) =
+        ByteArrayOutputStream().also { BackupJsonCodec().encode(document, it) }.toByteArray()
 
     private fun document(
         data: BackupData = completeData(),
@@ -371,11 +537,33 @@ class BackupManagerTest {
     private fun <T> List<T>.replaceFirst(transform: (T) -> T): List<T> =
         mapIndexed { index, value -> if (index == 0) transform(value) else value }
 
+    private fun ByteArray.replaceBytes(needle: ByteArray, replacement: ByteArray): ByteArray {
+        val index = indices.firstOrNull { start ->
+            start + needle.size <= size &&
+                needle.indices.all { offset -> this[start + offset] == needle[offset] }
+        } ?: error("Needle not found")
+        return copyOfRange(0, index) + replacement + copyOfRange(index + needle.size, size)
+    }
+
+    private class QueueDispatcher : CoroutineDispatcher() {
+        private val queued = ArrayDeque<Runnable>()
+
+        override fun dispatch(context: CoroutineContext, block: Runnable) {
+            queued.addLast(block)
+        }
+
+        fun runAll() {
+            while (queued.isNotEmpty()) queued.removeFirst().run()
+        }
+    }
+
     private class FakeBackupStore(
         var current: BackupData,
         private var readFailure: Throwable? = null,
         private var roomFailureAfterMutation: Throwable? = null,
         private var themeFailureAfterMutation: Throwable? = null,
+        private var roomCompensationFailure: Throwable? = null,
+        private var themeCompensationFailure: Throwable? = null,
     ) : BackupStore {
         var roomMutationCount = 0
         var themeMutationCount = 0
@@ -390,6 +578,12 @@ class BackupManagerTest {
 
         override suspend fun replaceRoomData(data: BackupData) {
             roomMutationCount += 1
+            if (roomMutationCount > 1) {
+                roomCompensationFailure?.let { failure ->
+                    roomCompensationFailure = null
+                    throw failure
+                }
+            }
             current = data.copy(theme = current.theme)
             roomFailureAfterMutation?.let { failure ->
                 roomFailureAfterMutation = null
@@ -399,6 +593,12 @@ class BackupManagerTest {
 
         override suspend fun replaceTheme(theme: String) {
             themeMutationCount += 1
+            if (themeMutationCount > 1) {
+                themeCompensationFailure?.let { failure ->
+                    themeCompensationFailure = null
+                    throw failure
+                }
+            }
             current = current.copy(theme = theme)
             themeFailureAfterMutation?.let { failure ->
                 themeFailureAfterMutation = null
