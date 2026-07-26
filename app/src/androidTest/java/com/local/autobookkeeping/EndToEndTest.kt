@@ -1,7 +1,11 @@
 package com.local.autobookkeeping
 
-import androidx.compose.ui.test.assertCountEquals
+import android.view.View
+import android.widget.DatePicker
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -11,11 +15,28 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
+import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.UiController
+import androidx.test.espresso.ViewAction
+import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom
+import androidx.test.espresso.matcher.ViewMatchers.withId
+import com.local.autobookkeeping.ui.BOOKKEEPING_ZONE
+import com.local.autobookkeeping.ui.entry.ENTRY_DATE_TAG
+import com.local.autobookkeeping.ui.ledger.LEDGER_LIST_TAG
+import com.local.autobookkeeping.ui.statistics.STATISTICS_LIST_TAG
+import com.local.autobookkeeping.ui.statistics.STATISTICS_TOTAL_TAG
+import com.local.autobookkeeping.ui.statistics.statisticsCategoryAmountTag
 import com.local.autobookkeeping.ui.theme.ThemeStyle
+import java.time.Instant
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.runBlocking
+import org.hamcrest.Matcher
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
@@ -52,42 +73,39 @@ class EndToEndTest {
 
     @Test
     fun completePersonalLedgerJourney() {
+        val journeyDate = Instant.now().atZone(BOOKKEEPING_ZONE).toLocalDate()
         scenario = ActivityScenario.launch(MainActivity::class.java)
 
-        createManualTransaction(amount = "28.00", income = false)
-        createManualTransaction(amount = "100.00", income = true)
-        createManualTransaction(amount = "500.00", income = false, internalTransfer = true)
+        createManualTransaction(amount = "28.00", date = journeyDate, income = false)
+        createManualTransaction(amount = "100.00", date = journeyDate, income = true)
+        createManualTransaction(
+            amount = "500.00",
+            date = journeyDate,
+            income = false,
+            internalTransfer = true,
+        )
 
         compose.onNodeWithTag("nav-STATISTICS").performClick()
-        compose.onNodeWithText("月").performClick()
-        compose.onNodeWithText("支出").performClick()
-        waitForText("支出合计")
-        waitForText("¥28.00", minimumCount = 2)
-        compose.onNodeWithContentDescription("红包，28.00元，100.0%").assertIsDisplayed()
-        compose.onAllNodesWithText("¥28.00").assertCountEquals(2)
-        compose.onAllNodesWithText("¥100.00").assertCountEquals(0)
-        compose.onAllNodesWithText("¥500.00").assertCountEquals(0)
-
-        compose.onNodeWithText("收入").performClick()
-        waitForText("收入合计")
-        waitForText("¥100.00", minimumCount = 2)
-        compose.onNodeWithContentDescription("红包，100.00元，100.0%").assertIsDisplayed()
-        compose.onAllNodesWithText("¥100.00").assertCountEquals(2)
-        compose.onAllNodesWithText("¥28.00").assertCountEquals(0)
-        compose.onAllNodesWithText("¥500.00").assertCountEquals(0)
+        selectStatisticsMonth(journeyDate)
+        assertMonthlyStatistics(direction = "支出", amount = "28.00")
+        assertMonthlyStatistics(direction = "收入", amount = "100.00")
 
         compose.onNodeWithTag("nav-SETTINGS").performClick()
         compose.onNodeWithText("小票账本").performClick()
+        waitForTag(
+            tag = "active-theme-RECEIPT_LEDGER",
+            description = "小票账本主题写入并应用",
+        )
         compose.onNodeWithTag("active-theme-RECEIPT_LEDGER").assertIsDisplayed()
         compose.onNodeWithTag("nav-LEDGER").performClick()
-        waitForText("-¥28.00")
-        compose.onNodeWithText("-¥28.00").assertIsDisplayed()
-        compose.onNodeWithText("+¥100.00").assertIsDisplayed()
-        compose.onNodeWithText("-¥500.00").assertIsDisplayed()
+        assertLedgerAmount("-¥28.00")
+        assertLedgerAmount("+¥100.00")
+        assertLedgerAmount("-¥500.00")
     }
 
     private fun createManualTransaction(
         amount: String,
+        date: LocalDate,
         income: Boolean,
         internalTransfer: Boolean = false,
     ) {
@@ -96,6 +114,7 @@ class EndToEndTest {
             compose.onNodeWithText("收入").performClick()
         }
         compose.onNodeWithTag("amount").performTextInput(amount)
+        setEntryDate(date)
         compose.onNodeWithText("红包").performScrollTo().performClick()
         if (internalTransfer) {
             val transferLabel = compose.onNodeWithText("内部转账")
@@ -103,18 +122,99 @@ class EndToEndTest {
             compose.onNode(isToggleable()).performClick()
         }
         compose.onNodeWithText("保存记录").performScrollTo().performClick()
-        waitForTag("screen-账本")
+        waitForTag("screen-账本", "保存 $amount 后返回账本")
     }
 
-    private fun waitForText(text: String, minimumCount: Int = 1) {
-        compose.waitUntil(timeoutMillis = 5_000) {
-            compose.onAllNodesWithText(text).fetchSemanticsNodes().size >= minimumCount
+    private fun setEntryDate(date: LocalDate) {
+        compose.onNodeWithTag(ENTRY_DATE_TAG).performScrollTo().performClick()
+        onView(isAssignableFrom(DatePicker::class.java)).perform(setDateOnPicker(date))
+        onView(withId(android.R.id.button1)).perform(click())
+        compose.onNodeWithTag(ENTRY_DATE_TAG).assertTextEquals(
+            date.format(DateTimeFormatter.ofPattern("yyyy年M月d日")),
+        )
+    }
+
+    private fun selectStatisticsMonth(date: LocalDate) {
+        compose.onNodeWithText("月").performScrollTo().performClick()
+        val targetMonth = date.format(DateTimeFormatter.ofPattern("yyyy年M月"))
+        repeat(MAX_MONTH_BACK_STEPS + 1) { attempt ->
+            compose.waitForIdle()
+            if (compose.onAllNodesWithText(targetMonth).fetchSemanticsNodes().isNotEmpty()) {
+                return
+            }
+            if (attempt < MAX_MONTH_BACK_STEPS) {
+                compose.onNodeWithContentDescription("上一时间段").performClick()
+            }
         }
+        throw AssertionError(
+            "统计月份未在 $MAX_MONTH_BACK_STEPS 次向前导航内到达 $targetMonth",
+        )
     }
 
-    private fun waitForTag(tag: String) {
-        compose.waitUntil(timeoutMillis = 5_000) {
+    private fun assertMonthlyStatistics(direction: String, amount: String) {
+        val list = compose.onNodeWithTag(STATISTICS_LIST_TAG)
+        list.performScrollToNode(hasText(direction))
+        compose.onNodeWithText(direction).performClick()
+
+        val formatted = "¥$amount"
+        waitForCondition("$direction 月统计合计更新为 $formatted") {
+            compose.onAllNodes(
+                hasTestTag(STATISTICS_TOTAL_TAG) and hasText(formatted),
+            ).fetchSemanticsNodes().isNotEmpty()
+        }
+        list.performScrollToNode(hasTestTag(STATISTICS_TOTAL_TAG))
+        compose.onNodeWithTag(STATISTICS_TOTAL_TAG)
+            .performScrollTo()
+            .assertTextEquals(formatted)
+
+        list.performScrollToNode(hasTestTag("statistics-pie"))
+        compose.onNodeWithContentDescription("红包，${amount}元，100.0%")
+            .performScrollTo()
+            .assertIsDisplayed()
+
+        val rankingAmountTag = statisticsCategoryAmountTag("红包")
+        list.performScrollToNode(hasTestTag(rankingAmountTag))
+        compose.onNodeWithTag(rankingAmountTag)
+            .performScrollTo()
+            .assertTextEquals(formatted)
+    }
+
+    private fun assertLedgerAmount(amount: String) {
+        compose.onNodeWithTag(LEDGER_LIST_TAG).performScrollToNode(hasText(amount))
+        compose.onNodeWithText(amount).performScrollTo().assertIsDisplayed()
+    }
+
+    private fun waitForTag(tag: String, description: String) {
+        waitForCondition(description) {
             compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
         }
+    }
+
+    private fun waitForCondition(description: String, condition: () -> Boolean) {
+        try {
+            compose.waitUntil(timeoutMillis = WAIT_TIMEOUT_MILLIS, condition = condition)
+        } catch (failure: Exception) {
+            throw AssertionError(
+                "等待超时（${WAIT_TIMEOUT_MILLIS}ms）：$description",
+                failure,
+            )
+        }
+    }
+
+    private fun setDateOnPicker(date: LocalDate): ViewAction = object : ViewAction {
+        override fun getConstraints(): Matcher<View> =
+            isAssignableFrom(DatePicker::class.java)
+
+        override fun getDescription(): String = "设置生产日期选择器为 $date"
+
+        override fun perform(uiController: UiController, view: View) {
+            (view as DatePicker).updateDate(date.year, date.monthValue - 1, date.dayOfMonth)
+            uiController.loopMainThreadUntilIdle()
+        }
+    }
+
+    private companion object {
+        const val WAIT_TIMEOUT_MILLIS = 5_000L
+        const val MAX_MONTH_BACK_STEPS = 1
     }
 }

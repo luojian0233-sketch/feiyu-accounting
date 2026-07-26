@@ -37,6 +37,8 @@ import com.local.autobookkeeping.ui.BOOKKEEPING_ZONE
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
+const val ENTRY_DATE_TAG = "entry-date"
+
 private val defaultCategories = listOf(
     "餐饮", "交通", "日用", "购物", "零食", "饮品", "蔬菜", "水果",
     "服饰", "娱乐", "美容", "通讯", "医疗", "学习", "游戏", "红包",
@@ -221,6 +223,7 @@ fun EntryScreen(
                         ).show()
                     },
                     label = { Text(dateTime.format(DateTimeFormatter.ofPattern("yyyy年M月d日"))) },
+                    modifier = Modifier.testTag(ENTRY_DATE_TAG),
                 )
                 AssistChip(
                     onClick = {

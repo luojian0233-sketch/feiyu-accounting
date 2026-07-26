@@ -30,6 +30,8 @@ import com.local.autobookkeeping.ui.theme.AppSeparator
 import com.local.autobookkeeping.ui.theme.appVisualTokens
 import java.time.format.DateTimeFormatter
 
+const val LEDGER_LIST_TAG = "ledger-list"
+
 @Composable
 fun LedgerScreen(
     state: LedgerUiState,
@@ -61,7 +63,9 @@ fun LedgerScreen(
         )
         val receiptStyle = appVisualTokens.dashedSeparators
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .testTag(LEDGER_LIST_TAG),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             item {

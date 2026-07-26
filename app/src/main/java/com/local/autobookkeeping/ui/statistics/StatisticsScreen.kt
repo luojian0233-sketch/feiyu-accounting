@@ -49,6 +49,12 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
+const val STATISTICS_LIST_TAG = "statistics-list"
+const val STATISTICS_TOTAL_TAG = "statistics-total"
+
+fun statisticsCategoryAmountTag(category: String): String =
+    "statistics-category-amount-$category"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StatisticsScreen(
@@ -65,7 +71,8 @@ fun StatisticsScreen(
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = 16.dp)
+            .testTag(STATISTICS_LIST_TAG),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item {
@@ -153,6 +160,7 @@ fun StatisticsScreen(
                         "¥${formatUnsignedMoney(state.summary.totalMinor)}",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.testTag(STATISTICS_TOTAL_TAG),
                     )
                     Spacer(Modifier.height(12.dp))
                     if (state.summary.totalMinor > 0L && state.summary.categories.isNotEmpty()) {
@@ -266,6 +274,7 @@ private fun CategoryRow(
                 "¥${formatUnsignedMoney(item.amountMinor)}",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium,
+                modifier = Modifier.testTag(statisticsCategoryAmountTag(item.category)),
             )
         }
     }
