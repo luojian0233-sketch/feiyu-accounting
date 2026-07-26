@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
@@ -13,7 +14,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         AccountEntity::class,
         MerchantRuleEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -38,15 +39,29 @@ abstract class AppDatabase : RoomDatabase() {
             context.applicationContext,
             AppDatabase::class.java,
             DATABASE_NAME,
-        ).addCallback(CategorySeedCallback).build()
+        ).addMigrations(MIGRATION_1_2).addCallback(CategorySeedCallback).build()
 
         fun categorySeedCallback(): Callback = CategorySeedCallback
+
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE categories ADD COLUMN displayOrder INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE categories ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE accounts ADD COLUMN displayOrder INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE accounts ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("UPDATE categories SET displayOrder = id")
+                db.execSQL("UPDATE accounts SET displayOrder = id")
+            }
+        }
     }
 
     private object CategorySeedCallback : Callback() {
         override fun onCreate(db: SupportSQLiteDatabase) {
-            BUILT_IN_CATEGORIES.forEach { name ->
-                db.execSQL("INSERT OR IGNORE INTO categories (name) VALUES (?)", arrayOf(name))
+            BUILT_IN_CATEGORIES.forEachIndexed { index, name ->
+                db.execSQL(
+                    "INSERT OR IGNORE INTO categories (name, displayOrder, hidden) VALUES (?, ?, 0)",
+                    arrayOf<Any>(name, index),
+                )
             }
         }
     }

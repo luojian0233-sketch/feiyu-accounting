@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.domain.model.Transaction
+import com.local.autobookkeeping.ui.theme.AppCardSurface
 import java.time.format.DateTimeFormatter
 
 @Composable
@@ -187,13 +188,11 @@ private fun <T> CyclingFilterChip(
 
 @Composable
 private fun TransactionRow(transaction: Transaction, onEdit: (Transaction) -> Unit) {
-    Surface(
+    AppCardSurface(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("transaction-${transaction.id}")
             .clickable { onEdit(transaction) },
-        color = Color.White,
-        shape = RoundedCornerShape(12.dp),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 11.dp, vertical = 10.dp),

@@ -16,8 +16,6 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.Typography
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -39,6 +37,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.local.autobookkeeping.data.LedgerRepository
+import com.local.autobookkeeping.data.SettingsOperations
 import com.local.autobookkeeping.ui.entry.EntryScreen
 import com.local.autobookkeeping.ui.entry.EntryViewModel
 import com.local.autobookkeeping.ui.home.HomeScreen
@@ -53,6 +52,11 @@ import com.local.autobookkeeping.ui.navigation.AppNavigator
 import com.local.autobookkeeping.ui.statistics.StatisticsScreen
 import com.local.autobookkeeping.ui.statistics.StatisticsSelection
 import com.local.autobookkeeping.ui.statistics.StatisticsViewModel
+import com.local.autobookkeeping.ui.settings.SettingsScreen
+import com.local.autobookkeeping.ui.settings.SettingsUiState
+import com.local.autobookkeeping.ui.settings.SettingsViewModel
+import com.local.autobookkeeping.ui.theme.AutoBookkeepingTheme
+import com.local.autobookkeeping.ui.theme.ThemeStyle
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -63,6 +67,7 @@ class MainActivity : ComponentActivity() {
             AutoBookkeepingRoot(
                 repository = graph.ledgerRepository,
                 notificationPermission = graph.notificationPermissionProvider,
+                settingsRepository = graph.settingsRepository,
             )
         }
     }
@@ -72,6 +77,7 @@ class MainActivity : ComponentActivity() {
 fun AutoBookkeepingRoot(
     repository: LedgerRepository,
     notificationPermission: NotificationPermissionProvider,
+    settingsRepository: SettingsOperations? = null,
 ) {
     val navigator = rememberSaveable(saver = AppNavigator.Saver) { AppNavigator() }
     val current = navigator.current
@@ -106,17 +112,32 @@ fun AutoBookkeepingRoot(
                 ?: com.local.autobookkeeping.ui.ledger.LedgerFilterState(),
         )
     }
-    val entryViewModel = viewModel { EntryViewModel(repository) }
+    val entryViewModel = viewModel { EntryViewModel(repository, settingsRepository) }
     val statisticsViewModel = viewModel {
         StatisticsViewModel(
             repository = repository,
             initialSelection = navigator.statisticsSelection?.copy(category = null),
         )
     }
+    val settingsViewModel = settingsRepository?.let { settings ->
+        viewModel<SettingsViewModel> {
+            SettingsViewModel(settings) { notificationPermission.isEnabled() }
+        }
+    }
     val homeState by homeViewModel.state.collectAsStateWithLifecycle()
     val ledgerState by ledgerViewModel.state.collectAsStateWithLifecycle()
     val entryState by entryViewModel.state.collectAsStateWithLifecycle()
     val statisticsState by statisticsViewModel.state.collectAsStateWithLifecycle()
+    val settingsState = settingsViewModel
+        ?.state
+        ?.collectAsStateWithLifecycle()
+        ?.value
+        ?: SettingsUiState()
+    val themeStyle = settingsRepository
+        ?.theme
+        ?.collectAsStateWithLifecycle(initialValue = ThemeStyle.CLEAR_MINT)
+        ?.value
+        ?: ThemeStyle.CLEAR_MINT
     LaunchedEffect(
         statisticsState.rangeMode,
         statisticsState.range,
@@ -146,6 +167,13 @@ fun AutoBookkeepingRoot(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
+    DisposableEffect(lifecycleOwner, settingsViewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) settingsViewModel?.refreshNotificationAccess()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     BackHandler(enabled = navigator.canHandleBack) {
         if (
             navigator.isStatisticsDrilldownActive &&
@@ -156,20 +184,11 @@ fun AutoBookkeepingRoot(
         navigator.handleBack()
     }
 
-    MaterialTheme(
-        colorScheme = lightColorScheme(
-            primary = Color(0xFF23866B),
-            onPrimary = Color.White,
-            primaryContainer = Color(0xFFDDF3EA),
-            background = Color(0xFFFAFCFB),
-            surface = Color(0xFFFAFCFB),
-        ),
-        typography = comfortableTypography(),
-    ) {
+    AutoBookkeepingTheme(themeStyle) {
         Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
             bottomBar = {
-                NavigationBar(containerColor = Color.White) {
+                NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                     AppDestination.entries.forEach { destination ->
                         NavigationBarItem(
                             selected = current == destination,
@@ -307,7 +326,47 @@ fun AutoBookkeepingRoot(
                             )
                         },
                     )
-                    AppDestination.SETTINGS -> PlaceholderScreen("设置与界面风格将在后续完成")
+                    AppDestination.SETTINGS -> if (settingsViewModel == null) {
+                        PlaceholderScreen("设置")
+                    } else {
+                        SettingsScreen(
+                            state = settingsState,
+                            onThemeSelected = { scope.launch { settingsViewModel.setTheme(it) } },
+                            onWechatChanged = { scope.launch { settingsViewModel.setWechatEnabled(it) } },
+                            onAlipayChanged = { scope.launch { settingsViewModel.setAlipayEnabled(it) } },
+                            onBankDraftChanged = settingsViewModel::updateBankPackageDraft,
+                            onSaveBankPackages = { scope.launch { settingsViewModel.saveBankPackages() } },
+                            onOpenNotificationAccess = {
+                                context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                            },
+                            onAddCategory = { scope.launch { settingsViewModel.addCategory(it) } },
+                            onRenameCategory = { id, name ->
+                                scope.launch { settingsViewModel.renameCategory(id, name) }
+                            },
+                            onMoveCategory = { id, offset ->
+                                scope.launch { settingsViewModel.moveCategory(id, offset) }
+                            },
+                            onCategoryHiddenChanged = { id, hidden ->
+                                scope.launch { settingsViewModel.setCategoryHidden(id, hidden) }
+                            },
+                            onAddAccount = { scope.launch { settingsViewModel.addAccount(it) } },
+                            onRenameAccount = { id, name ->
+                                scope.launch { settingsViewModel.renameAccount(id, name) }
+                            },
+                            onMoveAccount = { id, offset ->
+                                scope.launch { settingsViewModel.moveAccount(id, offset) }
+                            },
+                            onAccountHiddenChanged = { id, hidden ->
+                                scope.launch { settingsViewModel.setAccountHidden(id, hidden) }
+                            },
+                            onRequestClear = settingsViewModel::requestClearLedger,
+                            onConfirmFirstClear = settingsViewModel::confirmFirstClearLedger,
+                            onConfirmFinalClear = {
+                                scope.launch { settingsViewModel.confirmFinalClearLedger() }
+                            },
+                            onDismissClear = settingsViewModel::dismissClearLedger,
+                        )
+                    }
                 }
             }
         }
@@ -344,15 +403,3 @@ private fun PlaceholderScreen(text: String) {
         Text(text, style = MaterialTheme.typography.bodyMedium)
     }
 }
-
-private fun comfortableTypography() = Typography(
-    displayLarge = Typography().displayLarge.copy(fontSize = 40.sp),
-    headlineLarge = Typography().headlineLarge.copy(fontSize = 26.sp),
-    titleLarge = Typography().titleLarge.copy(fontSize = 21.sp),
-    titleMedium = Typography().titleMedium.copy(fontSize = 17.sp),
-    bodyLarge = Typography().bodyLarge.copy(fontSize = 15.sp),
-    bodyMedium = Typography().bodyMedium.copy(fontSize = 14.sp),
-    bodySmall = Typography().bodySmall.copy(fontSize = 12.sp),
-    labelLarge = Typography().labelLarge.copy(fontSize = 13.sp),
-    labelMedium = Typography().labelMedium.copy(fontSize = 12.sp),
-)

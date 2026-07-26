@@ -22,7 +22,7 @@ class ApplicationGraph(application: Application) {
     private val database by lazy { AppDatabase.create(appContext) }
     val ledgerRepository by lazy { RoomLedgerRepository(database) }
 
-    val settingsRepository by lazy { SettingsRepository(appContext) }
+    val settingsRepository by lazy { SettingsRepository(appContext, database) }
     val notificationDiagnostics = InMemoryNotificationDiagnostics()
     val notificationRouter by lazy {
         NotificationRouter(settingsRepository, diagnostics = notificationDiagnostics)

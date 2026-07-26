@@ -24,7 +24,6 @@ import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DateRangePicker
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
@@ -45,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.local.autobookkeeping.domain.model.CategoryTotal
 import com.local.autobookkeeping.domain.model.Direction
+import com.local.autobookkeeping.ui.theme.AppCardSurface
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -137,9 +137,7 @@ fun StatisticsScreen(
             }
         }
         item {
-            Surface(
-                color = Color.White,
-                shape = RoundedCornerShape(16.dp),
+            AppCardSurface(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(
@@ -237,9 +235,7 @@ private fun CategoryRow(
     onClick: () -> Unit,
 ) {
     val percentage = item.amountMinor.toDouble() / totalMinor.toDouble() * 100.0
-    Surface(
-        color = Color.White,
-        shape = RoundedCornerShape(12.dp),
+    AppCardSurface(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),

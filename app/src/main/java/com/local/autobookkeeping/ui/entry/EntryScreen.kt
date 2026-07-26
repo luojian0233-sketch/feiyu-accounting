@@ -56,6 +56,11 @@ fun EntryScreen(
     modifier: Modifier = Modifier,
 ) {
     val draft = state.draft
+    val categoryChoices = if (state.configurationManaged) {
+        state.categoryChoices
+    } else {
+        defaultCategories
+    }
     val context = LocalContext.current
     val zone = BOOKKEEPING_ZONE
     val dateTime = draft.occurredAt.atZone(zone)
@@ -123,7 +128,7 @@ fun EntryScreen(
         item {
             Text("分类", style = MaterialTheme.typography.labelLarge)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                items(defaultCategories) { category ->
+                items(categoryChoices) { category ->
                     FilterChip(
                         selected = draft.category == category,
                         onClick = { onUpdate { it.copy(category = category) } },
@@ -155,6 +160,17 @@ fun EntryScreen(
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (state.configurationManaged && state.accountChoices.isNotEmpty()) {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    items(state.accountChoices) { account ->
+                        FilterChip(
+                            selected = draft.account == account,
+                            onClick = { onUpdate { it.copy(account = account) } },
+                            label = { Text(account, style = MaterialTheme.typography.labelMedium) },
+                        )
+                    }
+                }
+            }
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -1,7 +1,9 @@
 package com.local.autobookkeeping.ui.entry
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import com.local.autobookkeeping.data.LedgerRepository
+import com.local.autobookkeeping.data.SettingsOperations
 import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.domain.model.Source
 import com.local.autobookkeeping.domain.model.Transaction
@@ -15,6 +17,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.sync.Mutex
 
 class EntryValidationException(message: String) : IllegalArgumentException(message)
@@ -92,19 +96,61 @@ data class EntryUiState(
     val deleting: Boolean = false,
     val showDeleteConfirmation: Boolean = false,
     val error: String? = null,
+    val categoryChoices: List<String> = emptyList(),
+    val accountChoices: List<String> = emptyList(),
+    val configurationManaged: Boolean = false,
 )
 
-class EntryViewModel(private val repository: LedgerRepository) : ViewModel() {
+class EntryViewModel(
+    private val repository: LedgerRepository,
+    settings: SettingsOperations? = null,
+) : ViewModel() {
     private val mutableState = MutableStateFlow(EntryUiState())
     val state: StateFlow<EntryUiState> = mutableState.asStateFlow()
     private val operationMutex = Mutex()
 
+    init {
+        settings?.visibleCategories?.onEach { rows ->
+            val choices = rows.map { it.name }
+            val current = mutableState.value
+            val draft = if (
+                current.draft.id == null &&
+                current.draft.category !in choices
+            ) {
+                current.draft.copy(category = choices.firstOrNull().orEmpty())
+            } else {
+                current.draft
+            }
+            mutableState.value = current.copy(
+                draft = draft,
+                categoryChoices = choices,
+                configurationManaged = true,
+            )
+        }?.launchIn(viewModelScope)
+        settings?.visibleAccounts?.onEach { rows ->
+            mutableState.value = mutableState.value.copy(
+                accountChoices = rows.map { it.name },
+                configurationManaged = true,
+            )
+        }?.launchIn(viewModelScope)
+    }
+
     fun startNew() {
-        mutableState.value = EntryUiState()
+        mutableState.value = EntryUiState(
+            draft = EntryDraft(category = mutableState.value.categoryChoices.firstOrNull().orEmpty()),
+            categoryChoices = mutableState.value.categoryChoices,
+            accountChoices = mutableState.value.accountChoices,
+            configurationManaged = mutableState.value.configurationManaged,
+        )
     }
 
     fun edit(transaction: Transaction) {
-        mutableState.value = EntryUiState(draft = EntryDraft.from(transaction))
+        mutableState.value = EntryUiState(
+            draft = EntryDraft.from(transaction),
+            categoryChoices = mutableState.value.categoryChoices,
+            accountChoices = mutableState.value.accountChoices,
+            configurationManaged = mutableState.value.configurationManaged,
+        )
     }
 
     fun update(transform: (EntryDraft) -> EntryDraft) {

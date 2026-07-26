@@ -1,6 +1,7 @@
 package com.local.autobookkeeping.data.db
 
 import androidx.room.Entity
+import androidx.room.ColumnInfo
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -12,6 +13,8 @@ import androidx.room.PrimaryKey
 data class CategoryEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
+    @ColumnInfo(defaultValue = "0") val displayOrder: Int = 0,
+    @ColumnInfo(defaultValue = "0") val hidden: Boolean = false,
 )
 
 @Entity(
@@ -22,6 +25,8 @@ data class AccountEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
     val currency: String = "CNY",
+    @ColumnInfo(defaultValue = "0") val displayOrder: Int = 0,
+    @ColumnInfo(defaultValue = "0") val hidden: Boolean = false,
 )
 
 @Entity(
