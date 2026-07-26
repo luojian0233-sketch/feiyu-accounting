@@ -1,6 +1,8 @@
 package com.local.autobookkeeping
 
 import android.app.Application
+import com.local.autobookkeeping.backup.AppDatabaseBackupStore
+import com.local.autobookkeeping.backup.BackupManager
 import com.local.autobookkeeping.data.RoomLedgerRepository
 import com.local.autobookkeeping.data.SettingsRepository
 import com.local.autobookkeeping.data.db.AppDatabase
@@ -33,6 +35,9 @@ class ApplicationGraph(
     val ledgerRepository by lazy { RoomLedgerRepository(database) }
 
     val settingsRepository by lazy { settingsRepositoryProvider(application, database) }
+    val backupManager by lazy {
+        BackupManager(AppDatabaseBackupStore(database, settingsRepository))
+    }
     val notificationDiagnostics = InMemoryNotificationDiagnostics()
     val notificationRouter by lazy {
         NotificationRouter(settingsRepository, diagnostics = notificationDiagnostics)

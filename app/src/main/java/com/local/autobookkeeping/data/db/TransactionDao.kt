@@ -46,6 +46,36 @@ interface TransactionDao {
     @Query("DELETE FROM transactions")
     suspend fun deleteAll()
 
+    @Query("DELETE FROM merchant_rules")
+    suspend fun deleteAllMerchantRules()
+
+    @Query("DELETE FROM accounts")
+    suspend fun deleteAllAccounts()
+
+    @Query("DELETE FROM categories")
+    suspend fun deleteAllCategories()
+
+    @Query("SELECT * FROM transactions ORDER BY id ASC")
+    suspend fun allTransactions(): List<TransactionEntity>
+
+    @Query("SELECT * FROM categories ORDER BY id ASC")
+    suspend fun allCategories(): List<CategoryEntity>
+
+    @Query("SELECT * FROM accounts ORDER BY id ASC")
+    suspend fun allAccounts(): List<AccountEntity>
+
+    @Query("SELECT * FROM merchant_rules ORDER BY id ASC")
+    suspend fun allMerchantRules(): List<MerchantRuleEntity>
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertAllCategories(rows: List<CategoryEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertAllAccounts(rows: List<AccountEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertAllMerchantRules(rows: List<MerchantRuleEntity>)
+
     @Query("SELECT * FROM transactions WHERE id = :id LIMIT 1")
     suspend fun findById(id: Long): TransactionEntity?
 

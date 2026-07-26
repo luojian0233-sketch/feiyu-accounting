@@ -52,6 +52,10 @@ fun SettingsScreen(
     onConfirmFirstClear: () -> Unit,
     onConfirmFinalClear: () -> Unit,
     onDismissClear: () -> Unit,
+    onExportBackup: () -> Unit,
+    onImportBackup: () -> Unit,
+    onConfirmBackupRestore: () -> Unit,
+    onDismissBackupRestore: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var newCategory by rememberSaveable { mutableStateOf("") }
@@ -191,6 +195,38 @@ fun SettingsScreen(
         }
         item {
             AppSectionCard {
+                SectionTitle("本地备份")
+                Text(
+                    "通过系统文件选择器导出或导入 JSON 文件，不需要存储权限。",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Row(
+                    modifier = Modifier.padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedButton(onClick = onExportBackup, enabled = !state.busy) {
+                        Text("导出备份")
+                    }
+                    OutlinedButton(onClick = onImportBackup, enabled = !state.busy) {
+                        Text("导入备份")
+                    }
+                }
+                state.backupStatus?.let { status ->
+                    Text(
+                        status,
+                        color = if (state.backupStatusIsError) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.testTag("backup-status").padding(top = 6.dp),
+                    )
+                }
+            }
+        }
+        item {
+            AppSectionCard {
                 SectionTitle("清空账本")
                 Text(
                     "当前共有 ${state.transactionCount} 笔交易。此操作不可恢复；主题、通知来源、分类和账户设置会保留。",
@@ -265,6 +301,23 @@ fun SettingsScreen(
                 }
             },
             dismissButton = { TextButton(onClick = onDismissClear) { Text("返回") } },
+        )
+    }
+    if (state.showBackupRestoreConfirmation) {
+        AlertDialog(
+            onDismissRequest = onDismissBackupRestore,
+            title = { Text("确认导入备份？") },
+            text = {
+                Text("当前交易、分类、账户、商户规则和主题将被备份文件替换。")
+            },
+            confirmButton = {
+                TextButton(onClick = onConfirmBackupRestore, enabled = !state.busy) {
+                    Text("确认替换", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismissBackupRestore) { Text("取消") }
+            },
         )
     }
 }

@@ -2,6 +2,8 @@ package com.local.autobookkeeping.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.local.autobookkeeping.backup.BackupOperations
+import com.local.autobookkeeping.backup.RestoreResult
 import com.local.autobookkeeping.data.AccountSetting
 import com.local.autobookkeeping.data.CategorySetting
 import com.local.autobookkeeping.data.SettingsOperations
@@ -15,6 +17,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.sync.Mutex
+import java.io.InputStream
+import java.io.OutputStream
 
 fun interface NotificationAccessProvider {
     fun isEnabled(): Boolean
@@ -31,12 +35,16 @@ data class SettingsUiState(
     val notificationAccessEnabled: Boolean = false,
     val busy: Boolean = false,
     val error: String? = null,
+    val backupStatus: String? = null,
+    val backupStatusIsError: Boolean = false,
+    val showBackupRestoreConfirmation: Boolean = false,
     val showFirstClearConfirmation: Boolean = false,
     val showFinalClearConfirmation: Boolean = false,
 )
 
 class SettingsViewModel(
     private val repository: SettingsOperations,
+    private val backupOperations: BackupOperations? = null,
     private val notificationAccess: NotificationAccessProvider,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(
@@ -89,6 +97,94 @@ class SettingsViewModel(
         mutableState.value = mutableState.value.copy(
             error = "无法打开系统设置，请手动开启通知使用权",
         )
+    }
+
+    fun requestBackupRestoreConfirmation() {
+        mutableState.value = mutableState.value.copy(
+            showBackupRestoreConfirmation = true,
+            backupStatus = null,
+        )
+    }
+
+    fun dismissBackupRestore() {
+        mutableState.value = mutableState.value.copy(showBackupRestoreConfirmation = false)
+    }
+
+    fun reportBackupExportFailure() {
+        mutableState.value = mutableState.value.copy(
+            backupStatus = "备份导出失败，请稍后重试",
+            backupStatusIsError = true,
+        )
+    }
+
+    fun reportBackupRestoreFailure() {
+        mutableState.value = mutableState.value.copy(
+            backupStatus = "备份恢复失败，当前数据已保留",
+            backupStatusIsError = true,
+            showBackupRestoreConfirmation = false,
+        )
+    }
+
+    suspend fun exportBackup(output: OutputStream): Result<Unit> {
+        val backup = backupOperations
+            ?: return Result.failure(IllegalStateException("备份功能未配置"))
+        if (!operationMutex.tryLock()) {
+            return Result.failure(SettingsOperationInProgressException())
+        }
+        mutableState.value = mutableState.value.copy(
+            busy = true,
+            backupStatus = null,
+        )
+        return try {
+            backup.export(output)
+            mutableState.value = mutableState.value.copy(
+                backupStatus = "备份导出成功",
+                backupStatusIsError = false,
+            )
+            Result.success(Unit)
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (failure: Throwable) {
+            reportBackupExportFailure()
+            Result.failure(failure)
+        } finally {
+            mutableState.value = mutableState.value.copy(busy = false)
+            operationMutex.unlock()
+        }
+    }
+
+    suspend fun confirmBackupRestore(input: InputStream): Result<RestoreResult> {
+        if (!mutableState.value.showBackupRestoreConfirmation) {
+            return Result.failure(IllegalStateException("请先确认恢复操作"))
+        }
+        mutableState.value = mutableState.value.copy(showBackupRestoreConfirmation = false)
+        val backup = backupOperations
+            ?: return Result.failure(IllegalStateException("备份功能未配置"))
+        if (!operationMutex.tryLock()) {
+            return Result.failure(SettingsOperationInProgressException())
+        }
+        mutableState.value = mutableState.value.copy(busy = true, backupStatus = null)
+        return try {
+            val result = backup.restore(input)
+            mutableState.value = mutableState.value.copy(
+                backupStatus = when (result) {
+                    is RestoreResult.Success ->
+                        "备份恢复成功，共恢复 ${result.transactionCount} 笔交易"
+                    is RestoreResult.Invalid -> "备份文件无效，未替换当前数据"
+                    is RestoreResult.Failed -> "备份恢复失败，当前数据已保留"
+                },
+                backupStatusIsError = result !is RestoreResult.Success,
+            )
+            Result.success(result)
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (failure: Throwable) {
+            reportBackupRestoreFailure()
+            Result.failure(failure)
+        } finally {
+            mutableState.value = mutableState.value.copy(busy = false)
+            operationMutex.unlock()
+        }
     }
 
     suspend fun setTheme(style: ThemeStyle): Result<Unit> = execute {

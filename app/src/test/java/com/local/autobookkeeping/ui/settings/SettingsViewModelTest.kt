@@ -1,5 +1,7 @@
 package com.local.autobookkeeping.ui.settings
 
+import com.local.autobookkeeping.backup.BackupOperations
+import com.local.autobookkeeping.backup.RestoreResult
 import com.local.autobookkeeping.data.AccountSetting
 import com.local.autobookkeeping.data.CategorySetting
 import com.local.autobookkeeping.data.SettingsOperations
@@ -13,6 +15,9 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import java.io.OutputStream
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -145,6 +150,128 @@ class SettingsViewModelTest {
         assertEquals("无法打开系统设置，请手动开启通知使用权", viewModel.state.value.error)
     }
 
+    @Test
+    fun `selected restore waits for explicit destructive confirmation before reading file`() = runTest(dispatcher) {
+        val backup = FakeBackupOperations(restoreResult = RestoreResult.Success(3))
+        val viewModel = SettingsViewModel(
+            repository = FakeSettingsOperations(),
+            backupOperations = backup,
+            notificationAccess = { false },
+        )
+
+        viewModel.requestBackupRestoreConfirmation()
+
+        assertTrue(viewModel.state.value.showBackupRestoreConfirmation)
+        assertEquals(0, backup.restoreCalls)
+
+        val result = viewModel.confirmBackupRestore("{}".byteInputStream())
+
+        assertTrue(result.isSuccess)
+        assertFalse(viewModel.state.value.showBackupRestoreConfirmation)
+        assertEquals(1, backup.restoreCalls)
+        assertEquals("备份恢复成功，共恢复 3 笔交易", viewModel.state.value.backupStatus)
+        assertFalse(viewModel.state.value.backupStatusIsError)
+    }
+
+    @Test
+    fun `restore cannot be applied without confirmation`() = runTest(dispatcher) {
+        val backup = FakeBackupOperations(restoreResult = RestoreResult.Success(1))
+        val viewModel = SettingsViewModel(
+            repository = FakeSettingsOperations(),
+            backupOperations = backup,
+            notificationAccess = { false },
+        )
+
+        val result = viewModel.confirmBackupRestore("{}".byteInputStream())
+
+        assertTrue(result.isFailure)
+        assertEquals(0, backup.restoreCalls)
+    }
+
+    @Test
+    fun `invalid and failed restore results use stable Chinese status`() = runTest(dispatcher) {
+        val invalidBackup = FakeBackupOperations(
+            restoreResult = RestoreResult.Invalid("internal validation detail"),
+        )
+        val invalidViewModel = SettingsViewModel(
+            repository = FakeSettingsOperations(),
+            backupOperations = invalidBackup,
+            notificationAccess = { false },
+        )
+        invalidViewModel.requestBackupRestoreConfirmation()
+
+        assertTrue(invalidViewModel.confirmBackupRestore("{}".byteInputStream()).isSuccess)
+        assertEquals("备份文件无效，未替换当前数据", invalidViewModel.state.value.backupStatus)
+        assertTrue(invalidViewModel.state.value.backupStatusIsError)
+
+        val failedBackup = FakeBackupOperations(
+            restoreResult = RestoreResult.Failed("internal storage path"),
+        )
+        val failedViewModel = SettingsViewModel(
+            repository = FakeSettingsOperations(),
+            backupOperations = failedBackup,
+            notificationAccess = { false },
+        )
+        failedViewModel.requestBackupRestoreConfirmation()
+
+        assertTrue(failedViewModel.confirmBackupRestore("{}".byteInputStream()).isSuccess)
+        assertEquals("备份恢复失败，当前数据已保留", failedViewModel.state.value.backupStatus)
+        assertTrue(failedViewModel.state.value.backupStatusIsError)
+    }
+
+    @Test
+    fun `backup export uses stable Chinese success and failure status`() = runTest(dispatcher) {
+        val successBackup = FakeBackupOperations()
+        val successViewModel = SettingsViewModel(
+            repository = FakeSettingsOperations(),
+            backupOperations = successBackup,
+            notificationAccess = { false },
+        )
+
+        assertTrue(successViewModel.exportBackup(ByteArrayOutputStream()).isSuccess)
+        assertEquals("备份导出成功", successViewModel.state.value.backupStatus)
+        assertFalse(successViewModel.state.value.backupStatusIsError)
+
+        val failedBackup = FakeBackupOperations(exportFailure = IllegalStateException("/secret/path"))
+        val failedViewModel = SettingsViewModel(
+            repository = FakeSettingsOperations(),
+            backupOperations = failedBackup,
+            notificationAccess = { false },
+        )
+
+        assertTrue(failedViewModel.exportBackup(ByteArrayOutputStream()).isFailure)
+        assertEquals("备份导出失败，请稍后重试", failedViewModel.state.value.backupStatus)
+        assertTrue(failedViewModel.state.value.backupStatusIsError)
+    }
+
+    @Test
+    fun `backup cancellation is rethrown`() {
+        val exportViewModel = SettingsViewModel(
+            repository = FakeSettingsOperations(),
+            backupOperations = FakeBackupOperations(
+                exportFailure = CancellationException("cancel export"),
+            ),
+            notificationAccess = { false },
+        )
+        assertThrows(CancellationException::class.java) {
+            runTest(dispatcher) { exportViewModel.exportBackup(ByteArrayOutputStream()) }
+        }
+
+        val restoreViewModel = SettingsViewModel(
+            repository = FakeSettingsOperations(),
+            backupOperations = FakeBackupOperations(
+                restoreFailure = CancellationException("cancel restore"),
+            ),
+            notificationAccess = { false },
+        )
+        restoreViewModel.requestBackupRestoreConfirmation()
+        assertThrows(CancellationException::class.java) {
+            runTest(dispatcher) {
+                restoreViewModel.confirmBackupRestore("{}".byteInputStream())
+            }
+        }
+    }
+
     private class FakeSettingsOperations(
         initialCount: Int = 0,
         private val delayClear: Boolean = false,
@@ -195,6 +322,25 @@ class SettingsViewModelTest {
             clearCalls += 1
             if (delayClear) clearRelease.await()
             transactionCount.value = 0
+        }
+    }
+
+    private class FakeBackupOperations(
+        private val restoreResult: RestoreResult = RestoreResult.Success(0),
+        private val exportFailure: Throwable? = null,
+        private val restoreFailure: Throwable? = null,
+    ) : BackupOperations {
+        var restoreCalls = 0
+
+        override suspend fun export(output: OutputStream) {
+            exportFailure?.let { throw it }
+            output.write("{}".toByteArray())
+        }
+
+        override suspend fun restore(input: InputStream): RestoreResult {
+            restoreCalls += 1
+            restoreFailure?.let { throw it }
+            return restoreResult
         }
     }
 }

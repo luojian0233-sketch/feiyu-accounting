@@ -1,8 +1,10 @@
 package com.local.autobookkeeping
 
 import android.os.Bundle
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.Canvas
@@ -18,8 +20,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -36,6 +40,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.local.autobookkeeping.data.LedgerRepository
 import com.local.autobookkeeping.data.SettingsOperations
+import com.local.autobookkeeping.backup.BackupOperations
 import com.local.autobookkeeping.ui.entry.EntryScreen
 import com.local.autobookkeeping.ui.entry.EntryViewModel
 import com.local.autobookkeeping.ui.home.HomeScreen
@@ -56,6 +61,9 @@ import com.local.autobookkeeping.ui.settings.SettingsViewModel
 import com.local.autobookkeeping.ui.theme.AutoBookkeepingTheme
 import com.local.autobookkeeping.ui.theme.ThemeStyle
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -66,6 +74,7 @@ class MainActivity : ComponentActivity() {
                 repository = graph.ledgerRepository,
                 notificationPermission = graph.notificationPermissionProvider,
                 settingsRepository = graph.settingsRepository,
+                backupOperations = graph.backupManager,
             )
         }
     }
@@ -76,6 +85,7 @@ fun AutoBookkeepingRoot(
     repository: LedgerRepository,
     notificationPermission: NotificationPermissionProvider,
     settingsRepository: SettingsOperations? = null,
+    backupOperations: BackupOperations? = null,
 ) {
     val navigator = rememberSaveable(saver = AppNavigator.Saver) { AppNavigator() }
     val current = navigator.current
@@ -119,7 +129,42 @@ fun AutoBookkeepingRoot(
     }
     val settingsViewModel = settingsRepository?.let { settings ->
         viewModel<SettingsViewModel> {
-            SettingsViewModel(settings) { notificationPermission.isEnabled() }
+            SettingsViewModel(
+                repository = settings,
+                notificationAccess = { notificationPermission.isEnabled() },
+                backupOperations = backupOperations,
+            )
+        }
+    }
+    var pendingRestoreUri by rememberSaveable { mutableStateOf<String?>(null) }
+    val exportBackupLauncher = rememberLauncherForActivityResult(
+        contract = backupCreateDocumentContract(),
+    ) { uri ->
+        if (uri != null && settingsViewModel != null) {
+            scope.launch {
+                try {
+                    val output = withContext(Dispatchers.IO) {
+                        context.contentResolver.openOutputStream(uri, "wt")
+                    }
+                    if (output == null) {
+                        settingsViewModel.reportBackupExportFailure()
+                    } else {
+                        output.use { settingsViewModel.exportBackup(it) }
+                    }
+                } catch (failure: CancellationException) {
+                    throw failure
+                } catch (_: Throwable) {
+                    settingsViewModel.reportBackupExportFailure()
+                }
+            }
+        }
+    }
+    val importBackupLauncher = rememberLauncherForActivityResult(
+        contract = backupOpenDocumentContract(),
+    ) { uri ->
+        if (uri != null && settingsViewModel != null) {
+            pendingRestoreUri = uri.toString()
+            settingsViewModel.requestBackupRestoreConfirmation()
         }
     }
     val homeState by homeViewModel.state.collectAsStateWithLifecycle()
@@ -368,6 +413,42 @@ fun AutoBookkeepingRoot(
                                 scope.launch { settingsViewModel.confirmFinalClearLedger() }
                             },
                             onDismissClear = settingsViewModel::dismissClearLedger,
+                            onExportBackup = {
+                                exportBackupLauncher.launch("自动记账备份.json")
+                            },
+                            onImportBackup = {
+                                importBackupLauncher.launch(arrayOf(BACKUP_MIME_TYPE))
+                            },
+                            onConfirmBackupRestore = {
+                                val selected = pendingRestoreUri
+                                pendingRestoreUri = null
+                                if (selected != null) {
+                                    scope.launch {
+                                        try {
+                                            val input = withContext(Dispatchers.IO) {
+                                                context.contentResolver.openInputStream(
+                                                    Uri.parse(selected),
+                                                )
+                                            }
+                                            if (input == null) {
+                                                settingsViewModel.reportBackupRestoreFailure()
+                                            } else {
+                                                input.use {
+                                                    settingsViewModel.confirmBackupRestore(it)
+                                                }
+                                            }
+                                        } catch (failure: CancellationException) {
+                                            throw failure
+                                        } catch (_: Throwable) {
+                                            settingsViewModel.reportBackupRestoreFailure()
+                                        }
+                                    }
+                                }
+                            },
+                            onDismissBackupRestore = {
+                                pendingRestoreUri = null
+                                settingsViewModel.dismissBackupRestore()
+                            },
                         )
                     }
                 }
