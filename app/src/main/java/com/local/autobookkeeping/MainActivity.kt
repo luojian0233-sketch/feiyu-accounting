@@ -420,15 +420,13 @@ fun AutoBookkeepingRoot(
                                     scope.launch {
                                         settingsViewModel.confirmBackupRestore {
                                             checkNotNull(
-                                                withBackupInputStreamOnIo(
-                                                    open = {
+                                                checkNotNull(backupOperations).restore(
+                                                    openInput = {
                                                         context.contentResolver.openInputStream(
                                                             Uri.parse(selected),
                                                         )
                                                     },
-                                                ) { input ->
-                                                    checkNotNull(backupOperations).restore(input)
-                                                },
+                                                ),
                                             ) { "无法打开备份输入流" }
                                         }
                                     }

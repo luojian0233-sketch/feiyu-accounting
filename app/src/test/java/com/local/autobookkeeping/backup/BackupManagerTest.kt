@@ -1,5 +1,6 @@
 package com.local.autobookkeeping.backup
 
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
@@ -336,6 +337,26 @@ class BackupManagerTest {
     }
 
     @Test
+    fun `cancellation before Room commit does not run compensation`() {
+        val safety = completeData()
+        val store = FakeBackupStore(
+            current = safety,
+            roomFailureBeforeMutation = CancellationException("cancel before commit"),
+        )
+
+        assertThrows(CancellationException::class.java) {
+            runTest {
+                manager(store).restore(
+                    openInput = { encoded(document(emptyData("PAPER_MINIMAL"))) },
+                )
+            }
+        }
+        assertEquals(safety, store.current)
+        assertEquals(1, store.roomMutationCount)
+        assertEquals(0, store.themeMutationCount)
+    }
+
+    @Test
     fun `dispatcher handoff cancellation after both mutations compensates and is rethrown`() {
         val callerDispatcher = QueueDispatcher()
         val ioDispatcher = QueueDispatcher()
@@ -360,6 +381,49 @@ class BackupManagerTest {
             assertTrue(failure is CancellationException)
         }
         assertEquals(safety, store.current)
+        assertEquals(2, store.roomMutationCount)
+        assertEquals(2, store.themeMutationCount)
+    }
+
+    @Test
+    fun `production input coordination compensates when final handoff is cancelled`() {
+        val callerDispatcher = QueueDispatcher()
+        val ioDispatcher = QueueDispatcher()
+        val safety = completeData()
+        val replacement = emptyData("PAPER_MINIMAL")
+        val store = FakeBackupStore(current = safety)
+        var openCount = 0
+        var closeCount = 0
+        val input = object : ByteArrayInputStream(encodedBytes(document(replacement))) {
+            override fun close() {
+                closeCount += 1
+                super.close()
+            }
+        }
+
+        runBlocking {
+            val restore = async(callerDispatcher) {
+                manager(store, ioDispatcher).restore(
+                    openInput = {
+                        openCount += 1
+                        input
+                    },
+                )
+            }
+            callerDispatcher.runAll()
+            ioDispatcher.runAll()
+            assertEquals(replacement, store.current)
+            assertEquals(1, openCount)
+            assertEquals(1, closeCount)
+
+            restore.cancel(CancellationException("cancel production return handoff"))
+            callerDispatcher.runAll()
+            val failure = runCatching { restore.await() }.exceptionOrNull()
+
+            assertTrue(failure is CancellationException)
+        }
+        assertEquals(safety, store.current)
+        assertEquals(1, closeCount)
         assertEquals(2, store.roomMutationCount)
         assertEquals(2, store.themeMutationCount)
     }
@@ -393,6 +457,103 @@ class BackupManagerTest {
         }
         assertEquals(2, store.roomMutationCount)
         assertEquals(2, store.themeMutationCount)
+    }
+
+    @Test
+    fun `production handoff cancellation keeps completed rollback failure diagnostics`() {
+        val callerDispatcher = QueueDispatcher()
+        val ioDispatcher = QueueDispatcher()
+        val originalFailure = IOException("private original failure")
+        val compensationFailure = IOException("private compensation failure")
+        val store = FakeBackupStore(
+            current = completeData(),
+            themeFailureAfterMutation = originalFailure,
+            roomCompensationFailure = compensationFailure,
+        )
+        val input = encoded(document(emptyData("PAPER_MINIMAL")))
+
+        runBlocking {
+            val restore = async(callerDispatcher) {
+                manager(store, ioDispatcher).restore(openInput = { input })
+            }
+            callerDispatcher.runAll()
+            ioDispatcher.runAll()
+
+            val cancellation = CancellationException("cancel rollback result handoff")
+            restore.cancel(cancellation)
+            callerDispatcher.runAll()
+            val failure = runCatching { restore.await() }.exceptionOrNull()
+
+            assertTrue(failure is CancellationException)
+            assertTrue(cancellation.suppressed.contains(originalFailure))
+            assertTrue(originalFailure.suppressed.contains(compensationFailure))
+        }
+        assertEquals(2, store.roomMutationCount)
+        assertEquals(2, store.themeMutationCount)
+    }
+
+    @Test
+    fun `input close failure after completed restore preserves the restore result`() = runTest {
+        val replacement = emptyData("PAPER_MINIMAL")
+        val store = FakeBackupStore(current = completeData())
+        val input = object : ByteArrayInputStream(encodedBytes(document(replacement))) {
+            override fun close() {
+                super.close()
+                throw IOException("provider close failed")
+            }
+        }
+
+        val result = manager(store).restore(openInput = { input })
+
+        assertEquals(RestoreResult.Success(0), result)
+        assertEquals(replacement, store.current)
+        assertEquals(1, store.roomMutationCount)
+        assertEquals(1, store.themeMutationCount)
+    }
+
+    @Test
+    fun `input close cancellation is rethrown after compensating completed restore`() {
+        val safety = completeData()
+        val store = FakeBackupStore(current = safety)
+        val input = object : ByteArrayInputStream(
+            encodedBytes(document(emptyData("PAPER_MINIMAL"))),
+        ) {
+            override fun close() {
+                super.close()
+                throw CancellationException("cancel while closing input")
+            }
+        }
+
+        assertThrows(CancellationException::class.java) {
+            runTest { manager(store).restore(openInput = { input }) }
+        }
+        assertEquals(safety, store.current)
+        assertEquals(2, store.roomMutationCount)
+        assertEquals(2, store.themeMutationCount)
+    }
+
+    @Test
+    fun `operation failure stays primary when input close also fails`() = runTest {
+        val operationFailure = IOException("database snapshot failed")
+        val closeFailure = IOException("provider close failed")
+        val store = FakeBackupStore(
+            current = completeData(),
+            readFailure = operationFailure,
+        )
+        val input = object : ByteArrayInputStream(encodedBytes(document())) {
+            override fun close() {
+                super.close()
+                throw closeFailure
+            }
+        }
+
+        val result = manager(store).restore(openInput = { input })
+
+        val failed = assertInstanceOf(RestoreResult.Failed::class.java, result)
+        assertEquals(operationFailure, failed.cause)
+        assertTrue(operationFailure.suppressed.contains(closeFailure))
+        assertEquals(0, store.roomMutationCount)
+        assertEquals(0, store.themeMutationCount)
     }
 
     @Test
@@ -560,6 +721,7 @@ class BackupManagerTest {
     private class FakeBackupStore(
         var current: BackupData,
         private var readFailure: Throwable? = null,
+        private var roomFailureBeforeMutation: Throwable? = null,
         private var roomFailureAfterMutation: Throwable? = null,
         private var themeFailureAfterMutation: Throwable? = null,
         private var roomCompensationFailure: Throwable? = null,
@@ -577,7 +739,20 @@ class BackupManagerTest {
         }
 
         override suspend fun replaceRoomData(data: BackupData) {
+            replaceRoomData(data) {}
+        }
+
+        override suspend fun replaceRoomData(
+            data: BackupData,
+            onCommitted: () -> Unit,
+        ) {
             roomMutationCount += 1
+            if (roomMutationCount == 1) {
+                roomFailureBeforeMutation?.let { failure ->
+                    roomFailureBeforeMutation = null
+                    throw failure
+                }
+            }
             if (roomMutationCount > 1) {
                 roomCompensationFailure?.let { failure ->
                     roomCompensationFailure = null
@@ -585,6 +760,7 @@ class BackupManagerTest {
                 }
             }
             current = data.copy(theme = current.theme)
+            onCommitted()
             roomFailureAfterMutation?.let { failure ->
                 roomFailureAfterMutation = null
                 throw failure

@@ -17,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -27,18 +28,30 @@ import kotlin.coroutines.coroutineContext
 interface BackupOperations {
     suspend fun export(output: OutputStream)
     suspend fun restore(input: InputStream): RestoreResult
+    suspend fun restore(openInput: () -> InputStream?): RestoreResult? =
+        openInput()?.use { input -> restore(input) }
 }
 
 interface BackupStore {
     suspend fun read(): BackupData
     suspend fun replaceRoomData(data: BackupData)
+    suspend fun replaceRoomData(
+        data: BackupData,
+        onCommitted: () -> Unit,
+    ) {
+        replaceRoomData(data)
+        onCommitted()
+    }
     suspend fun replaceTheme(theme: String)
 }
 
 sealed interface RestoreResult {
     data class Success(val transactionCount: Int) : RestoreResult
     data class Invalid(val reason: String) : RestoreResult
-    data class Failed(val reason: String) : RestoreResult
+    data class Failed(
+        val reason: String,
+        val cause: Throwable? = null,
+    ) : RestoreResult
     data class RollbackFailed(val cause: Throwable) : RestoreResult
 }
 
@@ -49,6 +62,14 @@ class BackupManager(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : BackupOperations {
     private val operationMutex = Mutex()
+
+    private class RestoreAttempt {
+        var safety: BackupData? = null
+        var roomCommitted = false
+        var compensationAttempted = false
+        var completedResult: RestoreResult? = null
+        var operationFailure: Throwable? = null
+    }
 
     override suspend fun export(output: OutputStream) = operationMutex.withLock {
         withContext(ioDispatcher) {
@@ -69,55 +90,138 @@ class BackupManager(
     }
 
     override suspend fun restore(input: InputStream): RestoreResult = operationMutex.withLock {
-        var safety: BackupData? = null
-        var mutationStarted = false
-        var compensationAttempted = false
-        try {
+        val attempt = RestoreAttempt()
+        withCancellationCompensation(attempt) {
             withContext(ioDispatcher) {
-                val document = try {
-                    codec.decode(input).also(::validate)
-                } catch (failure: CancellationException) {
-                    throw failure
-                } catch (failure: BackupFormatException) {
-                    return@withContext RestoreResult.Invalid(INVALID_BACKUP_REASON)
-                } catch (_: Throwable) {
-                    return@withContext RestoreResult.Failed(RESTORE_FAILURE_REASON)
-                }
-                val replacement = document.toData()
-                safety = try {
-                    store.read()
-                } catch (failure: CancellationException) {
-                    throw failure
-                } catch (_: Throwable) {
-                    return@withContext RestoreResult.Failed(RESTORE_FAILURE_REASON)
-                }
-                try {
-                    mutationStarted = true
-                    store.replaceRoomData(replacement)
-                    store.replaceTheme(replacement.theme)
-                    RestoreResult.Success(replacement.transactions.size)
-                } catch (failure: Throwable) {
-                    compensationAttempted = true
-                    val compensationFailures = compensate(checkNotNull(safety))
-                    if (failure is CancellationException) {
-                        attachCancellationDiagnostics(failure, compensationFailures)
-                        throw failure
-                    }
-                    compensationFailures.forEach(failure::addSuppressed)
-                    if (compensationFailures.isEmpty()) {
-                        RestoreResult.Failed(RESTORE_FAILURE_REASON)
-                    } else {
-                        RestoreResult.RollbackFailed(failure)
-                    }
+                restoreInCurrentContext(input, attempt)
+            }
+        }
+    }
+
+    override suspend fun restore(openInput: () -> InputStream?): RestoreResult? =
+        operationMutex.withLock {
+            val attempt = RestoreAttempt()
+            withCancellationCompensation(attempt) {
+                withContext(ioDispatcher) {
+                    openInput()?.let { input -> restoreAndClose(input, attempt) }
                 }
             }
+        }
+
+    private suspend fun restoreAndClose(
+        input: InputStream,
+        attempt: RestoreAttempt,
+    ): RestoreResult {
+        val result = try {
+            restoreInCurrentContext(input, attempt)
+        } catch (failure: Throwable) {
+            try {
+                input.close()
+            } catch (closeFailure: Throwable) {
+                failure.addSuppressed(closeFailure)
+            }
+            throw failure
+        }
+        return try {
+            input.close()
+            result
+        } catch (closeFailure: Throwable) {
+            if (closeFailure is CancellationException) throw closeFailure
+            when (result) {
+                is RestoreResult.Failed -> {
+                    val operationFailure = attempt.operationFailure
+                    if (operationFailure == null) {
+                        result
+                    } else {
+                        operationFailure.addSuppressed(closeFailure)
+                        result.copy(cause = operationFailure)
+                    }
+                }
+                is RestoreResult.RollbackFailed -> {
+                    result.cause.addSuppressed(closeFailure)
+                    result
+                }
+                is RestoreResult.Invalid,
+                is RestoreResult.Success,
+                -> result
+            }
+        }
+    }
+
+    private suspend fun restoreInCurrentContext(
+        input: InputStream,
+        attempt: RestoreAttempt,
+    ): RestoreResult {
+        val document = try {
+            codec.decode(input).also(::validate)
         } catch (failure: CancellationException) {
-            if (mutationStarted && !compensationAttempted) {
-                compensationAttempted = true
+            throw failure
+        } catch (failure: BackupFormatException) {
+            return RestoreResult.Invalid(INVALID_BACKUP_REASON)
+        } catch (failure: Throwable) {
+            attempt.operationFailure = failure
+            return RestoreResult.Failed(RESTORE_FAILURE_REASON)
+        }
+        val replacement = document.toData()
+        attempt.safety = try {
+            store.read()
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (failure: Throwable) {
+            attempt.operationFailure = failure
+            return RestoreResult.Failed(RESTORE_FAILURE_REASON)
+        }
+        try {
+            coroutineContext.ensureActive()
+            withContext(NonCancellable) {
+                store.replaceRoomData(replacement) {
+                    attempt.roomCommitted = true
+                }
+            }
+            store.replaceTheme(replacement.theme)
+            return RestoreResult.Success(replacement.transactions.size)
+        } catch (failure: Throwable) {
+            if (!attempt.roomCommitted) {
+                if (failure is CancellationException) throw failure
+                attempt.operationFailure = failure
+                return RestoreResult.Failed(RESTORE_FAILURE_REASON)
+            }
+            attempt.compensationAttempted = true
+            val compensationFailures = compensate(checkNotNull(attempt.safety))
+            if (failure is CancellationException) {
+                attachCancellationDiagnostics(failure, compensationFailures)
+                throw failure
+            }
+            attempt.operationFailure = failure
+            compensationFailures.forEach(failure::addSuppressed)
+            val result = if (compensationFailures.isEmpty()) {
+                RestoreResult.Failed(RESTORE_FAILURE_REASON)
+            } else {
+                RestoreResult.RollbackFailed(failure)
+            }
+            attempt.completedResult = result
+            return result
+        }
+    }
+
+    private suspend fun <T> withCancellationCompensation(
+        attempt: RestoreAttempt,
+        operation: suspend () -> T,
+    ): T {
+        try {
+            return operation()
+        } catch (failure: CancellationException) {
+            if (attempt.roomCommitted && !attempt.compensationAttempted) {
+                attempt.compensationAttempted = true
                 attachCancellationDiagnostics(
                     failure,
-                    compensate(checkNotNull(safety)),
+                    compensate(checkNotNull(attempt.safety)),
                 )
+            } else {
+                val completedRollback = attempt.completedResult as? RestoreResult.RollbackFailed
+                if (completedRollback != null) {
+                    attachCancellationDiagnostics(failure, listOf(completedRollback.cause))
+                }
             }
             throw failure
         }
@@ -180,6 +284,13 @@ class AppDatabaseBackupStore(
     }
 
     override suspend fun replaceRoomData(data: BackupData) {
+        replaceRoomData(data) {}
+    }
+
+    override suspend fun replaceRoomData(
+        data: BackupData,
+        onCommitted: () -> Unit,
+    ) {
         database.withTransaction {
             dao.deleteAll()
             dao.deleteAllMerchantRules()
@@ -190,6 +301,7 @@ class AppDatabaseBackupStore(
             dao.insertAllMerchantRules(data.merchantRules.map(BackupMerchantRule::toEntity))
             dao.insertAll(data.transactions.map(BackupTransaction::toEntity))
         }
+        onCommitted()
     }
 
     override suspend fun replaceTheme(theme: String) {
