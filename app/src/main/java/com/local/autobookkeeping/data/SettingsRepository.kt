@@ -119,6 +119,14 @@ class SettingsRepository internal constructor(
         localSettings = EmptyLocalSettingsStore,
     )
 
+    constructor(
+        dataStore: DataStore<Preferences>,
+        database: AppDatabase,
+    ) : this(
+        preferences = DataStoreSettingsPreferenceStore(dataStore),
+        localSettings = RoomLocalSettingsStore(database),
+    )
+
     override val wechatEnabled: Flow<Boolean> = preferences.wechatEnabled
     override val alipayEnabled: Flow<Boolean> = preferences.alipayEnabled
     override val enabledBankPackages: Flow<Set<String>> = preferences.enabledBankPackages

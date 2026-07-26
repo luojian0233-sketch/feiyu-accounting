@@ -11,18 +11,28 @@ import com.local.autobookkeeping.notification.PendingConfirmationNotifier
 import com.local.autobookkeeping.notification.NotificationAccess
 import com.local.autobookkeeping.ui.home.NotificationPermissionProvider
 
-class AutoBookkeepingApplication : Application() {
+open class AutoBookkeepingApplication : Application() {
     val applicationGraph: ApplicationGraph by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        ApplicationGraph(this)
+        createApplicationGraph()
     }
+
+    protected open fun createApplicationGraph(): ApplicationGraph =
+        ApplicationGraph(this)
 }
 
-class ApplicationGraph(application: Application) {
+class ApplicationGraph(
+    application: Application,
+    private val databaseProvider: (Application) -> AppDatabase = { app ->
+        AppDatabase.create(app)
+    },
+    private val settingsRepositoryProvider: (Application, AppDatabase) -> SettingsRepository =
+        { app, database -> SettingsRepository(app, database) },
+) {
     private val appContext = application.applicationContext
-    private val database by lazy { AppDatabase.create(appContext) }
+    private val database by lazy { databaseProvider(application) }
     val ledgerRepository by lazy { RoomLedgerRepository(database) }
 
-    val settingsRepository by lazy { SettingsRepository(appContext, database) }
+    val settingsRepository by lazy { settingsRepositoryProvider(application, database) }
     val notificationDiagnostics = InMemoryNotificationDiagnostics()
     val notificationRouter by lazy {
         NotificationRouter(settingsRepository, diagnostics = notificationDiagnostics)
