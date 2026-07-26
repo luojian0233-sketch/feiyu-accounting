@@ -76,6 +76,9 @@ interface TransactionDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertCategory(row: CategoryEntity): Long
 
+    @Query("SELECT displayOrder FROM categories")
+    suspend fun categoryDisplayOrders(): List<Int>
+
     @Query("UPDATE categories SET name = :name WHERE id = :id")
     suspend fun renameCategory(id: Long, name: String): Int
 
@@ -94,8 +97,8 @@ interface TransactionDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAccount(row: AccountEntity): Long
 
-    @Query("SELECT COUNT(*) FROM accounts")
-    suspend fun accountCount(): Int
+    @Query("SELECT displayOrder FROM accounts")
+    suspend fun accountDisplayOrders(): List<Int>
 
     @Query("UPDATE accounts SET name = :name WHERE id = :id")
     suspend fun renameAccount(id: Long, name: String): Int

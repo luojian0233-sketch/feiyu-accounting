@@ -2,7 +2,11 @@ package com.local.autobookkeeping.data
 
 import com.local.autobookkeeping.ui.theme.ThemeStyle
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.first
+import androidx.datastore.preferences.core.emptyPreferences
+import java.io.IOException
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -115,6 +119,52 @@ class SettingsRepositoryTest {
         assertEquals(1, store.clearTransactionsCalls)
     }
 
+    @Test
+    fun `preference reads recover IOException to empty preferences`() = runTest {
+        val recovered = recoverPreferenceReads(
+            flow {
+                throw IOException("corrupt path and internal detail")
+            },
+        ).first()
+
+        assertEquals(emptyPreferences(), recovered)
+    }
+
+    @Test
+    fun `preference reads rethrow cancellation and unexpected exceptions`() = runTest {
+        expectFailure<CancellationException> {
+            recoverPreferenceReads(flow { throw CancellationException("cancel") }).first()
+        }
+        expectFailure<IllegalStateException> {
+            recoverPreferenceReads(flow { throw IllegalStateException("bug") }).first()
+        }
+    }
+
+    @Test
+    fun `repository mutations rethrow cancellation and unexpected failures`() = runTest {
+        val cancelledRepository = SettingsRepository(
+            InMemorySettingsPreferenceStore(),
+            InMemoryLocalSettingsStore(
+                insertCategoryFailure = CancellationException("cancel"),
+            ),
+        )
+
+        expectFailure<CancellationException> {
+            cancelledRepository.addCategory("餐饮")
+        }
+
+        val failedRepository = SettingsRepository(
+            InMemorySettingsPreferenceStore(),
+            InMemoryLocalSettingsStore(
+                insertCategoryFailure = IllegalStateException("sensitive internal detail"),
+            ),
+        )
+
+        expectFailure<IllegalStateException> {
+            failedRepository.addCategory("餐饮")
+        }
+    }
+
     private suspend fun expectValidation(
         expectedMessage: String,
         block: suspend () -> Unit,
@@ -126,6 +176,17 @@ class SettingsRepositoryTest {
             failure
         }
         assertEquals(expectedMessage, failure.message)
+    }
+
+    private suspend inline fun <reified T : Throwable> expectFailure(
+        crossinline block: suspend () -> Unit,
+    ) {
+        try {
+            block()
+            fail<T>("Expected ${T::class.simpleName}")
+        } catch (failure: Throwable) {
+            assertTrue(failure is T)
+        }
     }
 }
 
@@ -156,6 +217,7 @@ private class InMemoryLocalSettingsStore(
     categoryRows: List<CategorySetting> = emptyList(),
     accountRows: List<AccountSetting> = emptyList(),
     initialTransactionCount: Int = 0,
+    private val insertCategoryFailure: Throwable? = null,
 ) : LocalSettingsStore {
     val categoryRows = categoryRows.toMutableList()
     val accountRows = accountRows.toMutableList()
@@ -167,6 +229,7 @@ private class InMemoryLocalSettingsStore(
     var clearTransactionsCalls = 0
 
     override suspend fun insertCategory(name: String): Long {
+        insertCategoryFailure?.let { throw it }
         val id = (categoryRows.maxOfOrNull { it.id } ?: 0) + 1
         categoryRows += CategorySetting(id, name, categoryRows.size, false)
         publishCategories()

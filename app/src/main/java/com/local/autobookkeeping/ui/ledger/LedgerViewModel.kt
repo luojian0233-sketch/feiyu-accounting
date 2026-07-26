@@ -66,6 +66,21 @@ data class LedgerGroup(
     val transactions: List<Transaction>,
 )
 
+data class ReceiptDayModel(
+    val date: LocalDate,
+    val transactions: List<Transaction>,
+    val useRowSeparators: Boolean,
+)
+
+fun buildReceiptDayModels(groups: List<LedgerGroup>): List<ReceiptDayModel> =
+    groups.map { group ->
+        ReceiptDayModel(
+            date = group.date,
+            transactions = group.transactions,
+            useRowSeparators = true,
+        )
+    }
+
 data class LedgerUiState(
     val groups: List<LedgerGroup> = emptyList(),
     val filters: LedgerFilterState = LedgerFilterState(),

@@ -26,6 +26,8 @@ import androidx.compose.ui.unit.dp
 import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.domain.model.Transaction
 import com.local.autobookkeeping.ui.theme.AppCardSurface
+import com.local.autobookkeeping.ui.theme.AppSeparator
+import com.local.autobookkeeping.ui.theme.appVisualTokens
 import java.time.format.DateTimeFormatter
 
 @Composable
@@ -57,6 +59,7 @@ fun LedgerScreen(
             textStyle = MaterialTheme.typography.bodyMedium,
             shape = RoundedCornerShape(14.dp),
         )
+        val receiptStyle = appVisualTokens.dashedSeparators
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -74,17 +77,26 @@ fun LedgerScreen(
                     )
                 }
             }
-            state.groups.forEach { group ->
-                item(key = "date-${group.date}") {
-                    Text(
-                        group.date.format(DateTimeFormatter.ofPattern("M月d日")),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = Color.Gray,
-                        modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
-                    )
+            if (receiptStyle) {
+                items(
+                    buildReceiptDayModels(state.groups),
+                    key = { "receipt-day-${it.date}" },
+                ) { day ->
+                    ReceiptDayCard(day, onEdit)
                 }
-                items(group.transactions, key = { "transaction-${it.id}" }) { transaction ->
-                    TransactionRow(transaction, onEdit)
+            } else {
+                state.groups.forEach { group ->
+                    item(key = "date-${group.date}") {
+                        Text(
+                            group.date.format(DateTimeFormatter.ofPattern("M月d日")),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color.Gray,
+                            modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
+                        )
+                    }
+                    items(group.transactions, key = { "transaction-${it.id}" }) { transaction ->
+                        TransactionRow(transaction, onEdit)
+                    }
                 }
             }
         }
@@ -194,25 +206,65 @@ private fun TransactionRow(transaction: Transaction, onEdit: (Transaction) -> Un
             .testTag("transaction-${transaction.id}")
             .clickable { onEdit(transaction) },
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 11.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(transaction.merchant.ifBlank { transaction.category }, style = MaterialTheme.typography.bodyMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Text(transaction.category, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                    if (transaction.pendingConfirmation) Badge("待核对", Color(0xFFFFE6A8))
-                    if (transaction.internalTransfer) Badge("内部转账", Color(0xFFDDE8F6))
+        TransactionRowContent(transaction)
+    }
+}
+
+@Composable
+private fun ReceiptDayCard(
+    day: ReceiptDayModel,
+    onEdit: (Transaction) -> Unit,
+) {
+    AppCardSurface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp)
+            .testTag("receipt-day-${day.date}"),
+    ) {
+        Column {
+            Text(
+                day.date.format(DateTimeFormatter.ofPattern("M月d日")),
+                style = MaterialTheme.typography.labelMedium,
+                color = Color.Gray,
+                modifier = Modifier.padding(horizontal = 11.dp, vertical = 9.dp),
+            )
+            day.transactions.forEachIndexed { index, transaction ->
+                if (index > 0 && day.useRowSeparators) {
+                    AppSeparator(Modifier.padding(horizontal = 11.dp))
+                }
+                androidx.compose.foundation.layout.Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("transaction-${transaction.id}")
+                        .clickable { onEdit(transaction) },
+                ) {
+                    TransactionRowContent(transaction)
                 }
             }
-            Text(
-                formatMoney(transaction.amountMinor, transaction.direction),
-                color = if (transaction.direction == Direction.INCOME) Color(0xFF14845A) else Color(0xFF2A332F),
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-            )
         }
+    }
+}
+
+@Composable
+private fun TransactionRowContent(transaction: Transaction) {
+    Row(
+        modifier = Modifier.padding(horizontal = 11.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(transaction.merchant.ifBlank { transaction.category }, style = MaterialTheme.typography.bodyMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(transaction.category, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                if (transaction.pendingConfirmation) Badge("待核对", Color(0xFFFFE6A8))
+                if (transaction.internalTransfer) Badge("内部转账", Color(0xFFDDE8F6))
+            }
+        }
+        Text(
+            formatMoney(transaction.amountMinor, transaction.direction),
+            color = if (transaction.direction == Direction.INCOME) Color(0xFF14845A) else Color(0xFF2A332F),
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+        )
     }
 }
 

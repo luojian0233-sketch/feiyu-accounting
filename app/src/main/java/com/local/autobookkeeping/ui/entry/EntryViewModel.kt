@@ -96,50 +96,45 @@ data class EntryUiState(
     val deleting: Boolean = false,
     val showDeleteConfirmation: Boolean = false,
     val error: String? = null,
-    val categoryChoices: List<String> = emptyList(),
-    val accountChoices: List<String> = emptyList(),
+    val categoryChoices: List<EntryChoice> = emptyList(),
+    val accountChoices: List<EntryChoice> = emptyList(),
     val configurationManaged: Boolean = false,
+)
+
+data class EntryChoice(
+    val name: String,
+    val historicalOnly: Boolean,
 )
 
 class EntryViewModel(
     private val repository: LedgerRepository,
     settings: SettingsOperations? = null,
 ) : ViewModel() {
-    private val mutableState = MutableStateFlow(EntryUiState())
+    private val managesConfiguration = settings != null
+    private val mutableState = MutableStateFlow(
+        EntryUiState(configurationManaged = managesConfiguration),
+    )
     val state: StateFlow<EntryUiState> = mutableState.asStateFlow()
     private val operationMutex = Mutex()
+    private var visibleCategoryNames: List<String> = emptyList()
+    private var visibleAccountNames: List<String> = emptyList()
 
     init {
         settings?.visibleCategories?.onEach { rows ->
-            val choices = rows.map { it.name }
-            val current = mutableState.value
-            val draft = if (
-                current.draft.id == null &&
-                current.draft.category !in choices
-            ) {
-                current.draft.copy(category = choices.firstOrNull().orEmpty())
-            } else {
-                current.draft
-            }
-            mutableState.value = current.copy(
-                draft = draft,
-                categoryChoices = choices,
-                configurationManaged = true,
-            )
+            visibleCategoryNames = rows.map { it.name }
+            refreshManagedChoices()
         }?.launchIn(viewModelScope)
         settings?.visibleAccounts?.onEach { rows ->
-            mutableState.value = mutableState.value.copy(
-                accountChoices = rows.map { it.name },
-                configurationManaged = true,
-            )
+            visibleAccountNames = rows.map { it.name }
+            refreshManagedChoices()
         }?.launchIn(viewModelScope)
     }
 
     fun startNew() {
         mutableState.value = EntryUiState(
-            draft = EntryDraft(category = mutableState.value.categoryChoices.firstOrNull().orEmpty()),
-            categoryChoices = mutableState.value.categoryChoices,
-            accountChoices = mutableState.value.accountChoices,
+            draft = EntryDraft(category = visibleCategoryNames.firstOrNull().orEmpty()),
+            categoryChoices = visibleCategoryNames.map { EntryChoice(it, historicalOnly = false) },
+            accountChoices = visibleAccountNames.map { EntryChoice(it, historicalOnly = false) },
             configurationManaged = mutableState.value.configurationManaged,
         )
     }
@@ -151,6 +146,7 @@ class EntryViewModel(
             accountChoices = mutableState.value.accountChoices,
             configurationManaged = mutableState.value.configurationManaged,
         )
+        refreshManagedChoices()
     }
 
     fun update(transform: (EntryDraft) -> EntryDraft) {
@@ -158,6 +154,7 @@ class EntryViewModel(
             draft = transform(mutableState.value.draft),
             error = null,
         )
+        refreshManagedChoices()
     }
 
     fun requestDelete() {
@@ -171,6 +168,20 @@ class EntryViewModel(
     }
 
     suspend fun save(confirmPending: Boolean = false): Result<Long> {
+        val current = mutableState.value
+        if (
+            current.configurationManaged &&
+            current.draft.category !in current.categoryChoices.map { it.name }
+        ) {
+            return entryValidationFailure("请选择可用分类")
+        }
+        if (
+            current.configurationManaged &&
+            current.draft.account.isNotBlank() &&
+            current.draft.account !in current.accountChoices.map { it.name }
+        ) {
+            return entryValidationFailure("请选择可用账户或不选择账户")
+        }
         val transaction = try {
             mutableState.value.draft.toTransaction(confirmPending)
         } catch (failure: EntryValidationException) {
@@ -224,6 +235,43 @@ class EntryViewModel(
         } finally {
             operationMutex.unlock()
         }
+    }
+
+    private fun refreshManagedChoices() {
+        val current = mutableState.value
+        val managed = managesConfiguration ||
+            current.configurationManaged ||
+            visibleCategoryNames.isNotEmpty() ||
+            visibleAccountNames.isNotEmpty()
+        if (!managed) return
+        val draft = if (
+            current.draft.id == null &&
+            current.draft.category !in visibleCategoryNames
+        ) {
+            current.draft.copy(category = visibleCategoryNames.firstOrNull().orEmpty())
+        } else {
+            current.draft
+        }
+        val categoryHistory = draft.category.takeIf {
+            draft.id != null && it.isNotBlank() && it !in visibleCategoryNames
+        }
+        val accountHistory = draft.account.takeIf {
+            draft.id != null && it.isNotBlank() && it !in visibleAccountNames
+        }
+        mutableState.value = current.copy(
+            draft = draft,
+            categoryChoices = visibleCategoryNames.map { EntryChoice(it, historicalOnly = false) } +
+                listOfNotNull(categoryHistory?.let { EntryChoice(it, historicalOnly = true) }),
+            accountChoices = visibleAccountNames.map { EntryChoice(it, historicalOnly = false) } +
+                listOfNotNull(accountHistory?.let { EntryChoice(it, historicalOnly = true) }),
+            configurationManaged = true,
+        )
+    }
+
+    private fun entryValidationFailure(message: String): Result<Long> {
+        val failure = EntryValidationException(message)
+        mutableState.value = mutableState.value.copy(error = message)
+        return Result.failure(failure)
     }
 }
 

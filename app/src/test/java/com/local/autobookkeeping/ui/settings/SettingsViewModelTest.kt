@@ -5,6 +5,7 @@ import com.local.autobookkeeping.data.CategorySetting
 import com.local.autobookkeeping.data.SettingsOperations
 import com.local.autobookkeeping.ui.theme.ThemeStyle
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,6 +17,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
@@ -100,7 +102,7 @@ class SettingsViewModelTest {
     @Test
     fun `repository validation errors are surfaced in Chinese`() = runTest(dispatcher) {
         val repository = FakeSettingsOperations(
-            categoryFailure = IllegalArgumentException("分类名称已存在"),
+            operationFailure = com.local.autobookkeeping.data.SettingsValidationException("分类名称已存在"),
         )
         val viewModel = SettingsViewModel(repository) { false }
 
@@ -110,10 +112,43 @@ class SettingsViewModelTest {
         assertEquals("分类名称已存在", viewModel.state.value.error)
     }
 
+    @Test
+    fun `unexpected repository details are never exposed to user`() = runTest(dispatcher) {
+        val repository = FakeSettingsOperations(
+            operationFailure = IllegalStateException("/data/user/0 secret notification payload"),
+        )
+        val viewModel = SettingsViewModel(repository) { false }
+
+        assertTrue(viewModel.addCategory("餐饮").isFailure)
+
+        assertEquals("设置保存失败，请稍后重试", viewModel.state.value.error)
+    }
+
+    @Test
+    fun `cancellation from repository is rethrown`() {
+        val repository = FakeSettingsOperations(
+            operationFailure = CancellationException("cancel"),
+        )
+        val viewModel = SettingsViewModel(repository) { false }
+
+        assertThrows(CancellationException::class.java) {
+            runTest(dispatcher) { viewModel.addCategory("餐饮") }
+        }
+    }
+
+    @Test
+    fun `notification settings failure uses stable Chinese message`() {
+        val viewModel = SettingsViewModel(FakeSettingsOperations()) { false }
+
+        viewModel.reportNotificationSettingsLaunchFailure()
+
+        assertEquals("无法打开系统设置，请手动开启通知使用权", viewModel.state.value.error)
+    }
+
     private class FakeSettingsOperations(
         initialCount: Int = 0,
         private val delayClear: Boolean = false,
-        private val categoryFailure: Throwable? = null,
+        private val operationFailure: Throwable? = null,
     ) : SettingsOperations {
         override val theme = MutableStateFlow(ThemeStyle.CLEAR_MINT)
         override val wechatEnabled = MutableStateFlow(false)
@@ -144,7 +179,7 @@ class SettingsViewModelTest {
         }
 
         override suspend fun addCategory(name: String): Long {
-            categoryFailure?.let { throw it }
+            operationFailure?.let { throw it }
             return 1
         }
 

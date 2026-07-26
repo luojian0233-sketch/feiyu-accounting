@@ -59,7 +59,7 @@ fun EntryScreen(
     val categoryChoices = if (state.configurationManaged) {
         state.categoryChoices
     } else {
-        defaultCategories
+        defaultCategories.map { EntryChoice(it, historicalOnly = false) }
     }
     val context = LocalContext.current
     val zone = BOOKKEEPING_ZONE
@@ -128,11 +128,20 @@ fun EntryScreen(
         item {
             Text("分类", style = MaterialTheme.typography.labelLarge)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                items(categoryChoices) { category ->
+                items(categoryChoices, key = { "${it.name}-${it.historicalOnly}" }) { category ->
                     FilterChip(
-                        selected = draft.category == category,
-                        onClick = { onUpdate { it.copy(category = category) } },
-                        label = { Text(category, style = MaterialTheme.typography.labelMedium) },
+                        selected = draft.category == category.name,
+                        onClick = { onUpdate { it.copy(category = category.name) } },
+                        label = {
+                            Text(
+                                if (category.historicalOnly) {
+                                    "${category.name}（已隐藏/历史）"
+                                } else {
+                                    category.name
+                                },
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                        },
                     )
                 }
             }
@@ -151,25 +160,46 @@ fun EntryScreen(
             )
         }
         item {
-            OutlinedTextField(
-                value = draft.account,
-                onValueChange = { value -> onUpdate { it.copy(account = value) } },
-                label = { Text("账户") },
-                singleLine = true,
-                textStyle = MaterialTheme.typography.bodyMedium,
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            if (state.configurationManaged && state.accountChoices.isNotEmpty()) {
+            if (state.configurationManaged) {
+                Text("账户", style = MaterialTheme.typography.labelLarge)
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    items(state.accountChoices) { account ->
+                    item {
                         FilterChip(
-                            selected = draft.account == account,
-                            onClick = { onUpdate { it.copy(account = account) } },
-                            label = { Text(account, style = MaterialTheme.typography.labelMedium) },
+                            selected = draft.account.isBlank(),
+                            onClick = { onUpdate { it.copy(account = "") } },
+                            label = { Text("未选择") },
+                        )
+                    }
+                    items(
+                        state.accountChoices,
+                        key = { "${it.name}-${it.historicalOnly}" },
+                    ) { account ->
+                        FilterChip(
+                            selected = draft.account == account.name,
+                            onClick = { onUpdate { it.copy(account = account.name) } },
+                            label = {
+                                Text(
+                                    if (account.historicalOnly) {
+                                        "${account.name}（已隐藏/历史）"
+                                    } else {
+                                        account.name
+                                    },
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
+                            },
                         )
                     }
                 }
+            } else {
+                OutlinedTextField(
+                    value = draft.account,
+                    onValueChange = { value -> onUpdate { it.copy(account = value) } },
+                    label = { Text("账户") },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         }
         item {

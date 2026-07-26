@@ -1,8 +1,6 @@
 package com.local.autobookkeeping
 
-import android.content.Intent
 import android.os.Bundle
-import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -186,6 +184,7 @@ fun AutoBookkeepingRoot(
 
     AutoBookkeepingTheme(themeStyle) {
         Scaffold(
+            modifier = Modifier.testTag("active-theme-${themeStyle.name}"),
             containerColor = MaterialTheme.colorScheme.background,
             bottomBar = {
                 NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
@@ -255,7 +254,9 @@ fun AutoBookkeepingRoot(
                             navigator.select(AppDestination.LEDGER)
                         },
                         onOpenNotificationSettings = {
-                            context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                            if (!openNotificationAccessSafely(AndroidNotificationSettingsLauncher(context))) {
+                                settingsViewModel?.reportNotificationSettingsLaunchFailure()
+                            }
                         },
                         onEdit = {
                             entryViewModel.edit(it)
@@ -337,7 +338,9 @@ fun AutoBookkeepingRoot(
                             onBankDraftChanged = settingsViewModel::updateBankPackageDraft,
                             onSaveBankPackages = { scope.launch { settingsViewModel.saveBankPackages() } },
                             onOpenNotificationAccess = {
-                                context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                                if (!openNotificationAccessSafely(AndroidNotificationSettingsLauncher(context))) {
+                                    settingsViewModel.reportNotificationSettingsLaunchFailure()
+                                }
                             },
                             onAddCategory = { scope.launch { settingsViewModel.addCategory(it) } },
                             onRenameCategory = { id, name ->

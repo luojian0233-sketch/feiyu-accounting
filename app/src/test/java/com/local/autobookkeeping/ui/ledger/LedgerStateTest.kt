@@ -65,6 +65,26 @@ class LedgerStateTest {
     }
 
     @Test
+    fun `receipt day models keep every day in one card with all of its rows`() {
+        val sameDay = rows + tx(
+            14,
+            Direction.EXPENSE,
+            "饮品",
+            "现金",
+            "咖啡",
+            "",
+            "2026-07-22T05:00:00Z",
+        )
+
+        val models = buildReceiptDayModels(groupTransactionsByDate(sameDay, zone))
+
+        assertEquals(3, models.size)
+        assertEquals(LocalDate.parse("2026-07-22"), models.first().date)
+        assertEquals(listOf(14L, 1L), models.first().transactions.map { it.id })
+        assertTrue(models.first().useRowSeparators)
+    }
+
+    @Test
     fun `default bookkeeping date remains Shanghai when device zone differs`() {
         val original = TimeZone.getDefault()
         try {

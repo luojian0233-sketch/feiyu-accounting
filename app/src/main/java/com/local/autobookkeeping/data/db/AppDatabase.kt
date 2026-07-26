@@ -49,8 +49,8 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE categories ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE accounts ADD COLUMN displayOrder INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE accounts ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("UPDATE categories SET displayOrder = id")
-                db.execSQL("UPDATE accounts SET displayOrder = id")
+                normalizeTableDisplayOrder(db, "categories")
+                normalizeTableDisplayOrder(db, "accounts")
             }
         }
     }
@@ -66,3 +66,23 @@ abstract class AppDatabase : RoomDatabase() {
         }
     }
 }
+
+private fun normalizeTableDisplayOrder(
+    db: SupportSQLiteDatabase,
+    table: String,
+) {
+    val ids = buildList {
+        db.query("SELECT id FROM $table ORDER BY id ASC").use { cursor ->
+            while (cursor.moveToNext()) add(cursor.getLong(0))
+        }
+    }
+    normalizedDisplayOrders(ids).forEach { (id, order) ->
+        db.execSQL("UPDATE $table SET displayOrder = ? WHERE id = ?", arrayOf<Any>(order, id))
+    }
+}
+
+internal fun normalizedDisplayOrders(ids: List<Long>): Map<Long, Int> =
+    ids.distinct().sorted().mapIndexed { order, id -> id to order }.toMap()
+
+internal fun nextDisplayOrder(existingOrders: List<Int>): Int =
+    existingOrders.maxOrNull()?.plus(1) ?: 0

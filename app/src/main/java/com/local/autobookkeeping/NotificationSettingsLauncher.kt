@@ -1,0 +1,47 @@
+package com.local.autobookkeeping
+
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+
+internal const val NOTIFICATION_ACCESS_ACTION =
+    "android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"
+internal const val GENERAL_SETTINGS_ACTION = "android.settings.SETTINGS"
+
+internal interface NotificationSettingsLauncher {
+    fun canOpen(action: String): Boolean
+    fun open(action: String)
+}
+
+internal class AndroidNotificationSettingsLauncher(
+    private val context: Context,
+) : NotificationSettingsLauncher {
+    override fun canOpen(action: String): Boolean =
+        Intent(action).resolveActivity(context.packageManager) != null
+
+    override fun open(action: String) {
+        context.startActivity(Intent(action))
+    }
+}
+
+internal fun openNotificationAccessSafely(
+    launcher: NotificationSettingsLauncher,
+): Boolean {
+    for (action in listOf(NOTIFICATION_ACCESS_ACTION, GENERAL_SETTINGS_ACTION)) {
+        val resolvable = try {
+            launcher.canOpen(action)
+        } catch (_: SecurityException) {
+            false
+        }
+        if (!resolvable) continue
+        try {
+            launcher.open(action)
+            return true
+        } catch (_: ActivityNotFoundException) {
+            // Try the general settings fallback.
+        } catch (_: SecurityException) {
+            // Try the general settings fallback.
+        }
+    }
+    return false
+}

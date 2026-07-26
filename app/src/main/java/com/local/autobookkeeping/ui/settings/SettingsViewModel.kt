@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.local.autobookkeeping.data.AccountSetting
 import com.local.autobookkeeping.data.CategorySetting
 import com.local.autobookkeeping.data.SettingsOperations
+import com.local.autobookkeeping.data.SettingsValidationException
 import com.local.autobookkeeping.data.isValidBankPackage
 import com.local.autobookkeeping.ui.theme.ThemeStyle
 import kotlinx.coroutines.CancellationException
@@ -82,6 +83,12 @@ class SettingsViewModel(
 
     fun updateBankPackageDraft(value: String) {
         mutableState.value = mutableState.value.copy(bankPackageDraft = value, error = null)
+    }
+
+    fun reportNotificationSettingsLaunchFailure() {
+        mutableState.value = mutableState.value.copy(
+            error = "无法打开系统设置，请手动开启通知使用权",
+        )
     }
 
     suspend fun setTheme(style: ThemeStyle): Result<Unit> = execute {
@@ -190,7 +197,11 @@ class SettingsViewModel(
             throw failure
         } catch (failure: Throwable) {
             mutableState.value = mutableState.value.copy(
-                error = failure.message ?: "设置保存失败，请稍后重试",
+                error = when (failure) {
+                    is SettingsValidationException ->
+                        failure.message ?: "设置保存失败，请稍后重试"
+                    else -> "设置保存失败，请稍后重试"
+                },
             )
             Result.failure(failure)
         } finally {

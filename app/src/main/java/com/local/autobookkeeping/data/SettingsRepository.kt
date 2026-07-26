@@ -3,9 +3,11 @@ package com.local.autobookkeeping.data
 import android.content.Context
 import android.database.sqlite.SQLiteConstraintException
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -13,12 +15,16 @@ import androidx.room.withTransaction
 import com.local.autobookkeeping.data.db.AccountEntity
 import com.local.autobookkeeping.data.db.AppDatabase
 import com.local.autobookkeeping.data.db.CategoryEntity
+import com.local.autobookkeeping.data.db.nextDisplayOrder
 import com.local.autobookkeeping.ui.theme.ThemeStyle
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import java.io.IOException
 
 interface NotificationSourceSettings {
     val wechatEnabled: Flow<Boolean>
@@ -91,6 +97,7 @@ internal interface LocalSettingsStore {
 
 private val Context.notificationSettingsDataStore by preferencesDataStore(
     name = "notification_source_settings",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
 )
 
 class SettingsRepository internal constructor(
@@ -105,6 +112,11 @@ class SettingsRepository internal constructor(
             context.applicationContext.notificationSettingsDataStore,
         ),
         localSettings = database?.let(::RoomLocalSettingsStore) ?: EmptyLocalSettingsStore,
+    )
+
+    constructor(dataStore: DataStore<Preferences>) : this(
+        preferences = DataStoreSettingsPreferenceStore(dataStore),
+        localSettings = EmptyLocalSettingsStore,
     )
 
     override val wechatEnabled: Flow<Boolean> = preferences.wechatEnabled
@@ -199,12 +211,12 @@ private class DataStoreSettingsPreferenceStore(
 ) : SettingsPreferenceStore {
     override val wechatEnabled: Flow<Boolean> = booleanSetting(WECHAT_ENABLED)
     override val alipayEnabled: Flow<Boolean> = booleanSetting(ALIPAY_ENABLED)
-    override val enabledBankPackages: Flow<Set<String>> = dataStore.data
+    override val enabledBankPackages: Flow<Set<String>> = recoverPreferenceReads(dataStore.data)
         .map { preferences ->
             preferences[ENABLED_BANK_PACKAGES].orEmpty().let(::sanitizeBankPackages)
         }
         .distinctUntilChanged()
-    override val theme: Flow<ThemeStyle> = dataStore.data
+    override val theme: Flow<ThemeStyle> = recoverPreferenceReads(dataStore.data)
         .map { preferences ->
             preferences[THEME_STYLE]
                 ?.let { stored -> ThemeStyle.entries.firstOrNull { it.name == stored } }
@@ -223,7 +235,8 @@ private class DataStoreSettingsPreferenceStore(
         dataStore.edit { preferences -> preferences[THEME_STYLE] = style.name }
     }
 
-    private fun booleanSetting(key: Preferences.Key<Boolean>): Flow<Boolean> = dataStore.data
+    private fun booleanSetting(key: Preferences.Key<Boolean>): Flow<Boolean> =
+        recoverPreferenceReads(dataStore.data)
         .map { preferences -> preferences[key] ?: SettingsRepository.DEFAULT_SOURCE_ENABLED }
         .distinctUntilChanged()
 
@@ -267,9 +280,9 @@ private class RoomLocalSettingsStore(
     override val transactionCount: Flow<Int> = dao.observeTransactionCount()
 
     override suspend fun insertCategory(name: String): Long = database.withTransaction {
-        val order = dao.categoryNames().size
+        val order = nextDisplayOrder(dao.categoryDisplayOrders())
         dao.insertCategory(CategoryEntity(name = name, displayOrder = order)).also {
-            check(it != -1L) { "分类名称已存在" }
+            if (it == -1L) throw SettingsValidationException("分类名称已存在")
         }
     }
 
@@ -290,9 +303,9 @@ private class RoomLocalSettingsStore(
     }
 
     override suspend fun insertAccount(name: String): Long = database.withTransaction {
-        val order = dao.accountCount()
+        val order = nextDisplayOrder(dao.accountDisplayOrders())
         dao.insertAccount(AccountEntity(name = name, displayOrder = order)).also {
-            check(it != -1L) { "账户名称已存在" }
+            if (it == -1L) throw SettingsValidationException("账户名称已存在")
         }
     }
 
@@ -352,8 +365,8 @@ private suspend inline fun <T> settingsMutation(
     block()
 } catch (_: SQLiteConstraintException) {
     throw SettingsValidationException(constraintMessage)
-} catch (failure: IllegalStateException) {
-    throw SettingsValidationException(failure.message ?: "设置保存失败")
+} catch (failure: CancellationException) {
+    throw failure
 }
 
 internal fun sanitizeBankPackages(packages: Set<String>): Set<String> = packages
@@ -364,6 +377,15 @@ internal fun sanitizeBankPackages(packages: Set<String>): Set<String> = packages
     .toSet()
 
 internal fun isValidBankPackage(value: String): Boolean = BANK_PACKAGE_NAME.matches(value.trim())
+
+internal fun recoverPreferenceReads(source: Flow<Preferences>): Flow<Preferences> =
+    source.catch { failure ->
+        if (failure is IOException) {
+            emit(emptyPreferences())
+        } else {
+            throw failure
+        }
+    }
 
 private val BANK_PACKAGE_NAME =
     Regex("[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)+")
