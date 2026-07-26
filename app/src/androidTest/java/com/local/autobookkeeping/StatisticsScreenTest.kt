@@ -1,6 +1,8 @@
 package com.local.autobookkeeping
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -13,6 +15,7 @@ import com.local.autobookkeeping.domain.model.StatisticsSummary
 import com.local.autobookkeeping.ui.statistics.RangeMode
 import com.local.autobookkeeping.ui.statistics.StatisticsScreen
 import com.local.autobookkeeping.ui.statistics.StatisticsUiState
+import com.local.autobookkeeping.ui.statistics.statisticsCategoryRowTag
 import java.time.LocalDate
 import java.time.ZoneId
 import org.junit.Assert.assertEquals
@@ -55,6 +58,23 @@ class StatisticsScreenTest {
             .assertIsDisplayed()
         compose.onNodeWithText("餐饮").assertIsDisplayed().performClick()
         compose.runOnIdle { assertEquals("餐饮", selected?.category) }
+    }
+
+    @Test
+    fun categoryRankingTagExposesMergedCategoryAndExactAmount() {
+        compose.setContent {
+            StatisticsScreen(
+                state = state(
+                    summary = StatisticsSummary(
+                        totalMinor = 2_800,
+                        categories = listOf(CategoryTotal("红包", 2_800)),
+                    ),
+                ),
+            )
+        }
+
+        compose.onNodeWithTag(statisticsCategoryRowTag("红包"))
+            .assert(hasText("红包") and hasText("¥28.00"))
     }
 
     @Test

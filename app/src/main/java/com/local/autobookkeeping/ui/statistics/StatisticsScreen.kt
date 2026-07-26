@@ -52,8 +52,8 @@ import java.util.Locale
 const val STATISTICS_LIST_TAG = "statistics-list"
 const val STATISTICS_TOTAL_TAG = "statistics-total"
 
-fun statisticsCategoryAmountTag(category: String): String =
-    "statistics-category-amount-$category"
+fun statisticsCategoryRowTag(category: String): String =
+    "statistics-category-$category"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -246,6 +246,7 @@ private fun CategoryRow(
     AppCardSurface(
         modifier = Modifier
             .fillMaxWidth()
+            .testTag(statisticsCategoryRowTag(item.category))
             .clickable(onClick = onClick),
     ) {
         Row(
@@ -274,7 +275,6 @@ private fun CategoryRow(
                 "¥${formatUnsignedMoney(item.amountMinor)}",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium,
-                modifier = Modifier.testTag(statisticsCategoryAmountTag(item.category)),
             )
         }
     }

@@ -2,6 +2,7 @@ package com.local.autobookkeeping
 
 import android.view.View
 import android.widget.DatePicker
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasTestTag
@@ -30,7 +31,7 @@ import com.local.autobookkeeping.ui.entry.ENTRY_DATE_TAG
 import com.local.autobookkeeping.ui.ledger.LEDGER_LIST_TAG
 import com.local.autobookkeeping.ui.statistics.STATISTICS_LIST_TAG
 import com.local.autobookkeeping.ui.statistics.STATISTICS_TOTAL_TAG
-import com.local.autobookkeeping.ui.statistics.statisticsCategoryAmountTag
+import com.local.autobookkeeping.ui.statistics.statisticsCategoryRowTag
 import com.local.autobookkeeping.ui.theme.ThemeStyle
 import java.time.Instant
 import java.time.LocalDate
@@ -172,11 +173,11 @@ class EndToEndTest {
             .performScrollTo()
             .assertIsDisplayed()
 
-        val rankingAmountTag = statisticsCategoryAmountTag("红包")
-        list.performScrollToNode(hasTestTag(rankingAmountTag))
-        compose.onNodeWithTag(rankingAmountTag)
+        val rankingRowTag = statisticsCategoryRowTag("红包")
+        list.performScrollToNode(hasTestTag(rankingRowTag))
+        compose.onNodeWithTag(rankingRowTag)
             .performScrollTo()
-            .assertTextEquals(formatted)
+            .assert(hasText("红包") and hasText(formatted))
     }
 
     private fun assertLedgerAmount(amount: String) {
@@ -191,13 +192,8 @@ class EndToEndTest {
     }
 
     private fun waitForCondition(description: String, condition: () -> Boolean) {
-        try {
+        withTimeoutDiagnostic(description, WAIT_TIMEOUT_MILLIS) {
             compose.waitUntil(timeoutMillis = WAIT_TIMEOUT_MILLIS, condition = condition)
-        } catch (failure: Exception) {
-            throw AssertionError(
-                "等待超时（${WAIT_TIMEOUT_MILLIS}ms）：$description",
-                failure,
-            )
         }
     }
 
