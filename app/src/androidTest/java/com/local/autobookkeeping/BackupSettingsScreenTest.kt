@@ -1,10 +1,12 @@
 package com.local.autobookkeeping
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,7 +68,9 @@ class BackupSettingsScreenTest {
             )
         }
 
-        compose.onNodeWithText("导出备份").performScrollTo().performClick()
+        compose.onNodeWithTag("settings-list")
+            .performScrollToNode(hasText("导出备份"))
+        compose.onNodeWithText("导出备份").performClick()
         compose.onNodeWithText("导入备份").performClick()
         compose.onNodeWithText("当前交易、分类、账户、商户规则和主题将被备份文件替换。").assertIsDisplayed()
         assertEquals(0, confirmCalls)

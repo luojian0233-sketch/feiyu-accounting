@@ -5,6 +5,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.espresso.Espresso.pressBack
 import com.local.autobookkeeping.ui.navigation.AppDestination
 import org.junit.Rule
 import org.junit.Test
@@ -33,8 +34,9 @@ class NavigationTest {
     @Test
     fun systemBackFromEntryReturnsHomeInsteadOfFinishingActivity() {
         compose.onNodeWithTag("nav-${AppDestination.ENTRY.name}").performClick()
+        compose.onNodeWithTag("screen-${AppDestination.ENTRY.label}").assertIsDisplayed()
 
-        compose.activity.onBackPressedDispatcher.onBackPressed()
+        pressBack()
 
         compose.onNodeWithTag("screen-${AppDestination.HOME.label}").assertIsDisplayed()
     }

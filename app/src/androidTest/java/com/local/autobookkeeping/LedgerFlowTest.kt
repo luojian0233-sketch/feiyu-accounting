@@ -2,12 +2,14 @@ package com.local.autobookkeeping
 
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import com.local.autobookkeeping.data.LedgerRepository
@@ -45,6 +47,8 @@ class LedgerFlowTest {
         compose.onNodeWithTag("merchant").performTextInput("任务六测试面馆已改")
         compose.onNodeWithText("保存修改").performClick()
         compose.onNodeWithText("任务六测试面馆已改").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("entry-list")
+            .performScrollToNode(hasText("删除记录"))
         compose.onNodeWithText("删除记录").performClick()
         compose.onNodeWithText("确认删除").performClick()
         compose.onAllNodesWithText("任务六测试面馆已改").assertCountEquals(0)

@@ -64,7 +64,10 @@ fun SettingsScreen(
     var accountToRename by rememberSaveable { mutableStateOf<Long?>(null) }
 
     LazyColumn(
-        modifier = modifier.fillMaxSize().padding(horizontal = 16.dp),
+        modifier = modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp)
+            .testTag("settings-list"),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {

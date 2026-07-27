@@ -116,14 +116,16 @@ class EndToEndTest {
         }
         compose.onNodeWithTag("amount").performTextInput(amount)
         setEntryDate(date)
-        compose.onNodeWithText("红包").performScrollTo().performClick()
+        compose.onNodeWithTag("entry-category-list")
+            .performScrollToNode(hasText("红包"))
+        compose.onNodeWithText("红包").performClick()
         if (internalTransfer) {
             val transferLabel = compose.onNodeWithText("内部转账")
             transferLabel.performScrollTo()
             compose.onNode(isToggleable()).performClick()
         }
         compose.onNodeWithText("保存记录").performScrollTo().performClick()
-        waitForTag("screen-账本", "保存 $amount 后返回账本")
+        waitForTag("screen-账单", "保存 $amount 后返回账单")
     }
 
     private fun setEntryDate(date: LocalDate) {

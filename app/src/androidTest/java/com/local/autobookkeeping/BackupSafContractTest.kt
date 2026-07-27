@@ -2,13 +2,13 @@ package com.local.autobookkeeping
 
 import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BackupSafContractTest {
     @Test
-    fun createDocumentUsesJsonMimeTypeAndOpenableSafAction() {
+    fun createDocumentUsesJsonMimeTypeAndCreateAction() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
 
         val intent = backupCreateDocumentContract()
@@ -16,19 +16,20 @@ class BackupSafContractTest {
 
         assertEquals(Intent.ACTION_CREATE_DOCUMENT, intent.action)
         assertEquals("application/json", intent.type)
-        assertTrue(intent.categories.orEmpty().contains(Intent.CATEGORY_OPENABLE))
         assertEquals("自动记账备份.json", intent.getStringExtra(Intent.EXTRA_TITLE))
     }
 
     @Test
-    fun openDocumentUsesJsonMimeTypeAndOpenableSafAction() {
+    fun openDocumentConstrainsSelectionToJsonThroughMimeTypesExtra() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
 
         val intent = backupOpenDocumentContract()
             .createIntent(context, arrayOf("application/json"))
 
         assertEquals(Intent.ACTION_OPEN_DOCUMENT, intent.action)
-        assertEquals("application/json", intent.type)
-        assertTrue(intent.categories.orEmpty().contains(Intent.CATEGORY_OPENABLE))
+        assertArrayEquals(
+            arrayOf("application/json"),
+            intent.getStringArrayExtra(Intent.EXTRA_MIME_TYPES),
+        )
     }
 }

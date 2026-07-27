@@ -61,12 +61,12 @@ class ThemeSwitchTest {
         compose.onNodeWithText("纸感极简").performClick()
         compose.onNodeWithTag("active-theme-PAPER_MINIMAL").assertIsDisplayed()
         compose.onNodeWithTag("nav-LEDGER").performClick()
-        compose.onNodeWithTag("screen-账本").assertIsDisplayed()
+        compose.onNodeWithTag("screen-账单").assertIsDisplayed()
         compose.onNodeWithText(TEST_MERCHANT).assertIsDisplayed()
 
         scenario.recreate()
 
-        compose.onNodeWithTag("screen-账本").assertIsDisplayed()
+        compose.onNodeWithTag("screen-账单").assertIsDisplayed()
         compose.onNodeWithTag("active-theme-PAPER_MINIMAL").assertIsDisplayed()
         waitForText(TEST_MERCHANT)
         val persisted = runBlocking {

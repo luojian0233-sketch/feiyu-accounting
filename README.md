@@ -37,7 +37,9 @@
 ./gradlew.bat clean :app:testDebugUnitTest :app:connectedDebugAndroidTest :app:lintDebug :app:assembleDebug
 ```
 
-当前环境没有已连接的 Android 设备，且 Windows Hypervisor Platform 未启用，因此 `connectedDebugAndroidTest` 和[真机清单](docs/testing/manual-android-checklist.md)当前均为 **未验证**。端到端测试已经编译进 AndroidTest APK；这不代表它已在设备上通过。整体 MVP 尚未完成最终真机验收。
+2026-07-27 已在真机 PKG110（Android 16 / API 36）安装干净构建的 Debug APK 和 AndroidTest APK，并运行完整 instrumentation 测试集：`23 tests, 0 failed, 0 ignored`。其中 `EndToEndTest.completePersonalLedgerJourney` 已验证手动支出、手动收入、内部转账、统计排除、主题切换与账单持久化旅程。
+
+由于所有直接 `adb` 调用按本次验收要求限制为 10 秒，设备端测试使用带 60 秒硬上限的 AndroidJUnitRunner 执行并保存完整结果，而不是让 Gradle 的 `connectedDebugAndroidTest` 无期限等待。人工[真机清单](docs/testing/manual-android-checklist.md)尚未逐项执行，因此整体 MVP 仍不能标记为全面人工验收通过。
 
 可行的无设备验证还会构建单元测试、lint、Debug APK 和 AndroidTest APK：
 
@@ -53,10 +55,10 @@
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
-本次 Task 10 可行验证产物为 `13,811,964` 字节，SHA-256：
+本次真机验证使用的干净构建产物为 `13,811,964` 字节，SHA-256：
 
 ```text
-89E59BB0DD0AB3CEF32508B31BFBF7373D91D8262567FD7D499E471FD375B18B
+469F6A270A0DA13B373BC69528A6BFDF7DA9EA68F5A980F4312D6D77B18FBA91
 ```
 
 连接已授权调试的 Android 8.0+ 设备后，可在项目根目录安装：
@@ -65,4 +67,4 @@ app/build/outputs/apk/debug/app-debug.apk
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-APK 是可重复生成的忽略构建产物，不提交到 Git；Task 10 报告同时记录了生成环境和 AndroidTest APK 证据。
+APK 是可重复生成的忽略构建产物，不提交到 Git。本次同时验证了 169 个 JVM 测试（0 失败）、Lint（0 错误、5 个警告）以及 23 个真机 instrumentation 测试（0 失败）。

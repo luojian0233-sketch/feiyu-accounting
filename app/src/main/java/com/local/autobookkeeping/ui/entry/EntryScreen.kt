@@ -70,7 +70,8 @@ fun EntryScreen(
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = 16.dp)
+            .testTag("entry-list"),
         verticalArrangement = Arrangement.spacedBy(11.dp),
     ) {
         item {
@@ -129,7 +130,10 @@ fun EntryScreen(
         }
         item {
             Text("分类", style = MaterialTheme.typography.labelLarge)
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            LazyRow(
+                modifier = Modifier.testTag("entry-category-list"),
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
                 items(categoryChoices, key = { "${it.name}-${it.historicalOnly}" }) { category ->
                     FilterChip(
                         selected = draft.category == category.name,
