@@ -5,8 +5,10 @@ import androidx.lifecycle.viewModelScope
 import com.local.autobookkeeping.data.LedgerRepository
 import com.local.autobookkeeping.data.SettingsOperations
 import com.local.autobookkeeping.domain.model.Direction
+import com.local.autobookkeeping.domain.model.PaymentPlatform
 import com.local.autobookkeeping.domain.model.Source
 import com.local.autobookkeeping.domain.model.Transaction
+import com.local.autobookkeeping.domain.model.TransactionEventKind
 import java.math.BigDecimal
 import java.time.Instant
 import java.time.LocalDate
@@ -37,6 +39,9 @@ data class EntryDraft(
     val pendingConfirmation: Boolean = false,
     val dedupeKey: String? = null,
     val refundOfId: Long? = null,
+    val platform: PaymentPlatform = PaymentPlatform.UNKNOWN,
+    val eventKind: TransactionEventKind = TransactionEventKind.UNKNOWN,
+    val recognitionConfidence: Int = 100,
 ) {
     fun toTransaction(confirmPending: Boolean = false): Transaction {
         if (!AMOUNT_PATTERN.matches(amountText)) {
@@ -68,6 +73,9 @@ data class EntryDraft(
             internalTransfer = internalTransfer,
             dedupeKey = dedupeKey,
             refundOfId = refundOfId,
+            platform = platform,
+            eventKind = eventKind,
+            recognitionConfidence = recognitionConfidence,
         )
     }
 
@@ -86,6 +94,9 @@ data class EntryDraft(
             pendingConfirmation = transaction.pendingConfirmation,
             dedupeKey = transaction.dedupeKey,
             refundOfId = transaction.refundOfId,
+            platform = transaction.platform,
+            eventKind = transaction.eventKind,
+            recognitionConfidence = transaction.recognitionConfidence,
         )
     }
 }

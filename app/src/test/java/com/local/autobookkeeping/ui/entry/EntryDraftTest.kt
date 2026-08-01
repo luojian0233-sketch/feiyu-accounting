@@ -1,7 +1,9 @@
 package com.local.autobookkeeping.ui.entry
 
 import com.local.autobookkeeping.domain.model.Direction
+import com.local.autobookkeeping.domain.model.PaymentPlatform
 import com.local.autobookkeeping.domain.model.Source
+import com.local.autobookkeeping.domain.model.TransactionEventKind
 import java.time.Instant
 import java.time.LocalDate
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -65,6 +67,21 @@ class EntryDraftTest {
 
         assertTrue(draft.toTransaction(confirmPending = false).pendingConfirmation)
         assertFalse(draft.toTransaction(confirmPending = true).pendingConfirmation)
+    }
+
+    @Test
+    fun `editing a recognized transaction preserves recognition metadata`() {
+        val original = draft("12").toTransaction().copy(
+            platform = PaymentPlatform.ALIPAY,
+            eventKind = TransactionEventKind.REFUND,
+            recognitionConfidence = 82,
+        )
+
+        val saved = EntryDraft.from(original).toTransaction()
+
+        assertEquals(PaymentPlatform.ALIPAY, saved.platform)
+        assertEquals(TransactionEventKind.REFUND, saved.eventKind)
+        assertEquals(82, saved.recognitionConfidence)
     }
 
     @Test

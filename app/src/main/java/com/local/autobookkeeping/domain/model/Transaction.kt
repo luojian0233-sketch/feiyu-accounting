@@ -10,6 +10,8 @@ enum class Direction {
 enum class Source {
     MANUAL,
     NOTIFICATION,
+    PAGE_RECOGNITION,
+    SCREENSHOT,
 }
 
 data class Transaction(
@@ -27,11 +29,15 @@ data class Transaction(
     val internalTransfer: Boolean = false,
     val dedupeKey: String? = null,
     val refundOfId: Long? = null,
+    val platform: PaymentPlatform = PaymentPlatform.UNKNOWN,
+    val eventKind: TransactionEventKind = TransactionEventKind.UNKNOWN,
+    val recognitionConfidence: Int = 100,
 ) {
     init {
         require(amountMinor > 0)
         require(currency.matches(Regex("[A-Z]{3}")))
         require(category.isNotBlank())
+        require(recognitionConfidence in 0..100)
     }
 
     override fun toString(): String =
@@ -45,6 +51,9 @@ data class Transaction(
             "merchant=<redacted>, " +
             "note=<redacted>, " +
             "source=$source, " +
+            "platform=$platform, " +
+            "eventKind=$eventKind, " +
+            "recognitionConfidence=$recognitionConfidence, " +
             "pendingConfirmation=$pendingConfirmation, " +
             "internalTransfer=$internalTransfer)"
 }
