@@ -13,8 +13,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CategoryEntity::class,
         AccountEntity::class,
         MerchantRuleEntity::class,
+        RecognitionReceiptEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -39,7 +40,7 @@ abstract class AppDatabase : RoomDatabase() {
             context.applicationContext,
             AppDatabase::class.java,
             DATABASE_NAME,
-        ).addMigrations(MIGRATION_1_2).addCallback(CategorySeedCallback).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).addCallback(CategorySeedCallback).build()
 
         fun categorySeedCallback(): Callback = CategorySeedCallback
 
@@ -51,6 +52,30 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE accounts ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0")
                 normalizeTableDisplayOrder(db, "categories")
                 normalizeTableDisplayOrder(db, "accounts")
+            }
+        }
+
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE transactions ADD COLUMN platform TEXT NOT NULL DEFAULT 'UNKNOWN'")
+                db.execSQL("ALTER TABLE transactions ADD COLUMN eventKind TEXT NOT NULL DEFAULT 'UNKNOWN'")
+                db.execSQL("ALTER TABLE transactions ADD COLUMN recognitionConfidence INTEGER NOT NULL DEFAULT 100")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS recognition_receipts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        transactionId INTEGER NOT NULL,
+                        channel TEXT NOT NULL,
+                        platform TEXT NOT NULL,
+                        eventKind TEXT NOT NULL,
+                        observedAtEpochMillis INTEGER NOT NULL,
+                        digest TEXT NOT NULL,
+                        FOREIGN KEY(transactionId) REFERENCES transactions(id) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_recognition_receipts_transactionId ON recognition_receipts(transactionId)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_recognition_receipts_digest ON recognition_receipts(digest)")
             }
         }
     }

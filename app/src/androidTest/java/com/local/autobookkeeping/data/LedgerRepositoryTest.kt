@@ -6,7 +6,9 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.local.autobookkeeping.data.db.AppDatabase
 import com.local.autobookkeeping.domain.model.Direction
+import com.local.autobookkeeping.domain.model.PaymentPlatform
 import com.local.autobookkeeping.domain.model.Transaction
+import com.local.autobookkeeping.domain.model.TransactionEventKind
 import java.time.Instant
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
@@ -63,6 +65,38 @@ class LedgerRepositoryTest {
                 listOf("Newer merchant", "Coffee shop"),
                 repo.observeTransactions().first().map(Transaction::merchant),
             )
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun recognitionMetadataSurvivesSaveReadAndEdit() = runTest {
+        val db = Room.inMemoryDatabaseBuilder(
+            ApplicationProvider.getApplicationContext(),
+            AppDatabase::class.java,
+        ).build()
+        val repo = RoomLedgerRepository(db)
+
+        try {
+            val id = repo.save(
+                sampleTransaction().copy(
+                    platform = PaymentPlatform.ALIPAY,
+                    eventKind = TransactionEventKind.REFUND,
+                    recognitionConfidence = 82,
+                ),
+            )
+
+            val saved = repo.findById(id)!!
+            assertEquals(PaymentPlatform.ALIPAY, saved.platform)
+            assertEquals(TransactionEventKind.REFUND, saved.eventKind)
+            assertEquals(82, saved.recognitionConfidence)
+
+            repo.save(saved.copy(note = "edited"))
+            val edited = repo.findById(id)!!
+            assertEquals(PaymentPlatform.ALIPAY, edited.platform)
+            assertEquals(TransactionEventKind.REFUND, edited.eventKind)
+            assertEquals(82, edited.recognitionConfidence)
         } finally {
             db.close()
         }

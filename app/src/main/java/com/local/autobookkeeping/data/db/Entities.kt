@@ -95,4 +95,29 @@ data class TransactionEntity(
     val refundOfId: Long?,
     val createdAtEpochMillis: Long,
     val updatedAtEpochMillis: Long,
+    @ColumnInfo(defaultValue = "'UNKNOWN'") val platform: String = "UNKNOWN",
+    @ColumnInfo(defaultValue = "'UNKNOWN'") val eventKind: String = "UNKNOWN",
+    @ColumnInfo(defaultValue = "100") val recognitionConfidence: Int = 100,
+)
+
+@Entity(
+    tableName = "recognition_receipts",
+    foreignKeys = [
+        ForeignKey(
+            entity = TransactionEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["transactionId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("transactionId"), Index(value = ["digest"], unique = true)],
+)
+data class RecognitionReceiptEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val transactionId: Long,
+    val channel: String,
+    val platform: String,
+    val eventKind: String,
+    val observedAtEpochMillis: Long,
+    val digest: String,
 )

@@ -15,6 +15,13 @@ data class TransactionRecord(
     val accountName: String?,
 )
 
+data class MerchantRuleRecord(
+    val merchantPattern: String,
+    val categoryName: String,
+    val accountName: String?,
+    val priority: Int,
+)
+
 @Dao
 interface TransactionDao {
     @Query("SELECT * FROM transactions ORDER BY occurredAtEpochMillis DESC")
@@ -76,8 +83,35 @@ interface TransactionDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertAllMerchantRules(rows: List<MerchantRuleEntity>)
 
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertMerchantRule(row: MerchantRuleEntity): Long
+
+    @Update
+    suspend fun updateMerchantRule(row: MerchantRuleEntity): Int
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertRecognitionReceipt(row: RecognitionReceiptEntity): Long
+
+    @Query("SELECT * FROM recognition_receipts WHERE digest = :digest LIMIT 1")
+    suspend fun findRecognitionReceipt(digest: String): RecognitionReceiptEntity?
+
+    @Query("SELECT * FROM recognition_receipts ORDER BY id ASC")
+    suspend fun allRecognitionReceipts(): List<RecognitionReceiptEntity>
+
     @Query("SELECT * FROM transactions WHERE id = :id LIMIT 1")
     suspend fun findById(id: Long): TransactionEntity?
+
+    @Query(
+        """
+        SELECT transactions.*, categories.name AS categoryName, accounts.name AS accountName
+        FROM transactions
+        INNER JOIN categories ON categories.id = transactions.categoryId
+        LEFT JOIN accounts ON accounts.id = transactions.accountId
+        WHERE transactions.id = :id
+        LIMIT 1
+        """,
+    )
+    suspend fun findRecordById(id: Long): TransactionRecord?
 
     @Query("SELECT * FROM transactions WHERE dedupeKey = :key LIMIT 1")
     suspend fun findByDedupeKey(key: String): TransactionEntity?
@@ -94,8 +128,76 @@ interface TransactionDao {
     )
     suspend fun findRecordByDedupeKey(key: String): TransactionRecord?
 
+    @Query(
+        """
+        SELECT transactions.*, categories.name AS categoryName, accounts.name AS accountName
+        FROM transactions
+        INNER JOIN categories ON categories.id = transactions.categoryId
+        LEFT JOIN accounts ON accounts.id = transactions.accountId
+        WHERE transactions.platform = :platform
+          AND transactions.direction = :direction
+          AND transactions.amountMinor = :amountMinor
+          AND transactions.eventKind = :eventKind
+          AND transactions.occurredAtEpochMillis BETWEEN :fromEpochMillis AND :toEpochMillis
+        ORDER BY transactions.occurredAtEpochMillis DESC, transactions.id DESC
+        """,
+    )
+    suspend fun findRecognitionMatches(
+        platform: String,
+        direction: String,
+        amountMinor: Long,
+        eventKind: String,
+        fromEpochMillis: Long,
+        toEpochMillis: Long,
+    ): List<TransactionRecord>
+
+    @Query(
+        """
+        SELECT transactions.*, categories.name AS categoryName, accounts.name AS accountName
+        FROM transactions
+        INNER JOIN categories ON categories.id = transactions.categoryId
+        LEFT JOIN accounts ON accounts.id = transactions.accountId
+        WHERE transactions.platform = :platform
+          AND transactions.direction = :direction
+          AND transactions.amountMinor = :amountMinor
+          AND transactions.eventKind != 'REFUND'
+          AND transactions.occurredAtEpochMillis <= :occurredAtEpochMillis
+          AND (:normalizedMerchant = '' OR LOWER(TRIM(transactions.merchant)) = :normalizedMerchant)
+        ORDER BY transactions.occurredAtEpochMillis DESC, transactions.id DESC
+        LIMIT 1
+        """,
+    )
+    suspend fun findRefundOrigin(
+        platform: String,
+        direction: String,
+        amountMinor: Long,
+        normalizedMerchant: String,
+        occurredAtEpochMillis: Long,
+    ): TransactionRecord?
+
     @Query("SELECT * FROM categories WHERE name = :name LIMIT 1")
     suspend fun findCategoryByName(name: String): CategoryEntity?
+
+    @Query("SELECT COUNT(*) > 0 FROM categories WHERE name = :name AND hidden = 0")
+    suspend fun isCategoryVisible(name: String): Boolean
+
+    @Query("SELECT * FROM merchant_rules WHERE merchantPattern = :merchantPattern LIMIT 1")
+    suspend fun findMerchantRuleByPattern(merchantPattern: String): MerchantRuleEntity?
+
+    @Query(
+        """
+        SELECT merchant_rules.merchantPattern,
+               categories.name AS categoryName,
+               accounts.name AS accountName,
+               merchant_rules.priority
+        FROM merchant_rules
+        INNER JOIN categories ON categories.id = merchant_rules.categoryId
+        LEFT JOIN accounts ON accounts.id = merchant_rules.accountId
+        WHERE merchant_rules.merchantPattern = :merchantPattern
+        LIMIT 1
+        """,
+    )
+    suspend fun findMerchantRuleRecord(merchantPattern: String): MerchantRuleRecord?
 
     @Query("SELECT name FROM categories ORDER BY name ASC")
     suspend fun categoryNames(): List<String>
