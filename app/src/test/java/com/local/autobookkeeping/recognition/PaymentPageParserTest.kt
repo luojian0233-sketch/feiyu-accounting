@@ -297,6 +297,60 @@ class PaymentPageParserTest {
     }
 
     @Test
+    fun `single anchor ownership is bounded before a remote primary amount`() {
+        val outcome = GenericBillParser.parse(
+            PageSnapshot(
+                packageName = null,
+                elements = listOf(
+                    ObservedTextElement("账单详情", TextBounds(40, 80, 600, 100)),
+                    ObservedTextElement("¥12.34", TextBounds(40, 160, 600, 180)),
+                    ObservedTextElement("实付 ¥9.99", TextBounds(40, 520, 600, 540)),
+                ),
+                observedAt = OBSERVED_AT,
+            ),
+        ) as ExtractionOutcome.Single
+
+        assertEquals(1_234L, outcome.candidate.amountMinor)
+    }
+
+    @Test
+    fun `narrow anchor owns a wide local primary label value pair`() {
+        val outcome = GenericBillParser.parse(
+            PageSnapshot(
+                packageName = null,
+                elements = listOf(
+                    ObservedTextElement("账单详情", TextBounds(40, 80, 140, 100)),
+                    ObservedTextElement("实付", TextBounds(40, 160, 120, 180)),
+                    ObservedTextElement("¥12.34", TextBounds(300, 160, 420, 180)),
+                ),
+                observedAt = OBSERVED_AT,
+            ),
+        ) as ExtractionOutcome.Single
+
+        assertEquals(1_234L, outcome.candidate.amountMinor)
+    }
+
+    @Test
+    fun `nearest raw split primary value is validated before a later fee value`() {
+        val outcome = GenericBillParser.parse(
+            PageSnapshot(
+                packageName = null,
+                elements = listOf(
+                    ObservedTextElement("账单详情", TextBounds(40, 80, 600, 100)),
+                    ObservedTextElement("支付成功", TextBounds(40, 110, 600, 130)),
+                    ObservedTextElement("实付", TextBounds(40, 160, 120, 180)),
+                    ObservedTextElement("-¥12.34", TextBounds(160, 160, 300, 180)),
+                    ObservedTextElement("手续费", TextBounds(40, 210, 100, 230)),
+                    ObservedTextElement("¥1.00", TextBounds(80, 210, 240, 230)),
+                ),
+                observedAt = OBSERVED_AT,
+            ),
+        )
+
+        assertRejected(outcome, RecognitionRejectReason.INCOMPLETE_FIELDS)
+    }
+
+    @Test
     fun `visible transaction time is preferred over capture time`() {
         val outcome = WechatPageParser.parse(
             page(

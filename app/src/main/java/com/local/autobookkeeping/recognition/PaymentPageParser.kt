@@ -243,15 +243,16 @@ private fun groupByGeometry(elements: List<ObservedTextElement>): List<List<Obse
     val medianHeight = elements.map { max(1, it.bounds.bottom - it.bounds.top) }
         .sorted()
         .let { it[it.size / 2] }
+    val units = buildGeometryUnits(elements)
     val semanticClusters = buildSemanticAnchorClusters(elements, medianHeight)
     return when {
-        semanticClusters.size > 1 -> assignElementsToSemanticClusters(elements, semanticClusters)
+        semanticClusters.size > 1 -> assignUnitsToSemanticClusters(units, semanticClusters)
         semanticClusters.size == 1 -> groupWithSingleSemanticCluster(
-            elements,
+            units,
             semanticClusters.single(),
             medianHeight,
         )
-        else -> connectedGeometryGroups(elements, medianHeight)
+        else -> connectedGeometryUnitGroups(units, medianHeight).map(::flattenGeometryUnits)
     }
 }
 
@@ -316,49 +317,72 @@ private fun canJoinSemanticCluster(
     }
 }
 
-private fun assignElementsToSemanticClusters(
-    elements: List<ObservedTextElement>,
+private data class GeometryUnit(
+    val elements: List<ObservedTextElement>,
+) {
+    val bounds: TextBounds = elements.bounds()
+}
+
+private fun buildGeometryUnits(elements: List<ObservedTextElement>): List<GeometryUnit> {
+    val consumed = mutableListOf<ObservedTextElement>()
+    val pairedUnits = findPrimaryLabelValuePairs(elements).mapNotNull { pair ->
+        if (consumed.any { it === pair.label || it === pair.value }) return@mapNotNull null
+        consumed += pair.label
+        consumed += pair.value
+        GeometryUnit(listOf(pair.label, pair.value))
+    }
+    val singleUnits = elements
+        .filterNot { element -> consumed.any { it === element } }
+        .map { element -> GeometryUnit(listOf(element)) }
+    return (pairedUnits + singleUnits).sortedWith(
+        compareBy<GeometryUnit> { it.bounds.top }.thenBy { it.bounds.left },
+    )
+}
+
+private fun assignUnitsToSemanticClusters(
+    units: List<GeometryUnit>,
     clusters: List<SemanticAnchorCluster>,
 ): List<List<ObservedTextElement>> {
-    val assignments = clusters.associateWith { mutableListOf<ObservedTextElement>() }
-    elements.forEach { element ->
+    val assignments = clusters.associateWith { mutableListOf<GeometryUnit>() }
+    units.forEach { unit ->
         val anchoredCluster = clusters.firstOrNull { cluster ->
-            cluster.anchors.any { anchor -> anchor.element === element }
+            cluster.anchors.any { anchor -> unit.elements.any { element -> anchor.element === element } }
         }
-        val cluster = anchoredCluster ?: chooseOwningCluster(element, clusters)
-        assignments.getValue(cluster) += element
+        val cluster = anchoredCluster ?: chooseOwningCluster(unit.bounds, clusters)
+        assignments.getValue(cluster) += unit
     }
     return clusters.mapNotNull { cluster ->
         assignments.getValue(cluster)
-            .takeIf(List<ObservedTextElement>::isNotEmpty)
-            ?.sortedWith(compareBy<ObservedTextElement> { it.bounds.top }.thenBy { it.bounds.left })
+            .takeIf(List<GeometryUnit>::isNotEmpty)
+            ?.let(::flattenGeometryUnits)
     }
 }
 
 private fun groupWithSingleSemanticCluster(
-    elements: List<ObservedTextElement>,
+    units: List<GeometryUnit>,
     cluster: SemanticAnchorCluster,
     medianHeight: Int,
 ): List<List<ObservedTextElement>> {
-    val geometryGroups = connectedGeometryGroups(elements, medianHeight)
+    val geometryGroups = connectedGeometryUnitGroups(units, medianHeight)
     val ownedGroups = geometryGroups.filter { group ->
-        val containsAnchor = group.any { element ->
-            cluster.anchors.any { anchor -> anchor.element === element }
+        val containsAnchor = group.any { unit ->
+            cluster.anchors.any { anchor -> unit.elements.any { element -> anchor.element === element } }
         }
-        val groupBounds = group.bounds()
+        val groupBounds = geometryUnitBounds(group)
+        val withinBoundedRegion = horizontalOverlap(groupBounds, cluster.bounds) > 0 &&
+            verticalGap(groupBounds, cluster.bounds) <= medianHeight * SINGLE_CARD_VERTICAL_HEIGHTS
         containsAnchor ||
-            (horizontalOverlap(groupBounds, cluster.bounds) > 0 && group.any(::isCardOwnedMetadata))
+            (withinBoundedRegion && group.any { unit -> unit.elements.any(::isCardOwnedMetadata) })
     }
-    if (ownedGroups.isEmpty()) return geometryGroups
-    val ownedElements = ownedGroups.flatten().toSet()
-    val merged = ownedElements.sortedWith(
-        compareBy<ObservedTextElement> { it.bounds.top }.thenBy { it.bounds.left },
-    )
-    val unowned = geometryGroups.filterNot { group -> group.any(ownedElements::contains) }
-    return (listOf(merged) + unowned).sortedWith(
-        compareBy<List<ObservedTextElement>> { group -> group.minOf { it.bounds.top } }
-            .thenBy { group -> group.minOf { it.bounds.left } },
-    )
+    if (ownedGroups.isEmpty()) return geometryGroups.map(::flattenGeometryUnits)
+    val ownedUnits = ownedGroups.flatten().toSet()
+    val unowned = geometryGroups.filterNot { group -> group.any(ownedUnits::contains) }
+    return (listOf(ownedUnits.toList()) + unowned)
+        .sortedWith(
+            compareBy<List<GeometryUnit>> { group -> geometryUnitBounds(group).top }
+                .thenBy { group -> geometryUnitBounds(group).left },
+        )
+        .map(::flattenGeometryUnits)
 }
 
 private fun List<ObservedTextElement>.bounds(): TextBounds = TextBounds(
@@ -367,6 +391,18 @@ private fun List<ObservedTextElement>.bounds(): TextBounds = TextBounds(
     right = maxOf { it.bounds.right },
     bottom = maxOf { it.bounds.bottom },
 )
+
+private fun geometryUnitBounds(units: List<GeometryUnit>): TextBounds = TextBounds(
+    left = units.minOf { it.bounds.left },
+    top = units.minOf { it.bounds.top },
+    right = units.maxOf { it.bounds.right },
+    bottom = units.maxOf { it.bounds.bottom },
+)
+
+private fun flattenGeometryUnits(units: List<GeometryUnit>): List<ObservedTextElement> =
+    units.flatMap(GeometryUnit::elements).sortedWith(
+        compareBy<ObservedTextElement> { it.bounds.top }.thenBy { it.bounds.left },
+    )
 
 private fun isCardOwnedMetadata(element: ObservedTextElement): Boolean {
     val text = element.text.trim()
@@ -381,26 +417,27 @@ private fun isCardOwnedMetadata(element: ObservedTextElement): Boolean {
 }
 
 private fun chooseOwningCluster(
-    element: ObservedTextElement,
+    bounds: TextBounds,
     clusters: List<SemanticAnchorCluster>,
 ): SemanticAnchorCluster {
-    val sameColumn = clusters.filter { cluster -> horizontalOverlap(element.bounds, cluster.bounds) > 0 }
+    val sameColumn = clusters.filter { cluster -> horizontalOverlap(bounds, cluster.bounds) > 0 }
     val candidates = sameColumn.ifEmpty { clusters }
-    val started = candidates.filter { cluster -> cluster.bounds.top <= element.bounds.centerY }
+    val centerY = bounds.top + (bounds.bottom - bounds.top) / 2
+    val started = candidates.filter { cluster -> cluster.bounds.top <= centerY }
     if (started.isNotEmpty()) {
         val latestTop = started.maxOf { it.bounds.top }
         return started.filter { it.bounds.top == latestTop }
-            .minBy { cluster -> squaredDistance(element.bounds, cluster.bounds) }
+            .minBy { cluster -> squaredDistance(bounds, cluster.bounds) }
     }
-    return candidates.minBy { cluster -> squaredDistance(element.bounds, cluster.bounds) }
+    return candidates.minBy { cluster -> squaredDistance(bounds, cluster.bounds) }
 }
 
-private fun connectedGeometryGroups(
-    elements: List<ObservedTextElement>,
+private fun connectedGeometryUnitGroups(
+    units: List<GeometryUnit>,
     medianHeight: Int,
-): List<List<ObservedTextElement>> {
-    val remaining = elements.indices.toMutableSet()
-    val groups = mutableListOf<List<ObservedTextElement>>()
+): List<List<GeometryUnit>> {
+    val remaining = units.indices.toMutableSet()
+    val groups = mutableListOf<List<GeometryUnit>>()
     while (remaining.isNotEmpty()) {
         val queue = ArrayDeque<Int>()
         val groupIndexes = mutableListOf<Int>()
@@ -410,15 +447,15 @@ private fun connectedGeometryGroups(
             if (!remaining.remove(index)) continue
             groupIndexes += index
             remaining.filter { other ->
-                areGeometryNeighbors(elements[index].bounds, elements[other].bounds, medianHeight)
+                areGeometryNeighbors(units[index].bounds, units[other].bounds, medianHeight)
             }.toList().forEach(queue::addLast)
         }
-        groups += groupIndexes.map(elements::get)
-            .sortedWith(compareBy<ObservedTextElement> { it.bounds.top }.thenBy { it.bounds.left })
+        groups += groupIndexes.map(units::get)
+            .sortedWith(compareBy<GeometryUnit> { it.bounds.top }.thenBy { it.bounds.left })
     }
     return groups.sortedWith(
-        compareBy<List<ObservedTextElement>> { group -> group.minOf { it.bounds.top } }
-            .thenBy { group -> group.minOf { it.bounds.left } },
+        compareBy<List<GeometryUnit>> { group -> geometryUnitBounds(group).top }
+            .thenBy { group -> geometryUnitBounds(group).left },
     )
 }
 
@@ -486,8 +523,21 @@ private data class PrimaryAmountAnalysis(
     val invalid: Boolean,
 )
 
+private data class PrimaryLabelValuePair(
+    val label: ObservedTextElement,
+    val value: ObservedTextElement,
+)
+
+private data class PrimaryPairCandidate(
+    val label: ObservedTextElement,
+    val value: ObservedTextElement,
+    val geometryRank: Int,
+    val distance: Long,
+)
+
 private fun analyzePrimaryAmounts(elements: List<ObservedTextElement>): PrimaryAmountAnalysis {
     val splitAmounts = mutableListOf<LocatedAmount>()
+    val localPairs = findPrimaryLabelValuePairs(elements)
     elements.forEach { labelElement ->
         ACTUAL_AMOUNT_LABELS.forEach { label ->
             Regex(Regex.escape(label)).findAll(labelElement.text).forEach labelMatch@ { labelMatch ->
@@ -500,20 +550,8 @@ private fun analyzePrimaryAmounts(elements: List<ObservedTextElement>): PrimaryA
                     return@labelMatch
                 }
 
-                val localValues = elements
-                    .filter { valueElement -> valueElement !== labelElement }
-                    .filter { valueElement -> isLocalPrimaryValue(labelElement, valueElement) }
-                    .filter { valueElement -> isBareCurrencyValue(valueElement.text) }
-                val nearestDistance = localValues.minOfOrNull { valueElement ->
-                    squaredDistance(labelElement.bounds, valueElement.bounds)
-                } ?: return PrimaryAmountAnalysis(emptyList(), invalid = true)
-                val nearestValues = localValues.filter { valueElement ->
-                    squaredDistance(labelElement.bounds, valueElement.bounds) == nearestDistance
-                }
-                if (nearestValues.size != 1) {
-                    return PrimaryAmountAnalysis(emptyList(), invalid = true)
-                }
-                val valueElement = nearestValues.single()
+                val valueElement = localPairs.singleOrNull { pair -> pair.label === labelElement }?.value
+                    ?: return PrimaryAmountAnalysis(emptyList(), invalid = true)
                 val tokenCount = CURRENCY_TOKEN.findAll(valueElement.text).count()
                 val validAmounts = findCurrencyAmounts(valueElement.text)
                 if (tokenCount != 1 || validAmounts.size != 1) {
@@ -530,23 +568,65 @@ private fun analyzePrimaryAmounts(elements: List<ObservedTextElement>): PrimaryA
     return PrimaryAmountAnalysis(splitAmounts, invalid = false)
 }
 
-private fun isLocalPrimaryValue(
+private fun findPrimaryLabelValuePairs(
+    elements: List<ObservedTextElement>,
+): List<PrimaryLabelValuePair> {
+    val splitLabels = elements.filter(::hasSplitPrimaryLabel)
+    val usedValues = mutableSetOf<ObservedTextElement>()
+    return splitLabels.mapNotNull { label ->
+        val candidates = elements.mapNotNull { value ->
+            if (value === label || value in usedValues || !looksLikeRawCurrencyValue(value.text)) {
+                return@mapNotNull null
+            }
+            val geometryRank = primaryValueGeometryRank(label, value) ?: return@mapNotNull null
+            PrimaryPairCandidate(
+                label = label,
+                value = value,
+                geometryRank = geometryRank,
+                distance = squaredDistance(label.bounds, value.bounds),
+            )
+        }
+        val bestRank = candidates.minOfOrNull(PrimaryPairCandidate::geometryRank)
+            ?: return@mapNotNull null
+        val ranked = candidates.filter { it.geometryRank == bestRank }
+        val bestDistance = ranked.minOf(PrimaryPairCandidate::distance)
+        val nearest = ranked.filter { it.distance == bestDistance }.singleOrNull()
+            ?: return@mapNotNull null
+        usedValues += nearest.value
+        PrimaryLabelValuePair(label, nearest.value)
+    }
+}
+
+private fun hasSplitPrimaryLabel(element: ObservedTextElement): Boolean =
+    ACTUAL_AMOUNT_LABELS.any { label ->
+        Regex(Regex.escape(label)).findAll(element.text).any { labelMatch ->
+            CURRENCY_TOKEN.findAll(element.text.clauseContaining(labelMatch.range)).none()
+        }
+    }
+
+private fun primaryValueGeometryRank(
     label: ObservedTextElement,
     value: ObservedTextElement,
-): Boolean {
+): Int? {
     val sameRow = verticalOverlap(label.bounds, value.bounds) > 0 &&
         value.bounds.left >= label.bounds.right &&
         horizontalGap(label.bounds, value.bounds) <= MAX_PRIMARY_LABEL_HORIZONTAL_GAP
     val nextLine = verticalGap(label.bounds, value.bounds) <= MAX_PRIMARY_LABEL_VERTICAL_GAP &&
         value.bounds.top >= label.bounds.bottom &&
         horizontalOverlap(label.bounds, value.bounds) > 0
-    return sameRow || nextLine
+    return when {
+        sameRow -> 0
+        nextLine -> 1
+        else -> null
+    }
 }
 
-private fun isBareCurrencyValue(text: String): Boolean {
+private fun looksLikeRawCurrencyValue(text: String): Boolean {
     val trimmed = text.trim()
-    val token = CURRENCY_TOKEN.find(trimmed) ?: return false
-    if (token.range.first != 0) return false
+    var tokenStart = 0
+    if (trimmed.getOrNull(tokenStart) in SIGN_MARKERS) tokenStart++
+    while (trimmed.getOrNull(tokenStart)?.isWhitespace() == true) tokenStart++
+    val token = CURRENCY_TOKEN.matchAt(trimmed, tokenStart) ?: return false
     val valueText = trimmed.substring(token.range.last + 1).trim()
     return valueText.isNotEmpty() && valueText.all { character ->
         character.isDigit() || character.isWhitespace() || character in RAW_AMOUNT_CHARACTERS
@@ -834,5 +914,6 @@ private const val MAX_ACCOUNT_LABEL_VERTICAL_GAP = 56
 private const val MAX_PRIMARY_LABEL_HORIZONTAL_GAP = 240
 private const val MAX_PRIMARY_LABEL_VERTICAL_GAP = 80
 private const val SEMANTIC_VERTICAL_HEIGHTS = 6
+private const val SINGLE_CARD_VERTICAL_HEIGHTS = 12
 private const val GEOMETRY_VERTICAL_HEIGHTS = 2
 private const val GEOMETRY_HORIZONTAL_HEIGHTS = 4
