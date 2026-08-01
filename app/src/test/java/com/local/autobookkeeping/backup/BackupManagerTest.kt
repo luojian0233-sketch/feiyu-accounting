@@ -3,6 +3,9 @@ package com.local.autobookkeeping.backup
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -98,7 +101,26 @@ class BackupManagerTest {
         val bytes = encodedBytes(document)
 
         assertEquals(document, BackupJsonCodec().decode(bytes.inputStream()))
-        assertFalse(bytes.toString(Charsets.UTF_8).contains("寰俊鏀粯椤甸潰鍘熸枃"))
+        assertFalse(bytes.toString(Charsets.UTF_8).contains("微信支付页面原文"))
+        val receiptKeys = Json.parseToJsonElement(bytes.toString(Charsets.UTF_8))
+            .jsonObject["recognitionReceipts"]
+            ?.jsonArray
+            ?.single()
+            ?.jsonObject
+            ?.keys
+        assertEquals(
+            setOf("transactionId", "channel", "platform", "eventKind", "observedAtEpochMillis", "digest"),
+            receiptKeys,
+        )
+    }
+
+    @Test
+    fun `unsupported format reports readable Chinese reason`() {
+        val failure = assertThrows(BackupFormatException::class.java) {
+            BackupJsonCodec().decode(encoded(document(formatVersion = 3)))
+        }
+
+        assertEquals("不支持的备份格式版本", failure.message)
     }
 
     @Test

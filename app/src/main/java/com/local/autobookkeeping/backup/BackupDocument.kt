@@ -339,7 +339,7 @@ private fun JsonObject.toBackupDocument(): BackupDocument {
     when (formatVersion) {
         1 -> requireKeys(VERSION_ONE_DOCUMENT_KEYS)
         2 -> requireKeys(VERSION_TWO_DOCUMENT_KEYS)
-        else -> throw BackupFormatException("涓嶆敮鎸佺殑澶囦唤鏍煎紡鐗堟湰")
+        else -> throw BackupFormatException("不支持的备份格式版本")
     }
     return BackupDocument(
         formatVersion = formatVersion,
