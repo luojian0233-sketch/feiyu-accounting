@@ -1,0 +1,505 @@
+package com.local.autobookkeeping.recognition
+
+import com.local.autobookkeeping.domain.model.CaptureChannel
+import com.local.autobookkeeping.domain.model.Direction
+import com.local.autobookkeeping.domain.model.PaymentPlatform
+import com.local.autobookkeeping.domain.model.RecognitionCandidate
+import com.local.autobookkeeping.domain.model.RecognitionRejectReason
+import com.local.autobookkeeping.domain.model.TransactionEventKind
+import com.local.autobookkeeping.ui.BOOKKEEPING_ZONE
+import java.math.BigDecimal
+import java.time.DateTimeException
+import java.time.Duration
+import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
+import java.time.ZoneId
+import kotlin.math.abs
+import kotlin.math.max
+
+data class TextBounds(
+    val left: Int,
+    val top: Int,
+    val right: Int,
+    val bottom: Int,
+) {
+    init {
+        require(right >= left)
+        require(bottom >= top)
+    }
+
+    internal val centerY: Int
+        get() = top + (bottom - top) / 2
+}
+
+data class ObservedTextElement(
+    val text: String,
+    val bounds: TextBounds,
+) {
+    override fun toString(): String = "ObservedTextElement(text=<redacted>, bounds=$bounds)"
+}
+
+data class PageSnapshot(
+    val packageName: String?,
+    val elements: List<ObservedTextElement>,
+    val observedAt: Instant,
+) {
+    override fun toString(): String =
+        "PageSnapshot(packageName=$packageName, elements=<redacted:${elements.size}>, observedAt=$observedAt)"
+}
+
+sealed interface ExtractionOutcome {
+    data class Single(val candidate: RecognitionCandidate) : ExtractionOutcome {
+        override fun toString(): String = "ExtractionOutcome.Single(${candidate.redactedSummary()})"
+    }
+
+    data class Multiple(val options: List<RecognitionCandidate>) : ExtractionOutcome {
+        override fun toString(): String =
+            "ExtractionOutcome.Multiple(options=${options.map(RecognitionCandidate::redactedSummary)})"
+    }
+
+    data class Rejected(val reason: RecognitionRejectReason) : ExtractionOutcome
+}
+
+fun interface PaymentPageParser {
+    fun parse(snapshot: PageSnapshot): ExtractionOutcome
+}
+
+internal data class PageParserProfile(
+    val requiredPackage: String?,
+    val platform: PaymentPlatform,
+    val channel: CaptureChannel,
+    val defaultPaymentSignatures: Set<String>,
+    val carrySignatureAcrossGroups: Boolean,
+    val hardRejectSignals: Set<String>,
+    val baseConfidence: Int,
+)
+
+internal fun parsePaymentPage(
+    snapshot: PageSnapshot,
+    profile: PageParserProfile,
+    zone: ZoneId = BOOKKEEPING_ZONE,
+): ExtractionOutcome {
+    if (profile.requiredPackage != null && snapshot.packageName != profile.requiredPackage) {
+        return ExtractionOutcome.Rejected(RecognitionRejectReason.NOT_PAYMENT_PAGE)
+    }
+
+    val elements = snapshot.elements
+        .asSequence()
+        .filter { it.text.isNotBlank() }
+        .sortedWith(compareBy<ObservedTextElement> { it.bounds.top }.thenBy { it.bounds.left })
+        .toList()
+    if (elements.isEmpty()) {
+        return ExtractionOutcome.Rejected(RecognitionRejectReason.NOT_PAYMENT_PAGE)
+    }
+    if (elements.any { element ->
+            profile.hardRejectSignals.any { signal -> element.text.trim().contains(signal) }
+        }
+    ) {
+        return ExtractionOutcome.Rejected(RecognitionRejectReason.NOT_PAYMENT_PAGE)
+    }
+
+    val pageHasDefaultSignature = elements.any { it.text.trim() in profile.defaultPaymentSignatures }
+    val results = groupByGeometry(elements).map { group ->
+        val cardHasDefaultSignature = group.any { it.text.trim() in profile.defaultPaymentSignatures }
+        parseCard(
+            elements = group,
+            snapshot = snapshot,
+            profile = profile,
+            defaultPaymentAllowed = cardHasDefaultSignature ||
+                (profile.carrySignatureAcrossGroups && pageHasDefaultSignature),
+            zone = zone,
+        )
+    }
+    val candidates = results.filterIsInstance<CardParseResult.Parsed>()
+    if (candidates.isEmpty()) {
+        val reason = results.filterIsInstance<CardParseResult.Invalid>()
+            .map(CardParseResult.Invalid::reason)
+            .let { reasons ->
+                when {
+                    RecognitionRejectReason.CONFLICTING_DIRECTION in reasons ->
+                        RecognitionRejectReason.CONFLICTING_DIRECTION
+                    RecognitionRejectReason.INCOMPLETE_FIELDS in reasons ->
+                        RecognitionRejectReason.INCOMPLETE_FIELDS
+                    else -> RecognitionRejectReason.NOT_PAYMENT_PAGE
+                }
+            }
+        return ExtractionOutcome.Rejected(reason)
+    }
+
+    val bestScore = candidates.maxOf(CardParseResult.Parsed::score)
+    val best = candidates.filter { it.score == bestScore }.sortedBy(CardParseResult.Parsed::top)
+    return if (best.size == 1) {
+        ExtractionOutcome.Single(best.single().candidate)
+    } else {
+        ExtractionOutcome.Multiple(best.map(CardParseResult.Parsed::candidate))
+    }
+}
+
+private sealed interface CardParseResult {
+    data object NotRecognized : CardParseResult
+    data class Invalid(val reason: RecognitionRejectReason) : CardParseResult
+    data class Parsed(
+        val candidate: RecognitionCandidate,
+        val score: Int,
+        val top: Int,
+    ) : CardParseResult
+}
+
+private data class EventSignal(
+    val eventKind: TransactionEventKind,
+    val direction: Direction,
+)
+
+private data class LocatedAmount(
+    val amountMinor: Long,
+    val element: ObservedTextElement,
+    val rank: Int,
+)
+
+private sealed interface AmountSelection {
+    data object Missing : AmountSelection
+    data object Ambiguous : AmountSelection
+    data class Selected(val amount: LocatedAmount) : AmountSelection
+}
+
+private data class LocatedTime(val instant: Instant, val rank: Int)
+
+private sealed interface TimeSelection {
+    data object Missing : TimeSelection
+    data object Ambiguous : TimeSelection
+    data class Selected(val instant: Instant) : TimeSelection
+}
+
+private fun parseCard(
+    elements: List<ObservedTextElement>,
+    snapshot: PageSnapshot,
+    profile: PageParserProfile,
+    defaultPaymentAllowed: Boolean,
+    zone: ZoneId,
+): CardParseResult {
+    val explicitSignals = elements
+        .flatMap { element ->
+            EVENT_SIGNALS.mapNotNull { (text, signal) -> signal.takeIf { element.text.contains(text) } }
+        }
+        .distinct()
+    if (explicitSignals.size > 1) {
+        return CardParseResult.Invalid(RecognitionRejectReason.CONFLICTING_DIRECTION)
+    }
+    val explicitSignal = explicitSignals.singleOrNull()
+    val eventSignal = explicitSignal ?: DEFAULT_PAYMENT_EVENT.takeIf { defaultPaymentAllowed }
+        ?: return CardParseResult.NotRecognized
+
+    val amount = when (val selection = selectAmount(elements)) {
+        AmountSelection.Missing -> return CardParseResult.Invalid(RecognitionRejectReason.INCOMPLETE_FIELDS)
+        AmountSelection.Ambiguous -> return CardParseResult.Invalid(RecognitionRejectReason.INCOMPLETE_FIELDS)
+        is AmountSelection.Selected -> selection.amount
+    }
+    val visibleTime = when (val selection = selectVisibleTime(elements, snapshot.observedAt, zone)) {
+        TimeSelection.Missing -> null
+        TimeSelection.Ambiguous -> return CardParseResult.Invalid(RecognitionRejectReason.INCOMPLETE_FIELDS)
+        is TimeSelection.Selected -> selection.instant
+    }
+    val merchant = extractMerchant(elements, amount.element)
+    val account = extractAccount(elements)
+    val occurredAt = visibleTime ?: snapshot.observedAt
+    val confidence = (
+        profile.baseConfidence -
+            (if (explicitSignal == null) 5 else 0) -
+            (if (merchant == null) 8 else 0)
+        ).coerceIn(0, 100)
+    val digest = RecognitionDigest.create(
+        platform = profile.platform,
+        eventKind = eventSignal.eventKind,
+        direction = eventSignal.direction,
+        amountMinor = amount.amountMinor,
+        merchant = merchant,
+        account = account,
+        visibleAt = visibleTime,
+    )
+    val candidate = RecognitionCandidate(
+        platform = profile.platform,
+        channel = profile.channel,
+        eventKind = eventSignal.eventKind,
+        amountMinor = amount.amountMinor,
+        direction = eventSignal.direction,
+        merchant = merchant,
+        account = account,
+        occurredAt = occurredAt,
+        confidence = confidence,
+        evidenceDigest = digest,
+    )
+    val score =
+        (if (explicitSignal != null) 40 else 20) +
+            (30 - amount.rank * 5) +
+            (if (merchant != null) 6 else 0) +
+            (if (account != null) 3 else 0) +
+            (if (visibleTime != null) 2 else 0)
+    return CardParseResult.Parsed(candidate, score, elements.minOf { it.bounds.top })
+}
+
+private fun groupByGeometry(elements: List<ObservedTextElement>): List<List<ObservedTextElement>> {
+    if (elements.isEmpty()) return emptyList()
+    val medianHeight = elements.map { max(1, it.bounds.bottom - it.bounds.top) }
+        .sorted()
+        .let { it[it.size / 2] }
+    val splitGap = max(MINIMUM_CARD_GAP, medianHeight * 3)
+    val groups = mutableListOf<MutableList<ObservedTextElement>>()
+    var current = mutableListOf(elements.first())
+    var groupBottom = elements.first().bounds.bottom
+    elements.drop(1).forEach { element ->
+        if (element.bounds.top - groupBottom > splitGap) {
+            groups += current
+            current = mutableListOf()
+        }
+        current += element
+        groupBottom = max(groupBottom, element.bounds.bottom)
+    }
+    groups += current
+    return groups
+}
+
+private fun selectAmount(elements: List<ObservedTextElement>): AmountSelection {
+    val amounts = elements.flatMap { element ->
+        findCurrencyAmounts(element.text).mapNotNull { parsed ->
+            val clause = element.text.clauseContaining(parsed.range)
+            val hasActualLabel = ACTUAL_AMOUNT_LABELS.any(clause::contains)
+            if (!hasActualLabel && EXCLUDED_AMOUNT_CONTEXT.any(clause::contains)) {
+                return@mapNotNull null
+            }
+            val rank = when {
+                hasActualLabel -> 0
+                EVENT_SIGNALS.keys.any(clause::contains) -> 1
+                else -> 2
+            }
+            LocatedAmount(parsed.amountMinor, element, rank)
+        }
+    }
+    val bestRank = amounts.minOfOrNull(LocatedAmount::rank) ?: return AmountSelection.Missing
+    val best = amounts.filter { it.rank == bestRank }
+    return if (best.size == 1) {
+        AmountSelection.Selected(best.single())
+    } else {
+        AmountSelection.Ambiguous
+    }
+}
+
+private data class ParsedCurrencyAmount(val amountMinor: Long, val range: IntRange)
+
+private fun findCurrencyAmounts(text: String): List<ParsedCurrencyAmount> =
+    CURRENCY_AMOUNT.findAll(text).mapNotNull { match ->
+        if (hasAdjacentSignBefore(text, match.range.first)) return@mapNotNull null
+        val number = match.groupValues[1]
+        val numberStart = match.groups[1]?.range?.first ?: return@mapNotNull null
+        if (numberStart > 0 && text[numberStart - 1] in SIGN_MARKERS) return@mapNotNull null
+        val next = text.getOrNull(match.range.last + 1)
+        if (next != null && (next.isDigit() || next == ',' || next == '.' || next.isLetter())) {
+            return@mapNotNull null
+        }
+        val amountMinor = try {
+            BigDecimal(number.replace(",", ""))
+                .movePointRight(2)
+                .longValueExact()
+                .takeIf { it > 0 }
+        } catch (_: ArithmeticException) {
+            null
+        } catch (_: NumberFormatException) {
+            null
+        } ?: return@mapNotNull null
+        ParsedCurrencyAmount(amountMinor, match.range)
+    }.toList()
+
+private fun hasAdjacentSignBefore(text: String, tokenStart: Int): Boolean {
+    var index = tokenStart - 1
+    while (index >= 0 && text[index].isWhitespace()) index--
+    return index >= 0 && text[index] in SIGN_MARKERS
+}
+
+private fun String.clauseContaining(range: IntRange): String {
+    var start = range.first
+    while (start > 0 && this[start - 1] !in CLAUSE_BOUNDARIES) start--
+    var end = range.last
+    while (end + 1 < length && this[end + 1] !in CLAUSE_BOUNDARIES) end++
+    return substring(start, end + 1)
+}
+
+private fun extractMerchant(
+    elements: List<ObservedTextElement>,
+    amountElement: ObservedTextElement,
+): String? {
+    val explicit = elements.mapNotNull { element ->
+        EXPLICIT_MERCHANT.matchEntire(element.text.trim())
+            ?.groupValues
+            ?.get(1)
+            ?.normalizeMerchant()
+    }.distinct()
+    if (explicit.isNotEmpty()) return explicit.singleOrNull()
+
+    val candidates = elements.mapNotNull { element ->
+        val text = element.text.trim()
+        text.normalizeMerchant()
+            ?.takeIf { isPossibleStandaloneMerchant(text) }
+            ?.let { merchant ->
+                merchant to abs(element.bounds.centerY - amountElement.bounds.centerY)
+            }
+    }
+    val nearestDistance = candidates.minOfOrNull { it.second } ?: return null
+    return candidates.filter { it.second == nearestDistance }.map { it.first }.distinct().singleOrNull()
+}
+
+private fun String.normalizeMerchant(): String? {
+    val normalized = trim().replace(WHITESPACE, " ")
+    return normalized.takeIf {
+        it.length in 2..64 && it.none(Char::isISOControl) && !CURRENCY_AMOUNT.containsMatchIn(it)
+    }
+}
+
+private fun isPossibleStandaloneMerchant(text: String): Boolean {
+    if (text.contains(':') || text.contains('：')) return false
+    if (text in PAGE_META_LABELS) return false
+    if (EVENT_SIGNALS.keys.any(text::contains)) return false
+    if (ACTUAL_AMOUNT_LABELS.any(text::contains)) return false
+    if (EXCLUDED_AMOUNT_CONTEXT.any(text::contains)) return false
+    if (FULL_TIME.containsMatchIn(text) || MONTH_DAY_TIME.containsMatchIn(text) || CLOCK_TIME.containsMatchIn(text)) {
+        return false
+    }
+    if (normalizeAccount(text) != null) return false
+    if (text.startsWith("使用") && text.endsWith("支付")) return false
+    return true
+}
+
+private fun extractAccount(elements: List<ObservedTextElement>): String? = elements.mapNotNull { element ->
+    val text = element.text.trim()
+    val accountText = USE_ACCOUNT.matchEntire(text)?.groupValues?.get(1)
+        ?: LABELED_ACCOUNT.matchEntire(text)?.groupValues?.get(1)
+        ?: text
+    normalizeAccount(accountText)
+}.distinct().singleOrNull()
+
+private fun normalizeAccount(value: String): String? {
+    val compact = value.trim().replace(WHITESPACE, " ")
+    EXACT_ACCOUNTS[compact]?.let { return it }
+    val card = MASKED_BANK_CARD.matchEntire(compact) ?: return null
+    val label = card.groupValues[1]
+    val digits = card.groupValues.drop(2).firstOrNull(String::isNotEmpty) ?: return null
+    return "$label($digits)"
+}
+
+private fun selectVisibleTime(
+    elements: List<ObservedTextElement>,
+    observedAt: Instant,
+    zone: ZoneId,
+): TimeSelection {
+    val observedDate = observedAt.atZone(zone).toLocalDate()
+    val candidates = elements.flatMap { element ->
+        buildList {
+            FULL_TIME.findAll(element.text).forEach { match ->
+                parseFullTime(match, zone)?.let { add(LocatedTime(it, 0)) }
+            }
+            MONTH_DAY_TIME.findAll(element.text).forEach { match ->
+                parseMonthDayTime(match, observedAt, zone)?.let { add(LocatedTime(it, 1)) }
+            }
+            CLOCK_TIME.findAll(element.text).forEach { match ->
+                parseClockTime(match, observedDate, zone)?.let { add(LocatedTime(it, 2)) }
+            }
+        }
+    }
+    val bestRank = candidates.minOfOrNull(LocatedTime::rank) ?: return TimeSelection.Missing
+    val best = candidates.filter { it.rank == bestRank }.map(LocatedTime::instant).distinct()
+    return if (best.size == 1) TimeSelection.Selected(best.single()) else TimeSelection.Ambiguous
+}
+
+private fun parseFullTime(match: MatchResult, zone: ZoneId): Instant? = try {
+    LocalDateTime.of(
+        match.groupValues[1].toInt(),
+        match.groupValues[2].toInt(),
+        match.groupValues[3].toInt(),
+        match.groupValues[4].toInt(),
+        match.groupValues[5].toInt(),
+    ).atZone(zone).toInstant()
+} catch (_: DateTimeException) {
+    null
+}
+
+private fun parseMonthDayTime(
+    match: MatchResult,
+    observedAt: Instant,
+    zone: ZoneId,
+): Instant? {
+    val observedYear = observedAt.atZone(zone).year
+    return (observedYear - 1..observedYear + 1).mapNotNull { year ->
+        try {
+            LocalDateTime.of(
+                year,
+                match.groupValues[1].toInt(),
+                match.groupValues[2].toInt(),
+                match.groupValues[3].toInt(),
+                match.groupValues[4].toInt(),
+            ).atZone(zone).toInstant()
+        } catch (_: DateTimeException) {
+            null
+        }
+    }.minByOrNull { candidate -> abs(Duration.between(observedAt, candidate).seconds) }
+}
+
+private fun parseClockTime(match: MatchResult, date: LocalDate, zone: ZoneId): Instant? = try {
+    date.atTime(LocalTime.of(match.groupValues[1].toInt(), match.groupValues[2].toInt()))
+        .atZone(zone)
+        .toInstant()
+} catch (_: DateTimeException) {
+    null
+}
+
+private fun RecognitionCandidate.redactedSummary(): String =
+    "RecognitionCandidate(" +
+        "platform=$platform, channel=$channel, eventKind=$eventKind, amountMinor=$amountMinor, " +
+        "direction=$direction, merchant=<redacted>, account=<redacted>, occurredAt=$occurredAt, " +
+        "confidence=$confidence, evidenceDigest=$evidenceDigest)"
+
+private val EVENT_SIGNALS = linkedMapOf(
+    "支付成功" to EventSignal(TransactionEventKind.PAYMENT, Direction.EXPENSE),
+    "已支付" to EventSignal(TransactionEventKind.PAYMENT, Direction.EXPENSE),
+    "收款到账" to EventSignal(TransactionEventKind.RECEIPT, Direction.INCOME),
+    "退款到账" to EventSignal(TransactionEventKind.REFUND, Direction.INCOME),
+    "退款成功" to EventSignal(TransactionEventKind.REFUND, Direction.INCOME),
+    "转入" to EventSignal(TransactionEventKind.TRANSFER, Direction.INCOME),
+    "转出" to EventSignal(TransactionEventKind.TRANSFER, Direction.EXPENSE),
+    "收到红包" to EventSignal(TransactionEventKind.RED_PACKET, Direction.INCOME),
+    "发出红包" to EventSignal(TransactionEventKind.RED_PACKET, Direction.EXPENSE),
+)
+private val DEFAULT_PAYMENT_EVENT = EventSignal(TransactionEventKind.PAYMENT, Direction.EXPENSE)
+private val CURRENCY_AMOUNT = Regex(
+    "(?:人民币|CNY|RMB|[¥￥])\\s*((?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\\.[0-9]{1,2})?)",
+    RegexOption.IGNORE_CASE,
+)
+private val ACTUAL_AMOUNT_LABELS = setOf("实付", "交易金额", "支付金额", "收款金额", "退款金额", "入账金额")
+private val EXCLUDED_AMOUNT_CONTEXT = setOf("余额", "总资产", "优惠", "最高减", "原价", "折扣", "优惠券")
+private val SIGN_MARKERS = setOf('+', '-', '−', '－', '﹣', '负')
+private val CLAUSE_BOUNDARIES = setOf('，', ',', '。', '；', ';', '\n')
+private val EXPLICIT_MERCHANT = Regex("^(?:商户|收款方)\\s*[：:]\\s*(.{2,64})$")
+private val USE_ACCOUNT = Regex("^使用\\s*(.+?)\\s*支付$")
+private val LABELED_ACCOUNT = Regex("^(?:付款方式|支付方式)\\s*[：:]?\\s*(.+)$")
+private val MASKED_BANK_CARD = Regex(
+    "^([\\p{L}]{2,12}银行(?:储蓄卡|信用卡)?|银行卡|储蓄卡|信用卡)\\s*" +
+        "(?:[（(]\\s*(?:尾号\\s*)?(?:[*•·]{0,8}\\s*)?(\\d{4})\\s*[）)]|" +
+        "(?:尾号\\s*|[*•·]{2,}\\s*)(\\d{4}))$",
+)
+private val EXACT_ACCOUNTS = mapOf(
+    "零钱" to "零钱",
+    "支付宝余额" to "支付宝余额",
+    "花呗" to "花呗",
+)
+private val PAGE_META_LABELS = setOf(
+    "微信支付",
+    "支付宝",
+    "账单详情",
+    "账单明细",
+    "交易详情",
+    "帮助与服务",
+)
+private val FULL_TIME = Regex("(?<!\\d)(\\d{4})-(\\d{2})-(\\d{2})\\s+(\\d{2}):(\\d{2})(?!\\d)")
+private val MONTH_DAY_TIME = Regex("(?<!\\d)(\\d{2})-(\\d{2})\\s+(\\d{2}):(\\d{2})(?!\\d)")
+private val CLOCK_TIME = Regex("(?<![\\d:])(\\d{2}):(\\d{2})(?![\\d:])")
+private val WHITESPACE = Regex("\\s+")
+private const val MINIMUM_CARD_GAP = 64
