@@ -55,7 +55,7 @@ class PaymentPageParserTest {
     }
 
     @Test
-    fun `all explicit transaction signals map to their required event and direction`() {
+    fun `both platform parsers map every explicit transaction signal to the required event and direction`() {
         val expectations = listOf(
             Triple("支付成功", TransactionEventKind.PAYMENT, Direction.EXPENSE),
             Triple("已支付", TransactionEventKind.PAYMENT, Direction.EXPENSE),
@@ -68,21 +68,27 @@ class PaymentPageParserTest {
             Triple("发出红包", TransactionEventKind.RED_PACKET, Direction.EXPENSE),
         )
 
-        expectations.forEach { (signal, eventKind, direction) ->
-            assertOutcome(
-                eventKind = eventKind,
-                direction = direction,
-                outcome = WechatPageParser.parse(
-                    page(
-                        "微信支付",
-                        signal,
-                        "商户：便利店",
-                        "实付 ¥12.34",
-                        packageName = WECHAT_PACKAGE,
+        val platforms = listOf(
+            Triple("wechat", WECHAT_PACKAGE, WechatPageParser as PaymentPageParser),
+            Triple("alipay", ALIPAY_PACKAGE, AlipayPageParser as PaymentPageParser),
+        )
+
+        platforms.forEach { (platform, packageName, parser) ->
+            expectations.forEach { (signal, eventKind, direction) ->
+                assertOutcome(
+                    eventKind = eventKind,
+                    direction = direction,
+                    outcome = parser.parse(
+                        page(
+                            signal,
+                            "商户：便利店",
+                            "实付 ¥12.34",
+                            packageName = packageName,
+                        ),
                     ),
-                ),
-                message = signal,
-            )
+                    message = "$platform $signal",
+                )
+            }
         }
     }
 
@@ -148,6 +154,32 @@ class PaymentPageParserTest {
     }
 
     @Test
+    fun `invalid primary amount clause prevents fallback to a valid fee`() {
+        val invalidPrimaryAmounts = listOf(
+            "实付 ¥12.345",
+            "实付 ¥-12.34",
+            "实付 ¥1,23.45",
+            "实付 ¥999999999999999999999999999999.00",
+        )
+
+        invalidPrimaryAmounts.forEach { primaryAmount ->
+            assertRejected(
+                WechatPageParser.parse(
+                    page(
+                        "微信支付",
+                        "支付成功",
+                        primaryAmount,
+                        "手续费 ¥1.00",
+                        packageName = WECHAT_PACKAGE,
+                    ),
+                ),
+                RecognitionRejectReason.INCOMPLETE_FIELDS,
+                primaryAmount,
+            )
+        }
+    }
+
+    @Test
     fun `multiple equally ranked bill cards require selection in top to bottom order`() {
         val outcome = GenericBillParser.parse(
             cardsPage(
@@ -158,6 +190,48 @@ class PaymentPageParserTest {
         ) as ExtractionOutcome.Multiple
 
         assertEquals(listOf(100L, 200L), outcome.options.map { it.amountMinor })
+        assertEquals(listOf("甲店", "乙店"), outcome.options.map { it.merchant })
+    }
+
+    @Test
+    fun `repeated signatures split vertically adjacent cards despite a sixty pixel gap`() {
+        val first = positionedCard(
+            lines = listOf("账单详情", "支付成功", "商户：甲店", "付款方式：花呗", "实付 ¥1.00"),
+            left = 40,
+            top = 80,
+        )
+        val second = positionedCard(
+            lines = listOf("账单详情", "支付成功", "实付 ¥2.00"),
+            left = 40,
+            top = first.maxOf { it.bounds.bottom } + 60,
+        )
+        val outcome = GenericBillParser.parse(
+            PageSnapshot(null, first + second, OBSERVED_AT),
+        ) as ExtractionOutcome.Multiple
+
+        assertEquals(listOf(100L, 200L), outcome.options.map { it.amountMinor })
+        assertEquals(listOf("甲店", null), outcome.options.map { it.merchant })
+    }
+
+    @Test
+    fun `two dimensional bounds keep side by side bill cards separate`() {
+        val leftCard = positionedCard(
+            lines = listOf("账单详情", "支付成功", "商户：甲店", "实付 ¥3.00"),
+            left = 40,
+            top = 80,
+            width = 360,
+        )
+        val rightCard = positionedCard(
+            lines = listOf("账单详情", "支付成功", "商户：乙店", "实付 ¥4.00"),
+            left = 520,
+            top = 80,
+            width = 360,
+        )
+        val outcome = GenericBillParser.parse(
+            PageSnapshot(null, leftCard + rightCard, OBSERVED_AT),
+        ) as ExtractionOutcome.Multiple
+
+        assertEquals(listOf(300L, 400L), outcome.options.map { it.amountMinor })
         assertEquals(listOf("甲店", "乙店"), outcome.options.map { it.merchant })
     }
 
@@ -192,13 +266,32 @@ class PaymentPageParserTest {
                 "微信支付",
                 "支付成功",
                 "¥1.00",
-                "09:16",
+                "交易时间：09:16",
                 packageName = WECHAT_PACKAGE,
             ),
         ) as ExtractionOutcome.Single
 
         assertEquals(Instant.parse("2026-07-28T01:15:00Z"), monthDay.candidate.occurredAt)
         assertEquals(Instant.parse("2026-07-29T01:16:00Z"), localClock.candidate.occurredAt)
+    }
+
+    @Test
+    fun `system status bar clock is not used as transaction time`() {
+        val statusClock = ObservedTextElement(
+            text = "09:16",
+            bounds = TextBounds(left = 20, top = 4, right = 120, bottom = 28),
+        )
+        val paymentCard = positionedCard(
+            lines = listOf("微信支付", "支付成功", "商户：便利店", "实付 ¥1.00"),
+            left = 40,
+            top = 45,
+            width = 560,
+        )
+        val outcome = WechatPageParser.parse(
+            PageSnapshot(WECHAT_PACKAGE, listOf(statusClock) + paymentCard, OBSERVED_AT),
+        ) as ExtractionOutcome.Single
+
+        assertEquals(OBSERVED_AT, outcome.candidate.occurredAt)
     }
 
     @Test
@@ -251,6 +344,41 @@ class PaymentPageParserTest {
         assertEquals("花呗", exact.candidate.account)
         assertEquals("招商银行储蓄卡(1234)", masked.candidate.account)
         assertNull(unrelated.candidate.account)
+    }
+
+    @Test
+    fun `isolated allowlisted account word has no account semantics`() {
+        val outcome = WechatPageParser.parse(
+            page(
+                "微信支付",
+                "支付成功",
+                "商户：便利店",
+                "花呗",
+                "实付 ¥12.00",
+                packageName = WECHAT_PACKAGE,
+            ),
+        ) as ExtractionOutcome.Single
+
+        assertNull(outcome.candidate.account)
+    }
+
+    @Test
+    fun `account value aligned with an explicit payment method label is accepted`() {
+        val elements = positionedCard(
+            lines = listOf("微信支付", "支付成功", "商户：便利店"),
+            left = 40,
+            top = 80,
+            width = 560,
+        ) + listOf(
+            ObservedTextElement("付款方式", TextBounds(40, 180, 180, 208)),
+            ObservedTextElement("花呗", TextBounds(220, 180, 320, 208)),
+            ObservedTextElement("实付 ¥12.00", TextBounds(40, 220, 600, 248)),
+        )
+        val outcome = WechatPageParser.parse(
+            PageSnapshot(WECHAT_PACKAGE, elements, OBSERVED_AT),
+        ) as ExtractionOutcome.Single
+
+        assertEquals("花呗", outcome.candidate.account)
     }
 
     @Test
@@ -396,6 +524,19 @@ class PaymentPageParserTest {
                 bounds = TextBounds(left = 40, top = lineTop, right = 600, bottom = lineTop + 28),
             )
         }
+
+    private fun positionedCard(
+        lines: List<String>,
+        left: Int,
+        top: Int,
+        width: Int = 560,
+    ): List<ObservedTextElement> = lines.mapIndexed { index, text ->
+        val lineTop = top + index * 30
+        ObservedTextElement(
+            text = text,
+            bounds = TextBounds(left, lineTop, left + width, lineTop + 20),
+        )
+    }
 
     private companion object {
         const val WECHAT_PACKAGE = "com.tencent.mm"
