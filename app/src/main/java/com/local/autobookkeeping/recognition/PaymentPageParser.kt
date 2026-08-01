@@ -197,7 +197,9 @@ private fun parseCard(
         AmountSelection.Ambiguous -> return CardParseResult.Invalid(RecognitionRejectReason.INCOMPLETE_FIELDS)
         is AmountSelection.Selected -> selection.amount
     }
-    val visibleTime = when (val selection = selectVisibleTime(elements, snapshot.observedAt, zone)) {
+    val visibleTime = when (
+        val selection = selectVisibleTime(elements, amount.element, snapshot.observedAt, zone)
+    ) {
         TimeSelection.Missing -> null
         TimeSelection.Ambiguous -> return CardParseResult.Invalid(RecognitionRejectReason.INCOMPLETE_FIELDS)
         is TimeSelection.Selected -> selection.instant
@@ -251,7 +253,10 @@ private fun groupByGeometry(elements: List<ObservedTextElement>): List<List<Obse
 private data class SemanticAnchor(
     val element: ObservedTextElement,
     val key: String,
-)
+) {
+    val isEvent: Boolean
+        get() = key.startsWith("event:")
+}
 
 private data class SemanticAnchorCluster(
     val anchors: MutableList<SemanticAnchor>,
@@ -263,6 +268,18 @@ private data class SemanticAnchorCluster(
             right = anchors.maxOf { it.element.bounds.right },
             bottom = anchors.maxOf { it.element.bounds.bottom },
         )
+
+    val ownershipBounds: TextBounds
+        get() {
+            val eventAnchors = anchors.filter(SemanticAnchor::isEvent)
+            val localAnchors = eventAnchors.ifEmpty { anchors }
+            return TextBounds(
+                left = localAnchors.minOf { it.element.bounds.left },
+                top = localAnchors.minOf { it.element.bounds.top },
+                right = localAnchors.maxOf { it.element.bounds.right },
+                bottom = localAnchors.maxOf { it.element.bounds.bottom },
+            )
+        }
 }
 
 private fun buildSemanticAnchorClusters(
@@ -297,10 +314,11 @@ private fun canJoinSemanticCluster(
     cluster: SemanticAnchorCluster,
     medianHeight: Int,
 ): Boolean {
-    val repeatedDistinctAnchor = cluster.anchors.any { existing ->
-        existing.key == anchor.key && !rectanglesOverlap(existing.element.bounds, anchor.element.bounds)
+    val distinctBoundaryAnchor = cluster.anchors.any { existing ->
+        !rectanglesOverlap(existing.element.bounds, anchor.element.bounds) &&
+            (existing.key == anchor.key || (existing.isEvent && anchor.isEvent))
     }
-    if (repeatedDistinctAnchor) return false
+    if (distinctBoundaryAnchor) return false
     return cluster.anchors.any { existing ->
         val first = existing.element.bounds
         val second = anchor.element.bounds
@@ -343,23 +361,25 @@ private fun chooseBoundedOwningCluster(
 ): SemanticAnchorCluster? {
     // Every membership check is direct against immutable anchor bounds; assigned text never expands a card.
     val verticallyLocal = clusters.filter { cluster ->
-        verticalGap(bounds, cluster.bounds) <= medianHeight * CARD_VERTICAL_HEIGHTS
+        verticalGap(bounds, cluster.ownershipBounds) <= medianHeight * CARD_VERTICAL_HEIGHTS
     }
-    val sameColumn = verticallyLocal.filter { cluster -> horizontalOverlap(bounds, cluster.bounds) > 0 }
+    val sameColumn = verticallyLocal.filter { cluster ->
+        horizontalOverlap(bounds, cluster.ownershipBounds) > 0
+    }
     val candidates = sameColumn.ifEmpty {
         verticallyLocal.filter { cluster ->
-            horizontalGap(bounds, cluster.bounds) <= medianHeight * CARD_HORIZONTAL_HEIGHTS
+            horizontalGap(bounds, cluster.ownershipBounds) <= medianHeight * CARD_HORIZONTAL_HEIGHTS
         }
     }
     if (candidates.isEmpty()) return null
     val centerY = bounds.top + (bounds.bottom - bounds.top) / 2
-    val started = candidates.filter { cluster -> cluster.bounds.top <= centerY }
+    val started = candidates.filter { cluster -> cluster.ownershipBounds.top <= centerY }
     if (started.isNotEmpty()) {
-        val latestTop = started.maxOf { it.bounds.top }
-        return started.filter { it.bounds.top == latestTop }
-            .minBy { cluster -> squaredDistance(bounds, cluster.bounds) }
+        val latestTop = started.maxOf { it.ownershipBounds.top }
+        return started.filter { it.ownershipBounds.top == latestTop }
+            .minBy { cluster -> squaredDistance(bounds, cluster.ownershipBounds) }
     }
-    return candidates.minBy { cluster -> squaredDistance(bounds, cluster.bounds) }
+    return candidates.minBy { cluster -> squaredDistance(bounds, cluster.ownershipBounds) }
 }
 
 private fun rectanglesOverlap(first: TextBounds, second: TextBounds): Boolean =
@@ -588,7 +608,10 @@ private fun extractMerchant(
     val candidates = elements.mapNotNull { element ->
         val text = element.text.trim()
         text.normalizeMerchant()
-            ?.takeIf { isPossibleStandaloneMerchant(text) }
+            ?.takeIf {
+                element.bounds.centerY <= amountElement.bounds.centerY &&
+                    isPossibleStandaloneMerchant(text)
+            }
             ?.let { merchant ->
                 merchant to abs(element.bounds.centerY - amountElement.bounds.centerY)
             }
@@ -661,6 +684,7 @@ private fun normalizeAccount(value: String): String? {
 
 private fun selectVisibleTime(
     elements: List<ObservedTextElement>,
+    amountElement: ObservedTextElement,
     observedAt: Instant,
     zone: ZoneId,
 ): TimeSelection {
@@ -668,13 +692,17 @@ private fun selectVisibleTime(
     val candidates = elements.flatMap { element ->
         buildList {
             FULL_TIME.findAll(element.text).forEach { match ->
-                parseFullTime(match, zone)?.let { add(LocatedTime(it, 0)) }
+                if (isTimeOwnedByCard(match, element, elements, amountElement)) {
+                    parseFullTime(match, zone)?.let { add(LocatedTime(it, 0)) }
+                }
             }
             MONTH_DAY_TIME.findAll(element.text).forEach { match ->
-                parseMonthDayTime(match, observedAt, zone)?.let { add(LocatedTime(it, 1)) }
+                if (isTimeOwnedByCard(match, element, elements, amountElement)) {
+                    parseMonthDayTime(match, observedAt, zone)?.let { add(LocatedTime(it, 1)) }
+                }
             }
             CLOCK_TIME.findAll(element.text).forEach { match ->
-                if (isClockOwnedByCard(match, element, elements)) {
+                if (isTimeOwnedByCard(match, element, elements, amountElement)) {
                     parseClockTime(match, observedDate, zone)?.let { add(LocatedTime(it, 2)) }
                 }
             }
@@ -685,23 +713,27 @@ private fun selectVisibleTime(
     return if (best.size == 1) TimeSelection.Selected(best.single()) else TimeSelection.Ambiguous
 }
 
-private fun isClockOwnedByCard(
+private fun isTimeOwnedByCard(
     match: MatchResult,
     timeElement: ObservedTextElement,
     cardElements: List<ObservedTextElement>,
+    amountElement: ObservedTextElement,
 ): Boolean {
     val clause = timeElement.text.clauseContaining(match.range)
     if (TIME_FIELD_LABELS.any(clause::contains)) return true
-    return cardElements.any { anchor ->
-        isCardSemanticAnchor(anchor) &&
+    val followsTransactionAnchor = cardElements.any { anchor ->
+        isTransactionRegionAnchor(anchor) &&
             timeElement.bounds.top >= anchor.bounds.top &&
             horizontalOverlap(timeElement.bounds, anchor.bounds) > 0
     }
+    val followsAmount = timeElement.bounds.top >= amountElement.bounds.top &&
+        horizontalOverlap(timeElement.bounds, amountElement.bounds) > 0
+    return followsTransactionAnchor || followsAmount
 }
 
-private fun isCardSemanticAnchor(element: ObservedTextElement): Boolean {
+private fun isTransactionRegionAnchor(element: ObservedTextElement): Boolean {
     val text = element.text.trim()
-    return text in CARD_DETAIL_SIGNATURES || EVENT_SIGNALS.keys.any(text::contains)
+    return text in TRANSACTION_DETAIL_SIGNATURES || EVENT_SIGNALS.keys.any(text::contains)
 }
 
 private fun horizontalOverlap(first: TextBounds, second: TextBounds): Int =
@@ -798,7 +830,8 @@ private val PAGE_META_LABELS = setOf(
     "交易详情",
     "帮助与服务",
 )
-private val CARD_DETAIL_SIGNATURES = setOf("微信支付", "支付宝", "账单详情", "账单明细", "交易详情")
+private val TRANSACTION_DETAIL_SIGNATURES = setOf("账单详情", "账单明细", "交易详情")
+private val CARD_DETAIL_SIGNATURES = setOf("微信支付", "支付宝") + TRANSACTION_DETAIL_SIGNATURES
 private val TIME_FIELD_LABELS = setOf("交易时间", "支付时间", "转账时间", "收款时间", "退款时间", "创建时间")
 private val FULL_TIME = Regex("(?<!\\d)(\\d{4})-(\\d{2})-(\\d{2})\\s+(\\d{2}):(\\d{2})(?!\\d)")
 private val MONTH_DAY_TIME = Regex("(?<!\\d)(\\d{2})-(\\d{2})\\s+(\\d{2}):(\\d{2})(?!\\d)")

@@ -258,6 +258,59 @@ class PaymentPageParserTest {
     }
 
     @Test
+    fun `different vertically adjacent event anchors define separate cards`() {
+        val outcome = GenericBillParser.parse(
+            PageSnapshot(
+                packageName = null,
+                elements = listOf(
+                    ObservedTextElement("转出", TextBounds(40, 80, 600, 100)),
+                    ObservedTextElement("实付 ¥5.00", TextBounds(40, 120, 600, 140)),
+                    ObservedTextElement("转入", TextBounds(40, 160, 600, 180)),
+                    ObservedTextElement("实付 ¥6.00", TextBounds(40, 200, 600, 220)),
+                ),
+                observedAt = OBSERVED_AT,
+            ),
+        ) as ExtractionOutcome.Multiple
+
+        assertEquals(listOf(500L, 600L), outcome.options.map { it.amountMinor })
+        assertEquals(listOf(Direction.EXPENSE, Direction.INCOME), outcome.options.map { it.direction })
+    }
+
+    @Test
+    fun `shared bill and platform titles do not bridge side by side event cards`() {
+        val cases = listOf(
+            Triple("账单详情", null, GenericBillParser as PaymentPageParser),
+            Triple("微信支付", WECHAT_PACKAGE, WechatPageParser as PaymentPageParser),
+        )
+
+        cases.forEach { (title, packageName, parser) ->
+            val outcome = parser.parse(
+                PageSnapshot(
+                    packageName = packageName,
+                    elements = listOf(
+                        ObservedTextElement(title, TextBounds(40, 40, 600, 60)),
+                        ObservedTextElement("转出", TextBounds(40, 80, 280, 100)),
+                        ObservedTextElement("商户：甲店", TextBounds(40, 120, 280, 140)),
+                        ObservedTextElement("实付 ¥5.00", TextBounds(40, 160, 280, 180)),
+                        ObservedTextElement("转入", TextBounds(320, 80, 560, 100)),
+                        ObservedTextElement("商户：乙店", TextBounds(320, 120, 560, 140)),
+                        ObservedTextElement("实付 ¥6.00", TextBounds(320, 160, 560, 180)),
+                    ),
+                    observedAt = OBSERVED_AT,
+                ),
+            ) as ExtractionOutcome.Multiple
+
+            assertEquals(listOf(500L, 600L), outcome.options.map { it.amountMinor }, title)
+            assertEquals(
+                listOf(Direction.EXPENSE, Direction.INCOME),
+                outcome.options.map { it.direction },
+                title,
+            )
+            assertEquals(listOf("甲店", "乙店"), outcome.options.map { it.merchant }, title)
+        }
+    }
+
+    @Test
     fun `split primary label cannot claim a value from a neighboring card`() {
         val outcome = GenericBillParser.parse(
             PageSnapshot(
@@ -452,6 +505,47 @@ class PaymentPageParserTest {
         ) as ExtractionOutcome.Single
 
         assertEquals(OBSERVED_AT, outcome.candidate.occurredAt)
+    }
+
+    @Test
+    fun `bare full and month day page header times fall back to observation time`() {
+        listOf("2026-07-20 08:00", "07-20 08:00").forEach { headerTime ->
+            val outcome = GenericBillParser.parse(
+                PageSnapshot(
+                    packageName = null,
+                    elements = listOf(
+                        ObservedTextElement(headerTime, TextBounds(40, 0, 600, 20)),
+                        ObservedTextElement("账单详情", TextBounds(40, 80, 600, 100)),
+                        ObservedTextElement("¥12.34", TextBounds(40, 160, 600, 180)),
+                    ),
+                    observedAt = OBSERVED_AT,
+                ),
+            ) as ExtractionOutcome.Single
+
+            assertEquals(OBSERVED_AT, outcome.candidate.occurredAt, headerTime)
+        }
+    }
+
+    @Test
+    fun `ordinary text after the amount is not a standalone merchant or digest input`() {
+        fun parse(description: String): ExtractionOutcome.Single = GenericBillParser.parse(
+            PageSnapshot(
+                packageName = null,
+                elements = listOf(
+                    ObservedTextElement("账单详情", TextBounds(40, 80, 600, 100)),
+                    ObservedTextElement("¥12.34", TextBounds(40, 160, 600, 180)),
+                    ObservedTextElement(description, TextBounds(40, 200, 600, 220)),
+                ),
+                observedAt = OBSERVED_AT,
+            ),
+        ) as ExtractionOutcome.Single
+
+        val first = parse("普通说明一")
+        val second = parse("普通说明二")
+
+        assertNull(first.candidate.merchant)
+        assertNull(second.candidate.merchant)
+        assertEquals(first.candidate.evidenceDigest, second.candidate.evidenceDigest)
     }
 
     @Test
