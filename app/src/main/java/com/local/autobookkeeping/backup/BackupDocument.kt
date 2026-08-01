@@ -21,12 +21,13 @@ import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 
 data class BackupDocument(
-    val formatVersion: Int = 1,
+    val formatVersion: Int = 2,
     val exportedAtEpochMillis: Long,
     val transactions: List<BackupTransaction>,
     val categories: List<BackupCategory>,
     val accounts: List<BackupAccount>,
     val merchantRules: List<BackupMerchantRule>,
+    val recognitionReceipts: List<BackupRecognitionReceipt> = emptyList(),
     val theme: String,
 )
 
@@ -35,6 +36,7 @@ data class BackupData(
     val categories: List<BackupCategory>,
     val accounts: List<BackupAccount>,
     val merchantRules: List<BackupMerchantRule>,
+    val recognitionReceipts: List<BackupRecognitionReceipt> = emptyList(),
     val theme: String,
 )
 
@@ -56,6 +58,18 @@ data class BackupTransaction(
     val refundOfId: Long?,
     val createdAtEpochMillis: Long,
     val updatedAtEpochMillis: Long,
+    val platform: String = "UNKNOWN",
+    val eventKind: String = "UNKNOWN",
+    val recognitionConfidence: Int = 100,
+)
+
+data class BackupRecognitionReceipt(
+    val transactionId: Long,
+    val channel: String,
+    val platform: String,
+    val eventKind: String,
+    val observedAtEpochMillis: Long,
+    val digest: String,
 )
 
 data class BackupCategory(
@@ -242,14 +256,20 @@ private class DuplicateKeyJsonScanner(
 private fun BackupDocument.toJson(): JsonObject = buildJsonObject {
     put("formatVersion", formatVersion)
     put("exportedAtEpochMillis", exportedAtEpochMillis)
-    put("transactions", buildJsonArray { transactions.forEach { add(it.toJson()) } })
+    put(
+        "transactions",
+        buildJsonArray { transactions.forEach { add(it.toJson(includeRecognitionMetadata = formatVersion != 1)) } },
+    )
     put("categories", buildJsonArray { categories.forEach { add(it.toJson()) } })
     put("accounts", buildJsonArray { accounts.forEach { add(it.toJson()) } })
     put("merchantRules", buildJsonArray { merchantRules.forEach { add(it.toJson()) } })
+    if (formatVersion != 1) {
+        put("recognitionReceipts", buildJsonArray { recognitionReceipts.forEach { add(it.toJson()) } })
+    }
     put("theme", theme)
 }
 
-private fun BackupTransaction.toJson(): JsonObject = buildJsonObject {
+private fun BackupTransaction.toJson(includeRecognitionMetadata: Boolean): JsonObject = buildJsonObject {
     put("id", id)
     put("amountMinor", amountMinor)
     put("currency", currency)
@@ -267,6 +287,20 @@ private fun BackupTransaction.toJson(): JsonObject = buildJsonObject {
     putNullable("refundOfId", refundOfId)
     put("createdAtEpochMillis", createdAtEpochMillis)
     put("updatedAtEpochMillis", updatedAtEpochMillis)
+    if (includeRecognitionMetadata) {
+        put("platform", platform)
+        put("eventKind", eventKind)
+        put("recognitionConfidence", recognitionConfidence)
+    }
+}
+
+private fun BackupRecognitionReceipt.toJson(): JsonObject = buildJsonObject {
+    put("transactionId", transactionId)
+    put("channel", channel)
+    put("platform", platform)
+    put("eventKind", eventKind)
+    put("observedAtEpochMillis", observedAtEpochMillis)
+    put("digest", digest)
 }
 
 private fun BackupCategory.toJson(): JsonObject = buildJsonObject {
@@ -301,20 +335,34 @@ private fun kotlinx.serialization.json.JsonObjectBuilder.putNullable(key: String
 }
 
 private fun JsonObject.toBackupDocument(): BackupDocument {
-    requireKeys(DOCUMENT_KEYS)
+    val formatVersion = requiredInt("formatVersion")
+    when (formatVersion) {
+        1 -> requireKeys(VERSION_ONE_DOCUMENT_KEYS)
+        2 -> requireKeys(VERSION_TWO_DOCUMENT_KEYS)
+        else -> throw BackupFormatException("涓嶆敮鎸佺殑澶囦唤鏍煎紡鐗堟湰")
+    }
     return BackupDocument(
-        formatVersion = requiredInt("formatVersion"),
+        formatVersion = formatVersion,
         exportedAtEpochMillis = requiredLong("exportedAtEpochMillis"),
-        transactions = requiredArray("transactions").map { it.requiredObject().toBackupTransaction() },
+        transactions = requiredArray("transactions").map {
+            it.requiredObject().toBackupTransaction(formatVersion)
+        },
         categories = requiredArray("categories").map { it.requiredObject().toBackupCategory() },
         accounts = requiredArray("accounts").map { it.requiredObject().toBackupAccount() },
         merchantRules = requiredArray("merchantRules").map { it.requiredObject().toBackupMerchantRule() },
+        recognitionReceipts = if (formatVersion == 2) {
+            requiredArray("recognitionReceipts").map { it.requiredObject().toBackupRecognitionReceipt() }
+        } else {
+            emptyList()
+        },
         theme = requiredString("theme"),
     )
 }
 
-private fun JsonObject.toBackupTransaction(): BackupTransaction {
-    requireKeys(TRANSACTION_KEYS)
+private fun JsonObject.toBackupTransaction(formatVersion: Int): BackupTransaction {
+    requireKeys(
+        if (formatVersion == 1) VERSION_ONE_TRANSACTION_KEYS else VERSION_TWO_TRANSACTION_KEYS,
+    )
     return BackupTransaction(
         id = requiredLong("id"),
         amountMinor = requiredLong("amountMinor"),
@@ -333,6 +381,21 @@ private fun JsonObject.toBackupTransaction(): BackupTransaction {
         refundOfId = nullableLong("refundOfId"),
         createdAtEpochMillis = requiredLong("createdAtEpochMillis"),
         updatedAtEpochMillis = requiredLong("updatedAtEpochMillis"),
+        platform = if (formatVersion == 1) "UNKNOWN" else requiredString("platform"),
+        eventKind = if (formatVersion == 1) "UNKNOWN" else requiredString("eventKind"),
+        recognitionConfidence = if (formatVersion == 1) 100 else requiredInt("recognitionConfidence"),
+    )
+}
+
+private fun JsonObject.toBackupRecognitionReceipt(): BackupRecognitionReceipt {
+    requireKeys(RECOGNITION_RECEIPT_KEYS)
+    return BackupRecognitionReceipt(
+        transactionId = requiredLong("transactionId"),
+        channel = requiredString("channel"),
+        platform = requiredString("platform"),
+        eventKind = requiredString("eventKind"),
+        observedAtEpochMillis = requiredLong("observedAtEpochMillis"),
+        digest = requiredString("digest"),
     )
 }
 
@@ -423,7 +486,7 @@ private fun JsonObject.requiredBoolean(key: String): Boolean =
         ?.booleanOrNull
         ?: throw BackupFormatException("$key 必须是布尔值")
 
-private val DOCUMENT_KEYS = setOf(
+private val VERSION_ONE_DOCUMENT_KEYS = setOf(
     "formatVersion",
     "exportedAtEpochMillis",
     "transactions",
@@ -433,7 +496,9 @@ private val DOCUMENT_KEYS = setOf(
     "theme",
 )
 
-private val TRANSACTION_KEYS = setOf(
+private val VERSION_TWO_DOCUMENT_KEYS = VERSION_ONE_DOCUMENT_KEYS + "recognitionReceipts"
+
+private val VERSION_ONE_TRANSACTION_KEYS = setOf(
     "id",
     "amountMinor",
     "currency",
@@ -453,6 +518,20 @@ private val TRANSACTION_KEYS = setOf(
     "updatedAtEpochMillis",
 )
 
+private val VERSION_TWO_TRANSACTION_KEYS = VERSION_ONE_TRANSACTION_KEYS + setOf(
+    "platform",
+    "eventKind",
+    "recognitionConfidence",
+)
+
 private val CATEGORY_KEYS = setOf("id", "name", "displayOrder", "hidden")
 private val ACCOUNT_KEYS = setOf("id", "name", "currency", "displayOrder", "hidden")
 private val MERCHANT_RULE_KEYS = setOf("id", "merchantPattern", "categoryId", "accountId", "priority")
+private val RECOGNITION_RECEIPT_KEYS = setOf(
+    "transactionId",
+    "channel",
+    "platform",
+    "eventKind",
+    "observedAtEpochMillis",
+    "digest",
+)

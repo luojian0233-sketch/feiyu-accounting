@@ -74,6 +74,30 @@ class AppDatabaseBackupStoreTest {
         assertEquals(safety, store.read())
     }
 
+    @Test
+    fun failedReceiptInsertionRollsBackTransactionsAndReceiptsInTheSameRoomTransaction() = runBlocking {
+        val safety = completeData()
+        store.replaceRoomData(safety)
+        store.replaceTheme(safety.theme)
+        val invalid = safety.copy(
+            recognitionReceipts = listOf(
+                BackupRecognitionReceipt(
+                    transactionId = 999,
+                    channel = "notification",
+                    platform = "WECHAT",
+                    eventKind = "PAYMENT",
+                    observedAtEpochMillis = 1_785_013_199_000,
+                    digest = "e".repeat(64),
+                ),
+            ),
+        )
+
+        val failed = runCatching { store.replaceRoomData(invalid) }.isFailure
+
+        assertTrue(failed)
+        assertEquals(safety, store.read())
+    }
+
     private fun completeData() = BackupData(
         transactions = listOf(
             BackupTransaction(
@@ -94,6 +118,9 @@ class AppDatabaseBackupStoreTest {
                 refundOfId = null,
                 createdAtEpochMillis = 1_785_013_201_000,
                 updatedAtEpochMillis = 1_785_013_202_000,
+                platform = "WECHAT",
+                eventKind = "PAYMENT",
+                recognitionConfidence = 88,
             ),
             BackupTransaction(
                 id = 41,
@@ -113,6 +140,9 @@ class AppDatabaseBackupStoreTest {
                 refundOfId = 40,
                 createdAtEpochMillis = 1_785_016_801_000,
                 updatedAtEpochMillis = 1_785_016_802_000,
+                platform = "ALIPAY",
+                eventKind = "REFUND",
+                recognitionConfidence = 91,
             ),
         ),
         categories = listOf(
@@ -123,6 +153,16 @@ class AppDatabaseBackupStoreTest {
         ),
         merchantRules = listOf(
             BackupMerchantRule(30, "本地超市", categoryId = 10, accountId = 20, priority = 9),
+        ),
+        recognitionReceipts = listOf(
+            BackupRecognitionReceipt(
+                transactionId = 40,
+                channel = "notification",
+                platform = "WECHAT",
+                eventKind = "PAYMENT",
+                observedAtEpochMillis = 1_785_013_199_000,
+                digest = "f".repeat(64),
+            ),
         ),
         theme = ThemeStyle.RECEIPT_LEDGER.name,
     )

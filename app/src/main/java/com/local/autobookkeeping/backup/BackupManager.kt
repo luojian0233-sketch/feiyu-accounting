@@ -5,6 +5,7 @@ import com.local.autobookkeeping.data.db.AccountEntity
 import com.local.autobookkeeping.data.db.AppDatabase
 import com.local.autobookkeeping.data.db.CategoryEntity
 import com.local.autobookkeeping.data.db.MerchantRuleEntity
+import com.local.autobookkeeping.data.db.RecognitionReceiptEntity
 import com.local.autobookkeeping.data.db.TransactionEntity
 import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.domain.model.Source
@@ -82,6 +83,7 @@ class BackupManager(
                     categories = data.categories,
                     accounts = data.accounts,
                     merchantRules = data.merchantRules,
+                    recognitionReceipts = data.recognitionReceipts,
                     theme = data.theme,
                 ),
                 output,
@@ -258,7 +260,7 @@ class BackupManager(
     }
 
     private companion object {
-        const val SUPPORTED_FORMAT_VERSION = 1
+        const val SUPPORTED_FORMAT_VERSION = 2
         const val INVALID_BACKUP_REASON = "备份文件无效，未替换当前数据"
         const val RESTORE_FAILURE_REASON = "恢复失败，当前数据已保留"
     }
@@ -278,6 +280,7 @@ class AppDatabaseBackupStore(
                 categories = dao.allCategories().map(CategoryEntity::toBackup),
                 accounts = dao.allAccounts().map(AccountEntity::toBackup),
                 merchantRules = dao.allMerchantRules().map(MerchantRuleEntity::toBackup),
+                recognitionReceipts = dao.allRecognitionReceipts().map(RecognitionReceiptEntity::toBackup),
                 theme = theme,
             )
         }
@@ -300,6 +303,7 @@ class AppDatabaseBackupStore(
             dao.insertAllAccounts(data.accounts.map(BackupAccount::toEntity))
             dao.insertAllMerchantRules(data.merchantRules.map(BackupMerchantRule::toEntity))
             dao.insertAll(data.transactions.map(BackupTransaction::toEntity))
+            data.recognitionReceipts.forEach { dao.insertRecognitionReceipt(it.toEntity()) }
         }
         onCommitted()
     }
@@ -310,7 +314,7 @@ class AppDatabaseBackupStore(
 }
 
 private fun validate(document: BackupDocument) {
-    requireBackup(document.formatVersion == 1)
+    requireBackup(document.formatVersion in 1..2)
     requireBackup(document.exportedAtEpochMillis > 0)
     requireBackup(ThemeStyle.entries.any { it.name == document.theme })
 
@@ -352,6 +356,9 @@ private fun validate(document: BackupDocument) {
         requireBackup(row.occurredAtEpochMillis > 0)
         requireBackup(row.createdAtEpochMillis > 0)
         requireBackup(row.updatedAtEpochMillis >= row.createdAtEpochMillis)
+        requireBackup(row.platform.isNotBlank())
+        requireBackup(row.eventKind.isNotBlank())
+        requireBackup(row.recognitionConfidence in 0..100)
         requireBackup(row.dedupeKey == null || row.dedupeKey.isNotBlank())
         requireBackup(
             row.redactedNotificationDigest == null ||
@@ -359,6 +366,15 @@ private fun validate(document: BackupDocument) {
         )
         requireBackup(row.refundOfId == null || row.refundOfId in transactionIds)
         requireBackup(row.refundOfId != row.id)
+    }
+    requireUniqueNames(document.recognitionReceipts.map(BackupRecognitionReceipt::digest))
+    document.recognitionReceipts.forEach { row ->
+        requireBackup(row.transactionId in transactionIds)
+        requireBackup(row.channel.isNotBlank())
+        requireBackup(row.platform.isNotBlank())
+        requireBackup(row.eventKind.isNotBlank())
+        requireBackup(row.observedAtEpochMillis > 0)
+        requireBackup(row.digest.matches(SHA_256_DIGEST))
     }
 }
 
@@ -376,12 +392,14 @@ private fun requireBackup(condition: Boolean) {
 }
 
 private fun String.isCurrency(): Boolean = matches(Regex("[A-Z]{3}"))
+private val SHA_256_DIGEST = Regex("[0-9a-f]{64}")
 
 private fun BackupDocument.toData() = BackupData(
     transactions = transactions,
     categories = categories,
     accounts = accounts,
     merchantRules = merchantRules,
+    recognitionReceipts = recognitionReceipts,
     theme = theme,
 )
 
@@ -403,6 +421,9 @@ private fun TransactionEntity.toBackup() = BackupTransaction(
     refundOfId = refundOfId,
     createdAtEpochMillis = createdAtEpochMillis,
     updatedAtEpochMillis = updatedAtEpochMillis,
+    platform = platform,
+    eventKind = eventKind,
+    recognitionConfidence = recognitionConfidence,
 )
 
 private fun BackupTransaction.toEntity() = TransactionEntity(
@@ -423,6 +444,27 @@ private fun BackupTransaction.toEntity() = TransactionEntity(
     refundOfId = refundOfId,
     createdAtEpochMillis = createdAtEpochMillis,
     updatedAtEpochMillis = updatedAtEpochMillis,
+    platform = platform,
+    eventKind = eventKind,
+    recognitionConfidence = recognitionConfidence,
+)
+
+private fun RecognitionReceiptEntity.toBackup() = BackupRecognitionReceipt(
+    transactionId = transactionId,
+    channel = channel,
+    platform = platform,
+    eventKind = eventKind,
+    observedAtEpochMillis = observedAtEpochMillis,
+    digest = digest,
+)
+
+private fun BackupRecognitionReceipt.toEntity() = RecognitionReceiptEntity(
+    transactionId = transactionId,
+    channel = channel,
+    platform = platform,
+    eventKind = eventKind,
+    observedAtEpochMillis = observedAtEpochMillis,
+    digest = digest,
 )
 
 private fun CategoryEntity.toBackup() = BackupCategory(id, name, displayOrder, hidden)

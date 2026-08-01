@@ -12,6 +12,7 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlin.coroutines.CoroutineContext
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -33,7 +34,7 @@ class BackupManagerTest {
         assertEquals(RestoreResult.Success(transactionCount = 2), result)
         assertEquals(completeData(), restored.current)
         val json = output.toString(Charsets.UTF_8.name())
-        assertTrue(json.contains("\"formatVersion\":1"))
+        assertTrue(json.contains("\"formatVersion\":2"))
         assertTrue(json.contains("\"exportedAtEpochMillis\":1785038400000"))
         assertTrue(!json.contains("notificationText"))
         assertTrue(!json.contains("wechatEnabled"))
@@ -58,7 +59,7 @@ class BackupManagerTest {
     fun `unsupported version never mutates current data`() = runTest {
         val existing = completeData()
         val store = FakeBackupStore(current = existing)
-        val input = encoded(document(formatVersion = 2))
+        val input = encoded(document(formatVersion = 3))
 
         val result = manager(store).restore(input)
 
@@ -66,6 +67,93 @@ class BackupManagerTest {
         assertEquals(existing, store.current)
         assertEquals(0, store.roomMutationCount)
         assertEquals(0, store.themeMutationCount)
+    }
+
+    @Test
+    fun `version one transaction imports with recognition defaults`() {
+        val legacy = document(
+            data = completeData().copy(
+                transactions = listOf(completeData().transactions.first()),
+            ),
+            formatVersion = 1,
+        )
+        val decoded = BackupJsonCodec().decode(encoded(legacy))
+        val row = decoded.transactions.single()
+
+        assertEquals("UNKNOWN", row.platform)
+        assertEquals("UNKNOWN", row.eventKind)
+        assertEquals(100, row.recognitionConfidence)
+        assertTrue(decoded.recognitionReceipts.isEmpty())
+    }
+
+    @Test
+    fun `version two round trips redacted receipts`() {
+        val document = document(
+            formatVersion = 2,
+            data = completeData().copy(
+                recognitionReceipts = listOf(sampleReceipt(digest = "a".repeat(64))),
+            ),
+        )
+
+        val bytes = encodedBytes(document)
+
+        assertEquals(document, BackupJsonCodec().decode(bytes.inputStream()))
+        assertFalse(bytes.toString(Charsets.UTF_8).contains("寰俊鏀粯椤甸潰鍘熸枃"))
+    }
+
+    @Test
+    fun `valid version two data restores recognition metadata and receipts`() = runTest {
+        val expected = completeData().copy(
+            recognitionReceipts = listOf(sampleReceipt(digest = "b".repeat(64))),
+        )
+        val store = FakeBackupStore(current = emptyData("CLEAR_MINT"))
+
+        val result = manager(store).restore(encoded(document(expected, formatVersion = 2)))
+
+        assertEquals(RestoreResult.Success(expected.transactions.size), result)
+        assertEquals(expected, store.current)
+    }
+
+    @Test
+    fun `version two rejects unknown receipt members before mutation`() = runTest {
+        val store = FakeBackupStore(current = completeData())
+        val valid = encodedBytes(
+            document(
+                completeData().copy(
+                    recognitionReceipts = listOf(sampleReceipt(digest = "c".repeat(64))),
+                ),
+                formatVersion = 2,
+            ),
+        ).toString(Charsets.UTF_8)
+        val unknown = valid.replaceFirst(
+            "\"digest\":\"${"c".repeat(64)}\"",
+            "\"digest\":\"${"c".repeat(64)}\",\"unknown\":true",
+        )
+
+        val result = manager(store).restore(unknown.byteInputStream())
+
+        assertInstanceOf(RestoreResult.Invalid::class.java, result)
+        assertEquals(completeData(), store.current)
+        assertEquals(0, store.roomMutationCount)
+    }
+
+    @Test
+    fun `version two rejects malformed or dangling recognition receipts before mutation`() = runTest {
+        val base = completeData()
+        val malformed = listOf(
+            base.copy(recognitionReceipts = listOf(sampleReceipt(digest = "UPPERCASE".padEnd(64, 'A')))),
+            base.copy(recognitionReceipts = listOf(sampleReceipt(transactionId = 999, digest = "d".repeat(64)))),
+        )
+
+        malformed.forEach { data ->
+            val store = FakeBackupStore(current = base)
+
+            val result = manager(store).restore(encoded(document(data, formatVersion = 2)))
+
+            assertInstanceOf(RestoreResult.Invalid::class.java, result)
+            assertEquals(base, store.current)
+            assertEquals(0, store.roomMutationCount)
+        }
     }
 
     @Test
@@ -617,6 +705,7 @@ class BackupManagerTest {
         categories = data.categories,
         accounts = data.accounts,
         merchantRules = data.merchantRules,
+        recognitionReceipts = data.recognitionReceipts,
         theme = data.theme,
     )
 
@@ -683,6 +772,18 @@ class BackupManagerTest {
             ),
         ),
         theme = "RECEIPT_LEDGER",
+    )
+
+    private fun sampleReceipt(
+        transactionId: Long = 40,
+        digest: String,
+    ) = BackupRecognitionReceipt(
+        transactionId = transactionId,
+        channel = "notification",
+        platform = "WECHAT",
+        eventKind = "PAYMENT",
+        observedAtEpochMillis = 1_785_013_199_000,
+        digest = digest,
     )
 
     private fun emptyData(theme: String) = BackupData(
