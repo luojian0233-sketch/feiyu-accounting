@@ -258,6 +258,26 @@ class PaymentPageParserTest {
     }
 
     @Test
+    fun `split primary label cannot claim a value from a neighboring card`() {
+        val outcome = GenericBillParser.parse(
+            PageSnapshot(
+                packageName = null,
+                elements = listOf(
+                    ObservedTextElement("转出", TextBounds(40, 80, 160, 100)),
+                    ObservedTextElement("实付", TextBounds(40, 120, 120, 140)),
+                    ObservedTextElement("转入", TextBounds(300, 80, 420, 100)),
+                    ObservedTextElement("¥6.00", TextBounds(300, 120, 420, 140)),
+                ),
+                observedAt = OBSERVED_AT,
+            ),
+        ) as ExtractionOutcome.Single
+
+        assertEquals(600L, outcome.candidate.amountMinor)
+        assertEquals(Direction.INCOME, outcome.candidate.direction)
+        assertEquals(TransactionEventKind.TRANSFER, outcome.candidate.eventKind)
+    }
+
+    @Test
     fun `single semantic anchor owns a sparse amount sixty pixels below`() {
         val outcome = GenericBillParser.parse(
             PageSnapshot(
@@ -304,6 +324,31 @@ class PaymentPageParserTest {
                 elements = listOf(
                     ObservedTextElement("账单详情", TextBounds(40, 80, 600, 100)),
                     ObservedTextElement("¥12.34", TextBounds(40, 160, 600, 180)),
+                    ObservedTextElement("实付 ¥9.99", TextBounds(40, 520, 600, 540)),
+                ),
+                observedAt = OBSERVED_AT,
+            ),
+        ) as ExtractionOutcome.Single
+
+        assertEquals(1_234L, outcome.candidate.amountMinor)
+    }
+
+    @Test
+    fun `ordinary text cannot bridge a single card to a remote primary amount`() {
+        val outcome = GenericBillParser.parse(
+            PageSnapshot(
+                packageName = null,
+                elements = listOf(
+                    ObservedTextElement("账单详情", TextBounds(40, 80, 600, 100)),
+                    ObservedTextElement("¥12.34", TextBounds(40, 160, 600, 180)),
+                    ObservedTextElement("普通说明一", TextBounds(40, 200, 600, 220)),
+                    ObservedTextElement("普通说明二", TextBounds(40, 240, 600, 260)),
+                    ObservedTextElement("普通说明三", TextBounds(40, 280, 600, 300)),
+                    ObservedTextElement("普通说明四", TextBounds(40, 320, 600, 340)),
+                    ObservedTextElement("普通说明五", TextBounds(40, 360, 600, 380)),
+                    ObservedTextElement("普通说明六", TextBounds(40, 400, 600, 420)),
+                    ObservedTextElement("普通说明七", TextBounds(40, 440, 600, 460)),
+                    ObservedTextElement("普通说明八", TextBounds(40, 480, 600, 500)),
                     ObservedTextElement("实付 ¥9.99", TextBounds(40, 520, 600, 540)),
                 ),
                 observedAt = OBSERVED_AT,
