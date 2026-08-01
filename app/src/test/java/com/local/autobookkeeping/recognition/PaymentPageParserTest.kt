@@ -236,6 +236,67 @@ class PaymentPageParserTest {
     }
 
     @Test
+    fun `different side by side event anchors define separate forty pixel columns`() {
+        val elements = listOf(
+            ObservedTextElement("转出", TextBounds(40, 80, 300, 100)),
+            ObservedTextElement("商户：甲店", TextBounds(40, 120, 300, 140)),
+            ObservedTextElement("实付 ¥5.00", TextBounds(40, 160, 300, 180)),
+            ObservedTextElement("转入", TextBounds(340, 80, 600, 100)),
+            ObservedTextElement("商户：乙店", TextBounds(340, 120, 600, 140)),
+            ObservedTextElement("实付 ¥6.00", TextBounds(340, 160, 600, 180)),
+        )
+        val outcome = GenericBillParser.parse(
+            PageSnapshot(null, elements, OBSERVED_AT),
+        ) as ExtractionOutcome.Multiple
+
+        assertEquals(listOf(500L, 600L), outcome.options.map { it.amountMinor })
+        assertEquals(listOf(Direction.EXPENSE, Direction.INCOME), outcome.options.map { it.direction })
+        assertEquals(
+            listOf(TransactionEventKind.TRANSFER, TransactionEventKind.TRANSFER),
+            outcome.options.map { it.eventKind },
+        )
+    }
+
+    @Test
+    fun `single semantic anchor owns a sparse amount sixty pixels below`() {
+        val outcome = GenericBillParser.parse(
+            PageSnapshot(
+                packageName = null,
+                elements = listOf(
+                    ObservedTextElement("账单详情", TextBounds(40, 80, 600, 100)),
+                    ObservedTextElement("¥12.34", TextBounds(40, 160, 600, 180)),
+                ),
+                observedAt = OBSERVED_AT,
+            ),
+        ) as ExtractionOutcome.Single
+
+        assertEquals(1_234L, outcome.candidate.amountMinor)
+        assertEquals(Direction.EXPENSE, outcome.candidate.direction)
+    }
+
+    @Test
+    fun `split primary label accepts a local valid value but rejects malformed value before fee`() {
+        fun snapshot(primaryValue: String) = PageSnapshot(
+            packageName = null,
+            elements = listOf(
+                ObservedTextElement("账单详情", TextBounds(40, 80, 600, 100)),
+                ObservedTextElement("支付成功", TextBounds(40, 110, 600, 130)),
+                ObservedTextElement("实付", TextBounds(40, 160, 160, 180)),
+                ObservedTextElement(primaryValue, TextBounds(200, 160, 360, 180)),
+                ObservedTextElement("手续费 ¥1.00", TextBounds(40, 210, 600, 230)),
+            ),
+            observedAt = OBSERVED_AT,
+        )
+
+        val valid = GenericBillParser.parse(snapshot("¥12.34")) as ExtractionOutcome.Single
+        assertEquals(1_234L, valid.candidate.amountMinor)
+        assertRejected(
+            GenericBillParser.parse(snapshot("¥12.345")),
+            RecognitionRejectReason.INCOMPLETE_FIELDS,
+        )
+    }
+
+    @Test
     fun `visible transaction time is preferred over capture time`() {
         val outcome = WechatPageParser.parse(
             page(

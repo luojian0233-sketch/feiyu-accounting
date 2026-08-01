@@ -244,10 +244,14 @@ private fun groupByGeometry(elements: List<ObservedTextElement>): List<List<Obse
         .sorted()
         .let { it[it.size / 2] }
     val semanticClusters = buildSemanticAnchorClusters(elements, medianHeight)
-    return if (semanticClusters.size > 1) {
-        assignElementsToSemanticClusters(elements, semanticClusters)
-    } else {
-        connectedGeometryGroups(elements, medianHeight)
+    return when {
+        semanticClusters.size > 1 -> assignElementsToSemanticClusters(elements, semanticClusters)
+        semanticClusters.size == 1 -> groupWithSingleSemanticCluster(
+            elements,
+            semanticClusters.single(),
+            medianHeight,
+        )
+        else -> connectedGeometryGroups(elements, medianHeight)
     }
 }
 
@@ -307,11 +311,8 @@ private fun canJoinSemanticCluster(
     return cluster.anchors.any { existing ->
         val first = existing.element.bounds
         val second = anchor.element.bounds
-        val sameColumn = horizontalOverlap(first, second) > 0 &&
+        horizontalOverlap(first, second) > 0 &&
             verticalGap(first, second) <= medianHeight * SEMANTIC_VERTICAL_HEIGHTS
-        val sameRow = verticalOverlap(first, second) > 0 &&
-            horizontalGap(first, second) <= medianHeight * SEMANTIC_HORIZONTAL_HEIGHTS
-        sameColumn || sameRow
     }
 }
 
@@ -332,6 +333,51 @@ private fun assignElementsToSemanticClusters(
             .takeIf(List<ObservedTextElement>::isNotEmpty)
             ?.sortedWith(compareBy<ObservedTextElement> { it.bounds.top }.thenBy { it.bounds.left })
     }
+}
+
+private fun groupWithSingleSemanticCluster(
+    elements: List<ObservedTextElement>,
+    cluster: SemanticAnchorCluster,
+    medianHeight: Int,
+): List<List<ObservedTextElement>> {
+    val geometryGroups = connectedGeometryGroups(elements, medianHeight)
+    val ownedGroups = geometryGroups.filter { group ->
+        val containsAnchor = group.any { element ->
+            cluster.anchors.any { anchor -> anchor.element === element }
+        }
+        val groupBounds = group.bounds()
+        containsAnchor ||
+            (horizontalOverlap(groupBounds, cluster.bounds) > 0 && group.any(::isCardOwnedMetadata))
+    }
+    if (ownedGroups.isEmpty()) return geometryGroups
+    val ownedElements = ownedGroups.flatten().toSet()
+    val merged = ownedElements.sortedWith(
+        compareBy<ObservedTextElement> { it.bounds.top }.thenBy { it.bounds.left },
+    )
+    val unowned = geometryGroups.filterNot { group -> group.any(ownedElements::contains) }
+    return (listOf(merged) + unowned).sortedWith(
+        compareBy<List<ObservedTextElement>> { group -> group.minOf { it.bounds.top } }
+            .thenBy { group -> group.minOf { it.bounds.left } },
+    )
+}
+
+private fun List<ObservedTextElement>.bounds(): TextBounds = TextBounds(
+    left = minOf { it.bounds.left },
+    top = minOf { it.bounds.top },
+    right = maxOf { it.bounds.right },
+    bottom = maxOf { it.bounds.bottom },
+)
+
+private fun isCardOwnedMetadata(element: ObservedTextElement): Boolean {
+    val text = element.text.trim()
+    return isCardSemanticAnchor(element) ||
+        CURRENCY_TOKEN.containsMatchIn(text) ||
+        ACTUAL_AMOUNT_LABELS.any(text::contains) ||
+        EXPLICIT_MERCHANT.matches(text) ||
+        USE_ACCOUNT.matches(text) ||
+        LABELED_ACCOUNT.matches(text) ||
+        text in ACCOUNT_FIELD_LABELS ||
+        TIME_FIELD_LABELS.any(text::contains)
 }
 
 private fun chooseOwningCluster(
@@ -409,8 +455,9 @@ private fun squaredDistance(first: TextBounds, second: TextBounds): Long {
 }
 
 private fun selectAmount(elements: List<ObservedTextElement>): AmountSelection {
-    if (elements.any(::hasInvalidPrimaryAmountClause)) return AmountSelection.Ambiguous
-    val amounts = elements.flatMap { element ->
+    val primaryAnalysis = analyzePrimaryAmounts(elements)
+    if (primaryAnalysis.invalid) return AmountSelection.Ambiguous
+    val amounts = primaryAnalysis.splitAmounts + elements.flatMap { element ->
         findCurrencyAmounts(element.text).mapNotNull { parsed ->
             val clause = element.text.clauseContaining(parsed.range)
             val hasActualLabel = ACTUAL_AMOUNT_LABELS.any(clause::contains)
@@ -434,14 +481,77 @@ private fun selectAmount(elements: List<ObservedTextElement>): AmountSelection {
     }
 }
 
-private fun hasInvalidPrimaryAmountClause(element: ObservedTextElement): Boolean =
-    ACTUAL_AMOUNT_LABELS.any { label ->
-        Regex(Regex.escape(label)).findAll(element.text).any { labelMatch ->
-            val clause = element.text.clauseContaining(labelMatch.range)
-            val currencyTokenCount = CURRENCY_TOKEN.findAll(clause).count()
-            currencyTokenCount == 0 || findCurrencyAmounts(clause).size != currencyTokenCount
+private data class PrimaryAmountAnalysis(
+    val splitAmounts: List<LocatedAmount>,
+    val invalid: Boolean,
+)
+
+private fun analyzePrimaryAmounts(elements: List<ObservedTextElement>): PrimaryAmountAnalysis {
+    val splitAmounts = mutableListOf<LocatedAmount>()
+    elements.forEach { labelElement ->
+        ACTUAL_AMOUNT_LABELS.forEach { label ->
+            Regex(Regex.escape(label)).findAll(labelElement.text).forEach labelMatch@ { labelMatch ->
+                val clause = labelElement.text.clauseContaining(labelMatch.range)
+                val inlineTokenCount = CURRENCY_TOKEN.findAll(clause).count()
+                if (inlineTokenCount > 0) {
+                    if (findCurrencyAmounts(clause).size != inlineTokenCount) {
+                        return PrimaryAmountAnalysis(emptyList(), invalid = true)
+                    }
+                    return@labelMatch
+                }
+
+                val localValues = elements
+                    .filter { valueElement -> valueElement !== labelElement }
+                    .filter { valueElement -> isLocalPrimaryValue(labelElement, valueElement) }
+                    .filter { valueElement -> isBareCurrencyValue(valueElement.text) }
+                val nearestDistance = localValues.minOfOrNull { valueElement ->
+                    squaredDistance(labelElement.bounds, valueElement.bounds)
+                } ?: return PrimaryAmountAnalysis(emptyList(), invalid = true)
+                val nearestValues = localValues.filter { valueElement ->
+                    squaredDistance(labelElement.bounds, valueElement.bounds) == nearestDistance
+                }
+                if (nearestValues.size != 1) {
+                    return PrimaryAmountAnalysis(emptyList(), invalid = true)
+                }
+                val valueElement = nearestValues.single()
+                val tokenCount = CURRENCY_TOKEN.findAll(valueElement.text).count()
+                val validAmounts = findCurrencyAmounts(valueElement.text)
+                if (tokenCount != 1 || validAmounts.size != 1) {
+                    return PrimaryAmountAnalysis(emptyList(), invalid = true)
+                }
+                splitAmounts += LocatedAmount(
+                    amountMinor = validAmounts.single().amountMinor,
+                    element = valueElement,
+                    rank = 0,
+                )
+            }
         }
     }
+    return PrimaryAmountAnalysis(splitAmounts, invalid = false)
+}
+
+private fun isLocalPrimaryValue(
+    label: ObservedTextElement,
+    value: ObservedTextElement,
+): Boolean {
+    val sameRow = verticalOverlap(label.bounds, value.bounds) > 0 &&
+        value.bounds.left >= label.bounds.right &&
+        horizontalGap(label.bounds, value.bounds) <= MAX_PRIMARY_LABEL_HORIZONTAL_GAP
+    val nextLine = verticalGap(label.bounds, value.bounds) <= MAX_PRIMARY_LABEL_VERTICAL_GAP &&
+        value.bounds.top >= label.bounds.bottom &&
+        horizontalOverlap(label.bounds, value.bounds) > 0
+    return sameRow || nextLine
+}
+
+private fun isBareCurrencyValue(text: String): Boolean {
+    val trimmed = text.trim()
+    val token = CURRENCY_TOKEN.find(trimmed) ?: return false
+    if (token.range.first != 0) return false
+    val valueText = trimmed.substring(token.range.last + 1).trim()
+    return valueText.isNotEmpty() && valueText.all { character ->
+        character.isDigit() || character.isWhitespace() || character in RAW_AMOUNT_CHARACTERS
+    }
+}
 
 private data class ParsedCurrencyAmount(val amountMinor: Long, val range: IntRange)
 
@@ -689,6 +799,7 @@ private val CURRENCY_TOKEN = Regex("(?:人民币|CNY|RMB|[¥￥])", RegexOption.
 private val ACTUAL_AMOUNT_LABELS = setOf("实付", "交易金额", "支付金额", "收款金额", "退款金额", "入账金额")
 private val EXCLUDED_AMOUNT_CONTEXT = setOf("余额", "总资产", "优惠", "最高减", "原价", "折扣", "优惠券")
 private val SIGN_MARKERS = setOf('+', '-', '−', '－', '﹣', '负')
+private val RAW_AMOUNT_CHARACTERS = SIGN_MARKERS + setOf(',', '.')
 private val CLAUSE_BOUNDARIES = setOf('，', ',', '。', '；', ';', '\n')
 private val EXPLICIT_MERCHANT = Regex("^(?:商户|收款方)\\s*[：:]\\s*(.{2,64})$")
 private val USE_ACCOUNT = Regex("^使用\\s*(.+?)\\s*支付$")
@@ -720,7 +831,8 @@ private val CLOCK_TIME = Regex("(?<![\\d:])(\\d{2}):(\\d{2})(?![\\d:])")
 private val WHITESPACE = Regex("\\s+")
 private const val MAX_ACCOUNT_LABEL_HORIZONTAL_GAP = 240
 private const val MAX_ACCOUNT_LABEL_VERTICAL_GAP = 56
+private const val MAX_PRIMARY_LABEL_HORIZONTAL_GAP = 240
+private const val MAX_PRIMARY_LABEL_VERTICAL_GAP = 80
 private const val SEMANTIC_VERTICAL_HEIGHTS = 6
-private const val SEMANTIC_HORIZONTAL_HEIGHTS = 4
 private const val GEOMETRY_VERTICAL_HEIGHTS = 2
 private const val GEOMETRY_HORIZONTAL_HEIGHTS = 4
