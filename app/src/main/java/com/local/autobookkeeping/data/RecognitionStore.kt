@@ -143,13 +143,14 @@ class RoomRecognitionStore(
             Direction.EXPENSE -> Direction.INCOME
             Direction.INCOME, null -> Direction.EXPENSE
         }
-        return dao.findRefundOrigin(
+        val candidates = dao.findRefundOrigin(
             platform = candidate.platform.name,
             direction = originDirection.name,
             amountMinor = candidate.amountMinor,
             normalizedMerchant = normalizeMerchant(candidate.merchant.orEmpty()),
             occurredAtEpochMillis = candidate.occurredAt.toEpochMilli(),
-        )?.toDomain()
+        ).map { it.toDomain() }
+        return selectUniqueRefundOrigin(candidates)
     }
 
     private suspend fun updateTransaction(transaction: Transaction) {
@@ -218,3 +219,5 @@ private fun RecognitionReceiptEntity.toDomain() = RecognitionReceipt(
 )
 
 private fun normalizeMerchant(value: String): String = value.trim().lowercase(Locale.ROOT)
+
+internal fun selectUniqueRefundOrigin(candidates: List<Transaction>): Transaction? = candidates.singleOrNull()

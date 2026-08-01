@@ -62,28 +62,36 @@ class RecognitionStoreTest {
     fun attachReceiptAndLookupRoundTrip() = runTest {
         withStore { store, repository, _ ->
             val id = repository.save(sampleRecognizedTransaction())
+            val receipt = sampleReceipt(SECOND_DIGEST)
 
-            store.attachReceipt(id, sampleReceipt(SECOND_DIGEST))
+            store.attachReceipt(id, receipt)
 
-            assertEquals(id, store.findReceipt(SECOND_DIGEST)?.transactionId)
+            assertEquals(receipt.copy(transactionId = id), store.findReceipt(SECOND_DIGEST))
+
+            repository.delete(id)
+            assertNull(store.findReceipt(SECOND_DIGEST))
         }
     }
 
     @Test
-    fun matchingVisibilityAndRefundOriginQueriesReturnDomainTransactions() = runTest {
-        withStore { store, repository, database ->
-            val originId = repository.save(
+    fun findMatchesIncludesExactFifteenMinuteEndpointsAndBothConfirmationStates() = runTest {
+        withStore { store, repository, _ ->
+            repository.save(sampleRecognizedTransaction(merchant = "lower outside", occurredAt = "2026-07-23T03:44:59.999Z"))
+            repository.save(
                 sampleRecognizedTransaction(
-                    occurredAt = "2026-07-23T04:00:00Z",
-                    eventKind = TransactionEventKind.PAYMENT,
+                    merchant = "lower endpoint pending",
+                    occurredAt = "2026-07-23T03:45:00Z",
+                    pendingConfirmation = true,
                 ),
             )
             repository.save(
                 sampleRecognizedTransaction(
-                    merchant = "Outside window",
-                    occurredAt = "2026-07-21T04:00:00Z",
+                    merchant = "upper endpoint confirmed",
+                    occurredAt = "2026-07-23T04:15:00Z",
+                    pendingConfirmation = false,
                 ),
             )
+            repository.save(sampleRecognizedTransaction(merchant = "upper outside", occurredAt = "2026-07-23T04:15:00.001Z"))
 
             val matches = store.findMatches(
                 RecognitionMatchQuery(
@@ -91,32 +99,49 @@ class RecognitionStoreTest {
                     direction = Direction.EXPENSE,
                     amountMinor = 2_800,
                     eventKind = TransactionEventKind.PAYMENT,
-                    from = Instant.parse("2026-07-23T03:59:00Z"),
-                    to = Instant.parse("2026-07-23T04:01:00Z"),
+                    from = Instant.parse("2026-07-23T03:45:00Z"),
+                    to = Instant.parse("2026-07-23T04:15:00Z"),
                 ),
             )
 
-            assertEquals(listOf(originId), matches.map(Transaction::id))
+            assertEquals(
+                listOf("upper endpoint confirmed", "lower endpoint pending"),
+                matches.map(Transaction::merchant),
+            )
+            assertEquals(listOf(false, true), matches.map(Transaction::pendingConfirmation))
+        }
+    }
+
+    @Test
+    fun categoryVisibilityReflectsHiddenState() = runTest {
+        withStore { store, repository, database ->
+            repository.save(sampleRecognizedTransaction())
             assertTrue(store.isCategoryVisible("Food"))
             val category = database.transactionDao().findCategoryByName("Food")!!
             database.transactionDao().setCategoryHidden(category.id, true)
             assertTrue(!store.isCategoryVisible("Food"))
+        }
+    }
+
+    @Test
+    fun findRefundOriginReturnsTheOnlyMatchingCandidate() = runTest {
+        withStore { store, repository, _ ->
+            val originId = repository.save(sampleRecognizedTransaction(occurredAt = "2026-07-23T04:00:00Z"))
 
             val refundOrigin = store.findRefundOrigin(
-                RecognitionCandidate(
-                    platform = PaymentPlatform.WECHAT,
-                    channel = CaptureChannel.SCREENSHOT,
-                    eventKind = TransactionEventKind.REFUND,
-                    amountMinor = 2_800,
-                    direction = Direction.INCOME,
-                    merchant = "Coffee shop",
-                    account = null,
-                    occurredAt = Instant.parse("2026-07-24T04:00:00Z"),
-                    confidence = 90,
-                    evidenceDigest = THIRD_DIGEST,
-                ),
+                sampleRefundCandidate(),
             )
             assertEquals(originId, refundOrigin?.id)
+        }
+    }
+
+    @Test
+    fun findRefundOriginReturnsNullWhenMultipleCandidatesMatch() = runTest {
+        withStore { store, repository, _ ->
+            repository.save(sampleRecognizedTransaction(occurredAt = "2026-07-22T04:00:00Z"))
+            repository.save(sampleRecognizedTransaction(occurredAt = "2026-07-23T04:00:00Z"))
+
+            assertNull(store.findRefundOrigin(sampleRefundCandidate()))
         }
     }
 
@@ -157,6 +182,40 @@ class RecognitionStoreTest {
         }
     }
 
+    @Test
+    fun confirmAndRememberRollsBackTransactionAndCreatedReferencesWhenRuleInsertFails() = runTest {
+        withStore { store, repository, database ->
+            val id = repository.save(sampleRecognizedTransaction())
+            val original = repository.findById(id)!!
+            database.openHelper.writableDatabase.execSQL(
+                """
+                CREATE TRIGGER fail_merchant_rule_insert
+                BEFORE INSERT ON merchant_rules
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced merchant rule failure');
+                END
+                """.trimIndent(),
+            )
+
+            val failed = runCatching {
+                store.confirmAndRemember(
+                    original.copy(
+                        merchant = "Rollback merchant",
+                        category = "Rollback category",
+                        account = "Rollback account",
+                        pendingConfirmation = false,
+                    ),
+                )
+            }.isFailure
+
+            assertTrue(failed)
+            assertEquals(original, repository.findById(id))
+            assertNull(database.transactionDao().findCategoryByName("Rollback category"))
+            assertNull(database.transactionDao().findAccountByName("Rollback account"))
+            assertTrue(database.transactionDao().allMerchantRules().isEmpty())
+        }
+    }
+
     private suspend fun withStore(
         block: suspend (RecognitionStore, LedgerRepository, AppDatabase) -> Unit,
     ) {
@@ -184,6 +243,7 @@ class RecognitionStoreTest {
         merchant: String = "Coffee shop",
         occurredAt: String = "2026-07-23T04:00:00Z",
         eventKind: TransactionEventKind = TransactionEventKind.PAYMENT,
+        pendingConfirmation: Boolean = true,
     ) = Transaction(
         amountMinor = 2_800,
         direction = Direction.EXPENSE,
@@ -192,10 +252,23 @@ class RecognitionStoreTest {
         merchant = merchant,
         account = "Cash",
         source = Source.PAGE_RECOGNITION,
-        pendingConfirmation = true,
+        pendingConfirmation = pendingConfirmation,
         platform = PaymentPlatform.WECHAT,
         eventKind = eventKind,
         recognitionConfidence = 91,
+    )
+
+    private fun sampleRefundCandidate() = RecognitionCandidate(
+        platform = PaymentPlatform.WECHAT,
+        channel = CaptureChannel.SCREENSHOT,
+        eventKind = TransactionEventKind.REFUND,
+        amountMinor = 2_800,
+        direction = Direction.INCOME,
+        merchant = "Coffee shop",
+        account = null,
+        occurredAt = Instant.parse("2026-07-24T04:00:00Z"),
+        confidence = 90,
+        evidenceDigest = THIRD_DIGEST,
     )
 
     private fun sampleReceipt(digest: String) = RecognitionReceipt(

@@ -164,7 +164,7 @@ interface TransactionDao {
           AND transactions.occurredAtEpochMillis <= :occurredAtEpochMillis
           AND (:normalizedMerchant = '' OR LOWER(TRIM(transactions.merchant)) = :normalizedMerchant)
         ORDER BY transactions.occurredAtEpochMillis DESC, transactions.id DESC
-        LIMIT 1
+        LIMIT 2
         """,
     )
     suspend fun findRefundOrigin(
@@ -173,7 +173,7 @@ interface TransactionDao {
         amountMinor: Long,
         normalizedMerchant: String,
         occurredAtEpochMillis: Long,
-    ): TransactionRecord?
+    ): List<TransactionRecord>
 
     @Query("SELECT * FROM categories WHERE name = :name LIMIT 1")
     suspend fun findCategoryByName(name: String): CategoryEntity?
