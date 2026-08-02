@@ -12,6 +12,36 @@ import org.junit.jupiter.api.Test
 
 class AccessibilityCaptureGatewayTest {
     @Test
+    fun `manual session reserves proof before capture and binds it to the token`() = runTest {
+        val gateway = AccessibilityCaptureGateway()
+        val reservation = object : ManualCaptureReservation {}
+        var reserveCalls = 0
+        var capturedReservation: ManualCaptureReservation? = null
+        gateway.attachManual(
+            object : ManualCaptureProvider {
+                override fun reserve(): ManualCaptureReservation {
+                    reserveCalls += 1
+                    return reservation
+                }
+
+                override suspend fun capture(
+                    reservation: ManualCaptureReservation,
+                ): CaptureResult {
+                    capturedReservation = reservation
+                    return CaptureResult.Failure(CaptureFailure.SECURE_WINDOW)
+                }
+            },
+        )
+
+        val session = gateway.beginManualCaptureSession()
+
+        assertEquals(1, reserveCalls)
+        assertEquals(null, capturedReservation)
+        assertEquals(CaptureResult.Failure(CaptureFailure.SECURE_WINDOW), gateway.capture(session))
+        assertTrue(capturedReservation === reservation)
+    }
+
+    @Test
     fun `manual capture session invokes manual provider once and cannot be replayed`() = runTest {
         val gateway = AccessibilityCaptureGateway()
         var calls = 0
@@ -23,6 +53,22 @@ class AccessibilityCaptureGatewayTest {
 
         assertEquals(CaptureResult.Failure(CaptureFailure.SECURE_WINDOW), gateway.capture(session))
         assertEquals(CaptureResult.RequiresSystemConsent, gateway.capture(session))
+        assertEquals(1, calls)
+    }
+
+    @Test
+    fun `stale manual token cannot consume the newer active session`() = runTest {
+        val gateway = AccessibilityCaptureGateway()
+        var calls = 0
+        gateway.attachManual {
+            calls += 1
+            CaptureResult.Failure(CaptureFailure.SECURE_WINDOW)
+        }
+        val stale = gateway.beginManualCaptureSession()
+        val current = gateway.beginManualCaptureSession()
+
+        assertEquals(CaptureResult.RequiresSystemConsent, gateway.capture(stale))
+        assertEquals(CaptureResult.Failure(CaptureFailure.SECURE_WINDOW), gateway.capture(current))
         assertEquals(1, calls)
     }
 

@@ -2,15 +2,19 @@ package com.local.autobookkeeping.recognition.accessibility
 
 import android.accessibilityservice.AccessibilityService
 import android.graphics.Bitmap
+import android.graphics.Rect
 import android.os.Build
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityWindowInfo
 import androidx.annotation.RequiresApi
 import com.local.autobookkeeping.AutoBookkeepingApplication
 import com.local.autobookkeeping.recognition.RecognitionDiagnostic
 import com.local.autobookkeeping.recognition.capture.AccessibilityCaptureGateway
 import com.local.autobookkeeping.recognition.capture.CaptureFailure
 import com.local.autobookkeeping.recognition.capture.CaptureResult
+import com.local.autobookkeeping.recognition.capture.ManualCaptureProvider
+import com.local.autobookkeeping.recognition.capture.ManualCaptureReservation
 import com.local.autobookkeeping.recognition.capture.MlKitTextRecognizer
 import com.local.autobookkeeping.recognition.capture.mapScreenshotError
 import java.time.Instant
@@ -62,7 +66,16 @@ class PaymentPageAccessibilityService : AccessibilityService() {
             diagnostics = graph.recognitionDiagnostics,
         )
         gateway.attach(::takeAccessibilityScreenshot)
-        gateway.attachManual(::takeManualAccessibilityScreenshot)
+        gateway.attachManual(
+            object : ManualCaptureProvider {
+                override fun reserve(): ManualCaptureReservation? =
+                    reserveManualAccessibilityCapture()
+
+                override suspend fun capture(
+                    reservation: ManualCaptureReservation,
+                ): CaptureResult = takeManualAccessibilityScreenshot(reservation)
+            },
+        )
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -133,14 +146,20 @@ class PaymentPageAccessibilityService : AccessibilityService() {
         )
     }
 
-    private suspend fun takeManualAccessibilityScreenshot(): CaptureResult {
+    private fun reserveManualAccessibilityCapture(): ManualCaptureWindowReservation? =
+        manualWindowSnapshot()?.let(manualWindowGuard::reserve)
+
+    private suspend fun takeManualAccessibilityScreenshot(
+        untypedReservation: ManualCaptureReservation,
+    ): CaptureResult {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             return CaptureResult.RequiresSystemConsent
         }
-        val reservation = manualWindowGuard.reserve(
-            activePackage = activeWindowPackage(),
-            visiblePackages = visibleWindowPackages(),
-        ) ?: return CaptureResult.Failure(CaptureFailure.INVALID_DISPLAY)
+        val reservation = untypedReservation as? ManualCaptureWindowReservation
+            ?: return CaptureResult.Failure(CaptureFailure.INVALID_DISPLAY)
+        if (!manualWindowGuard.isCaptureWindowCurrent(reservation, manualWindowSnapshot())) {
+            return CaptureResult.Failure(CaptureFailure.INVALID_DISPLAY)
+        }
         return AccessibilityScreenshotApi30.take(
             service = this,
             packageName = reservation.foregroundPackage,
@@ -148,8 +167,7 @@ class PaymentPageAccessibilityService : AccessibilityService() {
                 manualWindowGuard.validateDelivery(
                     captured = captured,
                     reservation = reservation,
-                    activePackage = activeWindowPackage(),
-                    visiblePackages = visibleWindowPackages(),
+                    current = manualWindowSnapshot(),
                 )
             },
         )
@@ -176,17 +194,48 @@ class PaymentPageAccessibilityService : AccessibilityService() {
         return packageName
     }
 
-    private fun visibleWindowPackages(): Set<String> = try {
-        windows.mapNotNullTo(linkedSetOf()) { window ->
-            val root = try {
-                window.root
-            } catch (_: Exception) {
-                null
-            } ?: return@mapNotNullTo null
+    private fun manualWindowSnapshot(): ManualWindowSnapshot? {
+        val currentWindows = try {
+            windows
+        } catch (_: Exception) {
+            return null
+        }
+        return try {
+            val proofs = currentWindows.map { window ->
+                window.toManualWindowProof() ?: return null
+            }
+            ManualWindowSnapshot(
+                activePackage = proofs.singleOrNull(ManualWindowProof::active)?.packageName,
+                windows = proofs,
+            )
+        } finally {
+            currentWindows.forEach { window ->
+                try {
+                    @Suppress("DEPRECATION")
+                    window.recycle()
+                } catch (_: Exception) {
+                    Unit
+                }
+            }
+        }
+    }
+
+    private fun AccessibilityWindowInfo.toManualWindowProof(): ManualWindowProof? = try {
+        val screenBounds = Rect()
+        getBoundsInScreen(screenBounds)
+        val root = try {
+            root
+        } catch (_: Exception) {
+            null
+        }
+        var packageName: String? = null
+        var rootReadable = root != null
+        if (root != null) {
             try {
-                root.packageName?.toString()
+                packageName = root.packageName?.toString()
+                if (packageName == null) rootReadable = false
             } catch (_: Exception) {
-                null
+                rootReadable = false
             } finally {
                 try {
                     AccessibilitySnapshotFactory.release(root)
@@ -195,8 +244,24 @@ class PaymentPageAccessibilityService : AccessibilityService() {
                 }
             }
         }
+        ManualWindowProof(
+            id = id,
+            packageName = packageName,
+            type = type,
+            displayId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) displayId else null,
+            layer = layer,
+            bounds = ManualWindowBounds(
+                left = screenBounds.left,
+                top = screenBounds.top,
+                right = screenBounds.right,
+                bottom = screenBounds.bottom,
+            ),
+            active = isActive,
+            focused = isFocused,
+            rootReadable = rootReadable,
+        )
     } catch (_: Exception) {
-        emptySet()
+        null
     }
 
     private companion object {

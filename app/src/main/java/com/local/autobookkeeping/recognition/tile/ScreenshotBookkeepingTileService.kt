@@ -3,6 +3,7 @@ package com.local.autobookkeeping.recognition.tile
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.service.quicksettings.TileService
 import com.local.autobookkeeping.AutoBookkeepingApplication
@@ -16,8 +17,6 @@ internal interface TileActivityHost {
 }
 
 internal object TileCaptureActivityLauncher {
-    private const val REQUEST_CODE = 2001
-
     fun launch(
         host: TileActivityHost,
         context: Context,
@@ -26,17 +25,29 @@ internal object TileCaptureActivityLauncher {
     ) {
         val intent = Intent(context, ScreenshotCaptureActivity::class.java)
             .putExtra(EXTRA_MANUAL_CAPTURE_SESSION, session.token)
+            .setData(
+                Uri.Builder()
+                    .scheme(context.packageName)
+                    .authority("screenshot-capture")
+                    .appendPath(session.token.toString())
+                    .build(),
+            )
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
         if (sdkInt >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            val flags = PendingIntent.FLAG_ONE_SHOT or
+                PendingIntent.FLAG_CANCEL_CURRENT or
+                PendingIntent.FLAG_IMMUTABLE
             host.startAndCollapse(
-                PendingIntent.getActivity(context, REQUEST_CODE, intent, flags),
+                PendingIntent.getActivity(context, session.requestCode(), intent, flags),
                 flags,
             )
         } else {
             host.startAndCollapse(intent)
         }
     }
+
+    private fun ManualCaptureSession.requestCode(): Int =
+        (token xor (token ushr Int.SIZE_BITS)).toInt()
 }
 
 class ScreenshotBookkeepingTileService : TileService(), TileActivityHost {

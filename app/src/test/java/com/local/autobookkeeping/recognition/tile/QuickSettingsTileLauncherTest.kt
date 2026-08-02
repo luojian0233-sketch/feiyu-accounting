@@ -87,7 +87,9 @@ class QuickSettingsTileLauncherTest {
         assertTrue(saved.flags and Intent.FLAG_ACTIVITY_NEW_TASK != 0)
         assertTrue(saved.flags and Intent.FLAG_ACTIVITY_NO_ANIMATION != 0)
         assertTrue(host.pendingIntentFlags and PendingIntent.FLAG_IMMUTABLE != 0)
-        assertTrue(host.pendingIntentFlags and PendingIntent.FLAG_UPDATE_CURRENT != 0)
+        assertTrue(host.pendingIntentFlags and PendingIntent.FLAG_ONE_SHOT != 0)
+        assertTrue(host.pendingIntentFlags and PendingIntent.FLAG_CANCEL_CURRENT != 0)
+        assertFalse(host.pendingIntentFlags and PendingIntent.FLAG_UPDATE_CURRENT != 0)
     }
 
     @Test
@@ -108,6 +110,37 @@ class QuickSettingsTileLauncherTest {
         assertEquals(42L, host.intent?.getLongExtra(EXTRA_MANUAL_CAPTURE_SESSION, -1L))
         assertFalse(host.intent!!.flags and Intent.FLAG_ACTIVITY_NEW_TASK == 0)
         assertTrue(host.intent!!.flags and Intent.FLAG_ACTIVITY_NO_ANIMATION != 0)
+    }
+
+    @Test
+    fun `each API 34 tile click owns a distinct one shot pending intent capability`() {
+        val firstHost = RecordingTileActivityHost()
+        val secondHost = RecordingTileActivityHost()
+        val context = RuntimeEnvironment.getApplication()
+
+        TileCaptureActivityLauncher.launch(
+            firstHost,
+            context,
+            ManualCaptureSession(101L),
+            sdkInt = 34,
+        )
+        TileCaptureActivityLauncher.launch(
+            secondHost,
+            context,
+            ManualCaptureSession(102L),
+            sdkInt = 34,
+        )
+
+        val first = requireNotNull(firstHost.pendingIntent)
+        val second = requireNotNull(secondHost.pendingIntent)
+        assertFalse(first == second)
+        assertEquals(101L, shadowOf(first).savedIntent.getLongExtra(EXTRA_MANUAL_CAPTURE_SESSION, -1L))
+        assertEquals(102L, shadowOf(second).savedIntent.getLongExtra(EXTRA_MANUAL_CAPTURE_SESSION, -1L))
+        assertFalse(shadowOf(first).savedIntent.data == shadowOf(second).savedIntent.data)
+        assertTrue(firstHost.pendingIntentFlags and PendingIntent.FLAG_ONE_SHOT != 0)
+        assertTrue(secondHost.pendingIntentFlags and PendingIntent.FLAG_ONE_SHOT != 0)
+        assertFalse(firstHost.pendingIntentFlags and PendingIntent.FLAG_UPDATE_CURRENT != 0)
+        assertFalse(secondHost.pendingIntentFlags and PendingIntent.FLAG_UPDATE_CURRENT != 0)
     }
 
     private class RecordingTileActivityHost : TileActivityHost {
