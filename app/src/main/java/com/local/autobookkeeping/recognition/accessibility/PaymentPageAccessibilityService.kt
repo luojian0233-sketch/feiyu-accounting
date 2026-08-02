@@ -26,8 +26,12 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 
 class PaymentPageAccessibilityService : AccessibilityService() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val captureGateway = AccessibilityCaptureGateway()
     private val packageGuard = ActiveWindowPackageGuard(ALLOWED_PACKAGES)
+    private val manualWindowGuard = ManualCaptureWindowGuard(
+        hostPackage = "com.local.autobookkeeping",
+        transientPackages = setOf(SYSTEM_UI_PACKAGE),
+    )
+    private var captureGateway: AccessibilityCaptureGateway? = null
     private var controller: AutoPageRecognitionController? = null
     private var textRecognizer: MlKitTextRecognizer? = null
 
@@ -40,6 +44,8 @@ class PaymentPageAccessibilityService : AccessibilityService() {
         textRecognizer?.close()
         val recognizer = MlKitTextRecognizer()
         textRecognizer = recognizer
+        val gateway = graph.accessibilityCaptureGateway
+        captureGateway = gateway
         controller = AutoPageRecognitionController(
             settings = AutomaticPageRecognitionSettings { packageName ->
                 when (packageName) {
@@ -50,12 +56,13 @@ class PaymentPageAccessibilityService : AccessibilityService() {
                     else -> false
                 }
             },
-            captureGateway = captureGateway,
+            captureGateway = gateway,
             textRecognizer = recognizer,
             coordinator = graph.recognitionCoordinator,
             diagnostics = graph.recognitionDiagnostics,
         )
-        captureGateway.attach(::takeAccessibilityScreenshot)
+        gateway.attach(::takeAccessibilityScreenshot)
+        gateway.attachManual(::takeManualAccessibilityScreenshot)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -96,7 +103,8 @@ class PaymentPageAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         foregroundPackage = null
-        captureGateway.detach()
+        captureGateway?.detach()
+        captureGateway = null
         controller = null
         textRecognizer?.close()
         textRecognizer = null
@@ -125,6 +133,28 @@ class PaymentPageAccessibilityService : AccessibilityService() {
         )
     }
 
+    private suspend fun takeManualAccessibilityScreenshot(): CaptureResult {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return CaptureResult.RequiresSystemConsent
+        }
+        val reservation = manualWindowGuard.reserve(
+            activePackage = activeWindowPackage(),
+            visiblePackages = visibleWindowPackages(),
+        ) ?: return CaptureResult.Failure(CaptureFailure.INVALID_DISPLAY)
+        return AccessibilityScreenshotApi30.take(
+            service = this,
+            packageName = reservation.foregroundPackage,
+            validateDelivery = { captured ->
+                manualWindowGuard.validateDelivery(
+                    captured = captured,
+                    reservation = reservation,
+                    activePackage = activeWindowPackage(),
+                    visiblePackages = visibleWindowPackages(),
+                )
+            },
+        )
+    }
+
     private fun activeWindowPackage(): String? {
         val root = try {
             rootInActiveWindow
@@ -146,7 +176,31 @@ class PaymentPageAccessibilityService : AccessibilityService() {
         return packageName
     }
 
+    private fun visibleWindowPackages(): Set<String> = try {
+        windows.mapNotNullTo(linkedSetOf()) { window ->
+            val root = try {
+                window.root
+            } catch (_: Exception) {
+                null
+            } ?: return@mapNotNullTo null
+            try {
+                root.packageName?.toString()
+            } catch (_: Exception) {
+                null
+            } finally {
+                try {
+                    AccessibilitySnapshotFactory.release(root)
+                } catch (_: Exception) {
+                    Unit
+                }
+            }
+        }
+    } catch (_: Exception) {
+        emptySet()
+    }
+
     private companion object {
+        const val SYSTEM_UI_PACKAGE = "com.android.systemui"
         val ALLOWED_PACKAGES = setOf(
             AutoPageRecognitionController.WECHAT_PACKAGE,
             AutoPageRecognitionController.ALIPAY_PACKAGE,
@@ -162,7 +216,7 @@ class PaymentPageAccessibilityService : AccessibilityService() {
 private object AccessibilityScreenshotApi30 {
     suspend fun take(
         service: AccessibilityService,
-        packageName: String,
+        packageName: String?,
         validateDelivery: (CaptureResult) -> CaptureResult,
     ): CaptureResult = suspendCancellableCoroutine { continuation ->
         try {

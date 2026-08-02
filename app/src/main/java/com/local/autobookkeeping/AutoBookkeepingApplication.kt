@@ -12,8 +12,14 @@ import com.local.autobookkeeping.notification.NotificationRouter
 import com.local.autobookkeeping.notification.PendingConfirmationNotifier
 import com.local.autobookkeeping.notification.NotificationAccess
 import com.local.autobookkeeping.recognition.AutoSavePolicy
+import com.local.autobookkeeping.recognition.AlipayPageParser
+import com.local.autobookkeeping.recognition.GenericBillParser
 import com.local.autobookkeeping.recognition.InMemoryRecognitionDiagnostics
 import com.local.autobookkeeping.recognition.RecognitionCoordinator
+import com.local.autobookkeeping.recognition.WechatPageParser
+import com.local.autobookkeeping.recognition.capture.AccessibilityCaptureGateway
+import com.local.autobookkeeping.recognition.capture.MlKitTextRecognizer
+import com.local.autobookkeeping.recognition.capture.ScreenshotRecognitionController
 import com.local.autobookkeeping.ui.home.NotificationPermissionProvider
 
 open class AutoBookkeepingApplication : Application() {
@@ -52,6 +58,16 @@ class ApplicationGraph(
             store = recognitionStore,
             autoSavePolicy = AutoSavePolicy { true },
             diagnostics = recognitionDiagnostics,
+        )
+    }
+    val accessibilityCaptureGateway = AccessibilityCaptureGateway()
+    val screenshotRecognitionController by lazy {
+        ScreenshotRecognitionController(
+            textRecognizer = MlKitTextRecognizer(),
+            wechatParser = WechatPageParser,
+            alipayParser = AlipayPageParser,
+            genericParser = GenericBillParser,
+            coordinator = recognitionCoordinator,
         )
     }
     val pendingConfirmationNotifier by lazy { PendingConfirmationNotifier(appContext) }

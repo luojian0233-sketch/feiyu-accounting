@@ -12,6 +12,74 @@ import org.junit.jupiter.api.Test
 
 class AccessibilityCaptureGatewayTest {
     @Test
+    fun `manual capture session invokes manual provider once and cannot be replayed`() = runTest {
+        val gateway = AccessibilityCaptureGateway()
+        var calls = 0
+        gateway.attachManual {
+            calls += 1
+            CaptureResult.Failure(CaptureFailure.SECURE_WINDOW)
+        }
+        val session = gateway.beginManualCaptureSession()
+
+        assertEquals(CaptureResult.Failure(CaptureFailure.SECURE_WINDOW), gateway.capture(session))
+        assertEquals(CaptureResult.RequiresSystemConsent, gateway.capture(session))
+        assertEquals(1, calls)
+    }
+
+    @Test
+    fun `manual capture session expires without invoking provider`() = runTest {
+        var elapsed = 1_000L
+        val gateway = AccessibilityCaptureGateway(elapsedRealtimeMillis = { elapsed })
+        var calls = 0
+        gateway.attachManual {
+            calls += 1
+            CaptureResult.Failure(CaptureFailure.INTERNAL)
+        }
+        val session = gateway.beginManualCaptureSession()
+        elapsed += 2_001L
+
+        assertEquals(CaptureResult.RequiresSystemConsent, gateway.capture(session))
+        assertEquals(0, calls)
+    }
+
+    @Test
+    fun `automatic capture cannot consume armed manual session`() = runTest {
+        val gateway = AccessibilityCaptureGateway()
+        var automaticCalls = 0
+        var manualCalls = 0
+        gateway.attach {
+            automaticCalls += 1
+            CaptureResult.Failure(CaptureFailure.TOO_FREQUENT)
+        }
+        gateway.attachManual {
+            manualCalls += 1
+            CaptureResult.Failure(CaptureFailure.SECURE_WINDOW)
+        }
+        val session = gateway.beginManualCaptureSession()
+
+        assertEquals(CaptureResult.Failure(CaptureFailure.TOO_FREQUENT), gateway.capture())
+        assertEquals(CaptureResult.Failure(CaptureFailure.SECURE_WINDOW), gateway.capture(session))
+        assertEquals(1, automaticCalls)
+        assertEquals(1, manualCalls)
+    }
+
+    @Test
+    fun `detach invalidates manual sessions and providers`() = runTest {
+        val gateway = AccessibilityCaptureGateway()
+        var calls = 0
+        gateway.attachManual {
+            calls += 1
+            CaptureResult.Failure(CaptureFailure.INTERNAL)
+        }
+        val session = gateway.beginManualCaptureSession()
+
+        gateway.detach()
+
+        assertEquals(CaptureResult.RequiresSystemConsent, gateway.capture(session))
+        assertEquals(0, calls)
+    }
+
+    @Test
     fun `framework screenshot errors map only to redacted failure enums`() {
         assertEquals(
             CaptureFailure.SECURE_WINDOW,
