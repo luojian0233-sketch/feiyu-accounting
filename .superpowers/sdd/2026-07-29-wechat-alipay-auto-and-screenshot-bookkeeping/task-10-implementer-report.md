@@ -69,3 +69,34 @@ $env:ANDROID_SDK_ROOT=$env:ANDROID_HOME
 ```
 
 AndroidTest 编译仍显示仓库既有 Compose test v1 deprecation 警告；APK 组装仍显示既有 native library 无法 strip 的提示。两者均非本任务新增，命令最终为 `BUILD SUCCESSFUL`。
+
+## 独立审查修复 Round 1
+
+基于提交 `13fb64fdfbe3a738956a20bbd13516f577fc4ec3` 修复一项 Critical 和一项 Important。
+
+### RED
+
+- Manifest 语义测试证明 `ScreenshotCaptureActivity` 的 `noHistory=true` 与 `startActivityForResult/onActivityResult` 授权流程冲突。
+- 阻塞 `copyToSoftwareBitmap()` 时触发 projection stop，旧控制器会并发关闭 ImageReader、VirtualDisplay、MediaProjection 与 HandlerThread。
+- 等待首帧 timeout 先赢后，late frame 没有被 acquire/close。
+- 首帧先赢后，等待首帧 timeout 没有在 copy 前立即取消。
+- parser 返回候选后取消 coroutine，旧 recognition controller 仍会进入 coordinator 并产生一次 store write。
+- stop 与 resource factory open 并发时，旧 cleanup 标记会导致稍后返回的 projection resources 泄漏。
+
+### GREEN
+
+- 移除 capture activity 的 `noHistory`；增加 source manifest 与 instrumentation PackageManager 双重 contract。授权 success、denial、missing result data 均走单次路由并安全 finish。
+- `OneShotProjectionController` 改为线性化状态：`NEW → WAITING → COPYING → PROCESSING → FINISHED`，另有 copy/processing stop 状态。
+- timeout 只竞争 `WAITING`；首帧 CAS 获胜即取消 timeout，timeout 获胜后的 late frame 只 close、不 process。
+- Image 所有权期间同步完成软件 bitmap copy；copy 期间 stop 只记录状态，不关闭 reader/plane。copy 返回后先 close Image 和全部 capture resources，再决定回收 bitmap 或开始识别。
+- processing stop 只协作取消 coroutine；不并发回收 processor 正在使用的软件 bitmap，识别完成或响应取消后才结束 service。
+- `ScreenshotRecognitionController` 在调用 `RecognitionCoordinator` 前执行 `currentCoroutineContext().ensureActive()`；取消用例确认 `0` 次持久化。
+- setup error、同步 `MediaProjection.Callback.onStop()`、第二帧、重复 stop/finish 和 factory-open 竞态均验证幂等清理。
+
+### Round 1 验证
+
+- Focused projection/tile/gateway/recognition：`BUILD SUCCESSFUL`。
+- Fresh full JVM：`350` tests，`0` failures。
+- `compileDebugAndroidTestKotlin`：`BUILD SUCCESSFUL`。
+- `assembleDebug`：`BUILD SUCCESSFUL`，debug APK 存在。
+- 所有 Gradle 命令均使用 `--max-workers=1` 和明确超时；未运行 connected、adb，未创建 `local.properties`。

@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.ComponentName
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.content.pm.ActivityInfo
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
@@ -39,5 +40,15 @@ class ProjectionServiceContractTest {
         assertTrue(
             info.foregroundServiceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION != 0,
         )
+    }
+
+    @Test
+    fun captureActivityRemainsAliveForProjectionConsentResult() {
+        val info = packageManager.getActivityInfo(
+            ComponentName(context, ScreenshotCaptureActivity::class.java),
+            PackageManager.ComponentInfoFlags.of(0),
+        )
+
+        assertFalse(info.flags and ActivityInfo.FLAG_NO_HISTORY != 0)
     }
 }

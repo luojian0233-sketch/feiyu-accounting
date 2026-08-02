@@ -8,6 +8,8 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import java.nio.ByteBuffer
+import java.io.File
+import javax.xml.parsers.DocumentBuilderFactory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -20,6 +22,33 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class ProjectionAndroidContractsTest {
+    @Test
+    fun `capture activity manifest keeps history until projection consent returns`() {
+        val workingDirectory = File(requireNotNull(System.getProperty("user.dir")))
+        val manifest = listOf(
+            File(workingDirectory, "app/src/main/AndroidManifest.xml"),
+            File(workingDirectory, "src/main/AndroidManifest.xml"),
+        ).first(File::isFile)
+        val document = DocumentBuilderFactory.newInstance().apply {
+            isNamespaceAware = true
+        }.newDocumentBuilder().parse(manifest)
+        val activities = document.getElementsByTagName("activity")
+        val captureActivity = (0 until activities.length)
+            .map { activities.item(it) }
+            .first { activity ->
+                activity.attributes
+                    .getNamedItemNS(ANDROID_NAMESPACE, "name")
+                    ?.nodeValue == ".recognition.tile.ScreenshotCaptureActivity"
+            }
+
+        assertFalse(
+            captureActivity.attributes
+                .getNamedItemNS(ANDROID_NAMESPACE, "noHistory")
+                ?.nodeValue
+                .toBoolean(),
+        )
+    }
+
     @Test
     fun `RGBA copy honors pixel and row stride and crops padding to screen size`() {
         val width = 2
@@ -158,5 +187,9 @@ class ProjectionAndroidContractsTest {
             fun of(bitmap: android.graphics.Bitmap): BitmapConfigName =
                 valueOf(requireNotNull(bitmap.config).name)
         }
+    }
+
+    private companion object {
+        const val ANDROID_NAMESPACE = "http://schemas.android.com/apk/res/android"
     }
 }

@@ -22,7 +22,6 @@
             android:name=".recognition.tile.ScreenshotCaptureActivity"
             android:excludeFromRecents="true"
             android:exported="false"
-            android:noHistory="true"
             android:theme="@style/Theme.AutoBookkeeping.ScreenshotCapture" />
         <service
             android:name=".notification.PaymentNotificationService"

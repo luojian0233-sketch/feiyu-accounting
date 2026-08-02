@@ -5,8 +5,10 @@ import android.content.Intent
 import android.graphics.Bitmap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -105,31 +107,91 @@ class OneShotProjectionControllerTest {
     }
 
     @Test
-    fun `timeout during suspended processing cancels work and releases frame bitmap`() = runTest {
+    fun `stale timeout during blocking copy cannot steal claimed frame`() = runTest {
         val resources = FakeProjectionResources()
         val scheduler = FakeTimeoutScheduler()
-        val entered = CompletableDeferred<Unit>()
-        val release = CompletableDeferred<Unit>()
-        val controller = controller(resources, scheduler) {
-            entered.complete(Unit)
-            release.await()
-        }
-        val frame = FakeProjectionFrame(bitmap())
+        var processCalls = 0
+        val controller = controller(resources, scheduler) { processCalls += 1 }
+        val frame = BlockingProjectionFrame(bitmap())
 
         controller.start(grant())
-        resources.emit(frame)
-        advanceUntilIdle()
-        entered.await()
+        val emitter = thread(name = "timeout-blocking-copy") { resources.emit(frame) }
+        assertTrue(frame.copyStarted.await(5, TimeUnit.SECONDS))
         scheduler.fire()
-        advanceUntilIdle()
-        val frameClosedAtTimeout = frame.closed
-        val bitmapRecycledAtTimeout = frame.bitmap.isRecycled
-        release.complete(Unit)
+        assertFalse(frame.closed)
+        assertFalse(resources.imageReaderClosed)
+        assertFalse(resources.virtualDisplayReleased)
+        assertFalse(resources.projectionStopped)
+
+        frame.releaseCopy.countDown()
+        emitter.join(5_000L)
         advanceUntilIdle()
 
-        assertTrue(frameClosedAtTimeout)
-        assertTrue(bitmapRecycledAtTimeout)
+        assertFalse(emitter.isAlive)
+        assertEquals(1, processCalls)
+        assertTrue(frame.closed)
+        assertTrue(frame.bitmap.isRecycled)
         resources.assertAllSessionResourcesClosed()
+    }
+
+    @Test
+    fun `projection stop during blocking copy waits then cleans without processing`() = runTest {
+        val resources = FakeProjectionResources()
+        var processCalls = 0
+        val controller = controller(resources) { processCalls += 1 }
+        val frame = BlockingProjectionFrame(bitmap())
+
+        controller.start(grant())
+        val emitter = thread(name = "stop-blocking-copy") { resources.emit(frame) }
+        assertTrue(frame.copyStarted.await(5, TimeUnit.SECONDS))
+        resources.emitProjectionStop()
+        assertFalse(frame.closed)
+        assertFalse(resources.imageReaderClosed)
+        assertFalse(resources.handlerThreadQuit)
+
+        frame.releaseCopy.countDown()
+        emitter.join(5_000L)
+        advanceUntilIdle()
+
+        assertFalse(emitter.isAlive)
+        assertEquals(0, processCalls)
+        assertTrue(frame.closed)
+        assertTrue(frame.bitmap.isRecycled)
+        resources.assertAllSessionResourcesClosed()
+    }
+
+    @Test
+    fun `waiting timeout wins before frame and late frame is only closed`() = runTest {
+        val resources = FakeProjectionResources()
+        val scheduler = FakeTimeoutScheduler()
+        var processCalls = 0
+        val controller = controller(resources, scheduler) { processCalls += 1 }
+        val lateFrame = FakeProjectionFrame(bitmap())
+
+        controller.start(grant())
+        scheduler.fire()
+        resources.emit(lateFrame)
+        advanceUntilIdle()
+
+        assertEquals(0, processCalls)
+        assertTrue(lateFrame.closed)
+        assertFalse(lateFrame.bitmap.isRecycled)
+        lateFrame.bitmap.recycle()
+        resources.assertAllSessionResourcesClosed()
+    }
+
+    @Test
+    fun `first frame wins and cancels waiting timeout before processing`() = runTest {
+        val resources = FakeProjectionResources()
+        val scheduler = FakeTimeoutScheduler()
+        val controller = controller(resources, scheduler) { }
+
+        controller.start(grant())
+        resources.emit(FakeProjectionFrame(bitmap()))
+
+        assertTrue(scheduler.timeout.cancelled)
+        resources.assertAllSessionResourcesClosed()
+        advanceUntilIdle()
     }
 
     @Test
@@ -191,6 +253,52 @@ class OneShotProjectionControllerTest {
         assertEquals(1, resources.finishedCalls)
     }
 
+    @Test
+    fun `synchronous projection stop during callback registration is idempotent`() = runTest {
+        val resources = FakeProjectionResources(stopDuringRegistration = true)
+        val controller = controller(resources) { error("must not process") }
+
+        assertFalse(controller.start(grant()))
+
+        assertEquals(listOf("projection-callback"), resources.setupEvents)
+        assertEquals(0, resources.virtualDisplayCreates)
+        resources.assertAllSessionResourcesClosed()
+        assertEquals(1, resources.finishedCalls)
+    }
+
+    @Test
+    fun `stop while resource factory is opening closes resources returned later`() = runTest {
+        val resources = FakeProjectionResources()
+        val factoryEntered = CountDownLatch(1)
+        val releaseFactory = CountDownLatch(1)
+        val controller = OneShotProjectionController(
+            resourceFactory = ProjectionResourceFactory {
+                factoryEntered.countDown()
+                check(releaseFactory.await(5, TimeUnit.SECONDS))
+                resources
+            },
+            process = { error("must not process") },
+            scope = this,
+            timeoutScheduler = FakeTimeoutScheduler(),
+            timeoutMillis = 1_000L,
+            onFinished = { resources.finishedCalls += 1 },
+        )
+        var startResult = true
+
+        val starter = thread(name = "blocking-projection-factory") {
+            startResult = controller.start(grant())
+        }
+        assertTrue(factoryEntered.await(5, TimeUnit.SECONDS))
+        controller.stop()
+        releaseFactory.countDown()
+        starter.join(5_000L)
+
+        assertFalse(starter.isAlive)
+        assertFalse(startResult)
+        resources.assertAllSessionResourcesClosed()
+        assertEquals(1, resources.finishedCalls)
+    }
+
     private fun CoroutineScope.controller(
         resources: FakeProjectionResources,
         scheduler: FakeTimeoutScheduler = FakeTimeoutScheduler(),
@@ -210,6 +318,7 @@ class OneShotProjectionControllerTest {
     private class FakeProjectionResources(
         private val failCreatingDisplay: Boolean = false,
         private val throwDuringCleanup: Boolean = false,
+        private val stopDuringRegistration: Boolean = false,
     ) : ProjectionCaptureResources {
         var factoryCalls = 0
         var virtualDisplayCreates = 0
@@ -228,6 +337,7 @@ class OneShotProjectionControllerTest {
         override fun registerProjectionCallback(onStop: () -> Unit) {
             setupEvents += "projection-callback"
             stopListener = onStop
+            if (stopDuringRegistration) onStop()
         }
 
         override fun setImageListener(onImage: () -> Unit, onError: () -> Unit) {
@@ -305,6 +415,24 @@ class OneShotProjectionControllerTest {
             closeAttempted = true
             closed = true
             if (throwOnClose) error("image close failed")
+        }
+    }
+
+    private class BlockingProjectionFrame(
+        val bitmap: Bitmap,
+    ) : ProjectionFrame {
+        val copyStarted = CountDownLatch(1)
+        val releaseCopy = CountDownLatch(1)
+        @Volatile var closed = false
+
+        override fun copyToSoftwareBitmap(): Bitmap {
+            copyStarted.countDown()
+            check(releaseCopy.await(5, TimeUnit.SECONDS))
+            return bitmap
+        }
+
+        override fun close() {
+            closed = true
         }
     }
 

@@ -7,6 +7,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 internal data class ProjectionGrant(
@@ -51,89 +52,183 @@ internal class OneShotProjectionController(
     private val onFinished: () -> Unit,
 ) {
     private val started = AtomicBoolean(false)
-    private val claimedImage = AtomicBoolean(false)
-    private val finished = AtomicBoolean(false)
+    private val state = AtomicReference(CaptureState.NEW)
     private val resources = AtomicReference<ProjectionCaptureResources?>()
+    private val resourcesClosed = AtomicBoolean(false)
     private val timeout = AtomicReference<ProjectionTimeout?>()
     private val processingJob = AtomicReference<Job?>()
+    private val finishedCallbackSent = AtomicBoolean(false)
 
     fun start(grant: ProjectionGrant): Boolean {
-        if (!started.compareAndSet(false, true)) return false
+        if (!started.compareAndSet(false, true) || state.get() != CaptureState.NEW) return false
         return try {
             val opened = resourceFactory.open(grant)
             resources.set(opened)
-            val scheduled = timeoutScheduler.schedule(timeoutMillis, ::finish)
+            if (!state.compareAndSet(CaptureState.NEW, CaptureState.WAITING)) {
+                closeCaptureResources()
+                return false
+            }
+            val scheduled = timeoutScheduler.schedule(timeoutMillis, ::onWaitingTimeout)
             timeout.set(scheduled)
-            if (finished.get()) scheduled.cancelSafely()
-            if (!finished.get()) opened.registerProjectionCallback(::finish)
-            if (!finished.get()) opened.setImageListener(::onImageAvailable, ::finish)
-            if (!finished.get()) opened.createVirtualDisplay()
-            !finished.get()
+            if (state.get() != CaptureState.WAITING) scheduled.cancelSafely()
+            if (state.get() == CaptureState.WAITING) opened.registerProjectionCallback(::stop)
+            if (state.get() == CaptureState.WAITING) {
+                opened.setImageListener(
+                    onImage = { onImageAvailable(opened) },
+                    onError = ::stop,
+                )
+            }
+            if (state.get() == CaptureState.WAITING) opened.createVirtualDisplay()
+            state.get() == CaptureState.WAITING
         } catch (_: Exception) {
-            finish()
+            stop()
             false
         }
     }
 
     fun stop() {
-        finish()
+        while (true) {
+            when (val current = state.get()) {
+                CaptureState.NEW,
+                CaptureState.WAITING,
+                -> if (state.compareAndSet(current, CaptureState.FINISHED)) {
+                    cancelWaitingTimeout()
+                    closeCaptureResources()
+                    notifyFinished()
+                    return
+                }
+                CaptureState.COPYING ->
+                    if (state.compareAndSet(current, CaptureState.STOP_DURING_COPY)) return
+                CaptureState.PROCESSING ->
+                    if (state.compareAndSet(current, CaptureState.STOP_DURING_PROCESSING)) {
+                        processingJob.get()?.cancel()
+                        return
+                    }
+                CaptureState.STOP_DURING_COPY -> return
+                CaptureState.STOP_DURING_PROCESSING -> {
+                    processingJob.get()?.cancel()
+                    return
+                }
+                CaptureState.FINISHED -> return
+            }
+        }
     }
 
-    private fun onImageAvailable() {
-        val activeResources = resources.get() ?: return
+    private fun onWaitingTimeout() {
+        if (!state.compareAndSet(CaptureState.WAITING, CaptureState.FINISHED)) return
+        cancelWaitingTimeout()
+        closeCaptureResources()
+        notifyFinished()
+    }
+
+    private fun onImageAvailable(activeResources: ProjectionCaptureResources) {
         val image = try {
             activeResources.acquireLatestImage()
         } catch (_: Exception) {
-            finish()
+            if (state.get() == CaptureState.WAITING) stop()
             return
         } ?: return
-        if (finished.get() || !claimedImage.compareAndSet(false, true)) {
+        if (!state.compareAndSet(CaptureState.WAITING, CaptureState.COPYING)) {
             image.closeSafely()
             return
         }
-        val bitmap = AtomicReference<Bitmap?>()
-        val released = AtomicBoolean(false)
-        fun releaseFrame() {
-            if (!released.compareAndSet(false, true)) return
+        cancelWaitingTimeout()
+        var bitmap: Bitmap? = null
+        try {
+            bitmap = image.copyToSoftwareBitmap()
+        } catch (_: Exception) {
+            Unit
+        } finally {
             image.closeSafely()
-            bitmap.getAndSet(null)?.recycleSafely()
+            closeCaptureResources()
+        }
+        if (bitmap == null) {
+            completeWithoutProcessing()
+            return
+        }
+        if (state.compareAndSet(CaptureState.COPYING, CaptureState.PROCESSING)) {
+            startProcessing(bitmap)
+        } else {
+            bitmap.recycleSafely()
+            completeWithoutProcessing()
+        }
+    }
+
+    private fun startProcessing(bitmap: Bitmap) {
+        val bitmapReleased = AtomicBoolean(false)
+        fun releaseBitmap() {
+            if (bitmapReleased.compareAndSet(false, true)) bitmap.recycleSafely()
         }
         val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
-                val copied = image.copyToSoftwareBitmap()
-                bitmap.set(copied)
-                process(copied)
+                process(bitmap)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
             } catch (_: Exception) {
                 Unit
             } finally {
-                releaseFrame()
-                finish()
+                releaseBitmap()
             }
         }
         processingJob.set(job)
         job.invokeOnCompletion {
-            releaseFrame()
-            finish()
+            releaseBitmap()
+            completeProcessing()
         }
-        if (finished.get()) {
-            job.cancel()
-        } else {
-            job.start()
+        when (state.get()) {
+            CaptureState.PROCESSING -> job.start()
+            CaptureState.STOP_DURING_PROCESSING -> job.cancel()
+            else -> job.cancel()
         }
     }
 
-    private fun finish() {
-        if (!finished.compareAndSet(false, true)) return
-        timeout.getAndSet(null)?.cancelSafely()
-        processingJob.getAndSet(null)?.cancel()
-        resources.getAndSet(null)?.let { opened ->
-            runSafely(opened::releaseVirtualDisplay)
-            runSafely(opened::closeImageReader)
-            runSafely(opened::unregisterProjectionCallback)
-            runSafely(opened::stopProjection)
-            runSafely(opened::quitHandlerThread)
+    private fun completeWithoutProcessing() {
+        while (true) {
+            when (val current = state.get()) {
+                CaptureState.COPYING,
+                CaptureState.STOP_DURING_COPY,
+                -> if (state.compareAndSet(current, CaptureState.FINISHED)) {
+                    notifyFinished()
+                    return
+                }
+                CaptureState.FINISHED -> return
+                else -> return
+            }
         }
-        runSafely(onFinished)
+    }
+
+    private fun completeProcessing() {
+        processingJob.set(null)
+        while (true) {
+            when (val current = state.get()) {
+                CaptureState.PROCESSING,
+                CaptureState.STOP_DURING_PROCESSING,
+                -> if (state.compareAndSet(current, CaptureState.FINISHED)) {
+                    notifyFinished()
+                    return
+                }
+                CaptureState.FINISHED -> return
+                else -> return
+            }
+        }
+    }
+
+    private fun cancelWaitingTimeout() {
+        timeout.getAndSet(null)?.cancelSafely()
+    }
+
+    private fun closeCaptureResources() {
+        val opened = resources.getAndSet(null) ?: return
+        if (!resourcesClosed.compareAndSet(false, true)) return
+        runSafely(opened::closeImageReader)
+        runSafely(opened::releaseVirtualDisplay)
+        runSafely(opened::unregisterProjectionCallback)
+        runSafely(opened::stopProjection)
+        runSafely(opened::quitHandlerThread)
+    }
+
+    private fun notifyFinished() {
+        if (finishedCallbackSent.compareAndSet(false, true)) runSafely(onFinished)
     }
 
     private fun ProjectionTimeout.cancelSafely() = runSafely(::cancel)
@@ -149,5 +244,15 @@ internal class OneShotProjectionController(
         } catch (_: Exception) {
             Unit
         }
+    }
+
+    private enum class CaptureState {
+        NEW,
+        WAITING,
+        COPYING,
+        STOP_DURING_COPY,
+        PROCESSING,
+        STOP_DURING_PROCESSING,
+        FINISHED,
     }
 }

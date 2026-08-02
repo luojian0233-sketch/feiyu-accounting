@@ -22,6 +22,9 @@ import com.local.autobookkeeping.recognition.RecognitionCoordinator
 import com.local.autobookkeeping.recognition.TextBounds
 import java.time.Instant
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -163,8 +166,36 @@ class ScreenshotRecognitionControllerTest {
         assertTrue(bitmap.isRecycled)
     }
 
+    @Test
+    fun `cancellation after parsing prevents coordinator persistence`() = runTest {
+        val bitmap = bitmap()
+        lateinit var processing: Deferred<RecognitionOutcome>
+        val cancellingParser = RecordingParser(
+            outcome = ExtractionOutcome.Single(candidate("f", PaymentPlatform.OTHER)),
+            onParse = { processing.cancel() },
+        )
+        val cancellingController = ScreenshotRecognitionController(
+            textRecognizer = recognizer,
+            wechatParser = wechatParser,
+            alipayParser = alipayParser,
+            genericParser = cancellingParser,
+            coordinator = coordinator,
+        )
+        processing = async(start = CoroutineStart.LAZY) {
+            cancellingController.process(bitmap, null, NOW)
+        }
+
+        processing.start()
+        runCatching { processing.await() }
+
+        assertTrue(processing.isCancelled)
+        assertEquals(0, store.createCalls)
+        assertTrue(bitmap.isRecycled)
+    }
+
     private class RecordingParser(
         var outcome: ExtractionOutcome,
+        private val onParse: () -> Unit = {},
     ) : PaymentPageParser {
         val snapshots = mutableListOf<PageSnapshot>()
         val calls: Int get() = snapshots.size
@@ -172,6 +203,7 @@ class ScreenshotRecognitionControllerTest {
 
         override fun parse(snapshot: PageSnapshot): ExtractionOutcome {
             snapshots += snapshot
+            onParse()
             return outcome
         }
     }

@@ -14,6 +14,8 @@ import com.local.autobookkeeping.recognition.WechatPageParser
 import com.local.autobookkeeping.recognition.accessibility.AutoPageRecognitionController
 import java.time.Instant
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 class ScreenshotRecognitionController(
     private val textRecognizer: LocalTextRecognizer,
@@ -40,7 +42,10 @@ class ScreenshotRecognitionController(
             observedAt = observedAt,
         )
         when (val extracted = parserFor(foregroundPackage).parse(snapshot)) {
-            is ExtractionOutcome.Single -> coordinator.process(extracted.candidate)
+            is ExtractionOutcome.Single -> {
+                currentCoroutineContext().ensureActive()
+                coordinator.process(extracted.candidate)
+            }
             is ExtractionOutcome.Multiple -> RecognitionOutcome.NeedsSelection(
                 extracted.options.map { RecognitionChoice(candidate = it) },
             )
