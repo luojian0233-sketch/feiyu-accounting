@@ -1,5 +1,31 @@
 # Task 10 实施报告：单帧 MediaProjection 降级
 
+## 独立审查修复 Round 2
+
+基于 Round 1 提交 `85d65077ccd58dd57e31d9c4246920becdaf5093`，修复两项 Important。
+
+### RED
+
+- 使用异步 fake 阻塞 callback 注册，并在注册返回前触发 `MediaProjection.Callback.onStop()`：旧实现会在资源句柄发布前清理，注册返回后的 callback 无人注销。
+- 使用异步 fake 阻塞 VirtualDisplay 创建，并在创建返回前触发 stop：旧实现会在 VirtualDisplay 发布前清理，返回后的 display 无人释放。
+- setup 抛错且已有 pending stop：新增断言确认 setup 完成前不得提前清理，完成后所有资源必须恰好清理一次且不得进入识别。
+- 同一 service 实例收到重复命令：旧实现会对每条命令调用 `startForeground()`；同步失败后重复、成功后重复，以及“首条无效、后条有效”三种用例均暴露重复前台启动。
+
+### GREEN
+
+- `OneShotProjectionController` 使用 `setupInProgress` 与 `pendingSetupStop` 原子发布协议串行化 setup/stop；framework 调用期间不持锁，避免回调重入死锁。
+- callback、listener 与 VirtualDisplay 的每个 setup 边界后都重新检查 pending stop；setup 的 `finally` 在句柄发布完成后统一触发幂等 cleanup。
+- Android projection callback 句柄在调用 framework 注册前先发布；VirtualDisplay 在 framework 返回后、控制器继续前发布。异步 stop、setup exception 和重复 stop 下每项资源均恰好清理一次，且不进入 processor。
+- `ProjectionServiceStartCoordinator` 先用 CAS 原子认领首条命令，再执行 `startForeground()`、capture 或 finish；后续重复命令完全忽略。首条无 token 时仍先进入前台并 finish 一次，后续有效命令仍忽略；返回值保持 `START_NOT_STICKY`。
+
+### Round 2 验证
+
+- Focused projection/tile/gateway/recognition：`BUILD SUCCESSFUL`。
+- Fresh full JVM：`355` tests，`0` failures。
+- `compileDebugAndroidTestKotlin`：`BUILD SUCCESSFUL`。
+- `assembleDebug`：`BUILD SUCCESSFUL`，debug APK 存在。
+- 所有 Gradle 命令均使用 `--max-workers=1` 和显式超时；未运行 connected、adb，未创建或修改 `local.properties`。
+
 ## 范围与基线
 
 - BASE：`0a5b7d56084c3b4ed9393839a157e82d5ad4ef10`

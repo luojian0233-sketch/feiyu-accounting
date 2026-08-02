@@ -58,35 +58,49 @@ internal class OneShotProjectionController(
     private val timeout = AtomicReference<ProjectionTimeout?>()
     private val processingJob = AtomicReference<Job?>()
     private val finishedCallbackSent = AtomicBoolean(false)
+    private val setupInProgress = AtomicBoolean(false)
+    private val pendingSetupStop = AtomicBoolean(false)
 
     fun start(grant: ProjectionGrant): Boolean {
         if (!started.compareAndSet(false, true) || state.get() != CaptureState.NEW) return false
-        return try {
+        setupInProgress.set(true)
+        var setupSucceeded = false
+        try {
             val opened = resourceFactory.open(grant)
             resources.set(opened)
-            if (!state.compareAndSet(CaptureState.NEW, CaptureState.WAITING)) {
-                closeCaptureResources()
-                return false
+            if (!pendingSetupStop.get() && state.compareAndSet(CaptureState.NEW, CaptureState.WAITING)) {
+                val scheduled = timeoutScheduler.schedule(timeoutMillis, ::onWaitingTimeout)
+                timeout.set(scheduled)
+                if (state.get() != CaptureState.WAITING || pendingSetupStop.get()) {
+                    scheduled.cancelSafely()
+                }
+                if (!pendingSetupStop.get() && state.get() == CaptureState.WAITING) {
+                    opened.registerProjectionCallback(::stop)
+                }
+                if (!pendingSetupStop.get() && state.get() == CaptureState.WAITING) {
+                    opened.setImageListener(
+                        onImage = { onImageAvailable(opened) },
+                        onError = ::stop,
+                    )
+                }
+                if (!pendingSetupStop.get() && state.get() == CaptureState.WAITING) {
+                    opened.createVirtualDisplay()
+                }
+                setupSucceeded = !pendingSetupStop.get() && state.get() == CaptureState.WAITING
+            } else {
+                pendingSetupStop.set(true)
             }
-            val scheduled = timeoutScheduler.schedule(timeoutMillis, ::onWaitingTimeout)
-            timeout.set(scheduled)
-            if (state.get() != CaptureState.WAITING) scheduled.cancelSafely()
-            if (state.get() == CaptureState.WAITING) opened.registerProjectionCallback(::stop)
-            if (state.get() == CaptureState.WAITING) {
-                opened.setImageListener(
-                    onImage = { onImageAvailable(opened) },
-                    onError = ::stop,
-                )
-            }
-            if (state.get() == CaptureState.WAITING) opened.createVirtualDisplay()
-            state.get() == CaptureState.WAITING
         } catch (_: Exception) {
-            stop()
-            false
+            pendingSetupStop.set(true)
+        } finally {
+            setupInProgress.set(false)
+            if (pendingSetupStop.get()) stop()
         }
+        return setupSucceeded && state.get() == CaptureState.WAITING
     }
 
     fun stop() {
+        if (deferStopForSetup()) return
         while (true) {
             when (val current = state.get()) {
                 CaptureState.NEW,
@@ -115,10 +129,18 @@ internal class OneShotProjectionController(
     }
 
     private fun onWaitingTimeout() {
+        if (state.get() != CaptureState.WAITING) return
+        if (deferStopForSetup()) return
         if (!state.compareAndSet(CaptureState.WAITING, CaptureState.FINISHED)) return
         cancelWaitingTimeout()
         closeCaptureResources()
         notifyFinished()
+    }
+
+    private fun deferStopForSetup(): Boolean {
+        if (!setupInProgress.get()) return false
+        pendingSetupStop.set(true)
+        return setupInProgress.get()
     }
 
     private fun onImageAvailable(activeResources: ProjectionCaptureResources) {

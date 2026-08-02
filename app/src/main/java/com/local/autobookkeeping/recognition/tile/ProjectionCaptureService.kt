@@ -138,8 +138,8 @@ internal class ProjectionServiceStartCoordinator(
     private val accepted = AtomicBoolean(false)
 
     fun onStart(grant: ProjectionGrant?): Int {
-        startForeground()
         if (!accepted.compareAndSet(false, true)) return Service.START_NOT_STICKY
+        startForeground()
         if (grant == null) {
             finish()
             return Service.START_NOT_STICKY
@@ -250,15 +250,15 @@ private class AndroidProjectionCaptureResources(
     private val size: CaptureSize,
 ) : ProjectionCaptureResources {
     private val handler = Handler(handlerThread.looper)
-    private var projectionCallback: MediaProjection.Callback? = null
-    private var virtualDisplay: VirtualDisplay? = null
+    @Volatile private var projectionCallback: MediaProjection.Callback? = null
+    @Volatile private var virtualDisplay: VirtualDisplay? = null
 
     override fun registerProjectionCallback(onStop: () -> Unit) {
         val callback = object : MediaProjection.Callback() {
             override fun onStop() = onStop()
         }
-        projection.registerCallback(callback, handler)
         projectionCallback = callback
+        projection.registerCallback(callback, handler)
     }
 
     override fun setImageListener(onImage: () -> Unit, onError: () -> Unit) {

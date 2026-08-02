@@ -299,6 +299,83 @@ class OneShotProjectionControllerTest {
         assertEquals(1, resources.finishedCalls)
     }
 
+    @Test
+    fun `async stop while callback registration is blocked waits for publication then cleans once`() = runTest {
+        val resources = FakeProjectionResources(blockRegistration = true)
+        val controller = controller(resources) { error("must not process") }
+        var startResult = true
+
+        val starter = thread(name = "blocked-callback-registration") {
+            startResult = controller.start(grant())
+        }
+        assertTrue(resources.registrationEntered.await(5, TimeUnit.SECONDS))
+        resources.emitProjectionStop()
+        assertFalse(resources.imageReaderClosed)
+        assertFalse(resources.projectionStopped)
+
+        resources.releaseRegistration.countDown()
+        starter.join(5_000L)
+
+        assertFalse(starter.isAlive)
+        assertFalse(startResult)
+        assertFalse(resources.callbackRegistered)
+        resources.assertAllSessionResourcesClosedExactlyOnce()
+        assertEquals(0, resources.virtualDisplayCreates)
+        assertEquals(1, resources.finishedCalls)
+    }
+
+    @Test
+    fun `async stop while virtual display creation is blocked releases published display once`() = runTest {
+        val resources = FakeProjectionResources(blockDisplayCreation = true)
+        val controller = controller(resources) { error("must not process") }
+        var startResult = true
+
+        val starter = thread(name = "blocked-virtual-display") {
+            startResult = controller.start(grant())
+        }
+        assertTrue(resources.displayCreationEntered.await(5, TimeUnit.SECONDS))
+        resources.emitProjectionStop()
+        assertFalse(resources.imageReaderClosed)
+        assertFalse(resources.projectionStopped)
+
+        resources.releaseDisplayCreation.countDown()
+        starter.join(5_000L)
+
+        assertFalse(starter.isAlive)
+        assertFalse(startResult)
+        assertFalse(resources.virtualDisplayPresent)
+        assertFalse(resources.callbackRegistered)
+        resources.assertAllSessionResourcesClosedExactlyOnce()
+        assertEquals(1, resources.virtualDisplayCreates)
+        assertEquals(1, resources.finishedCalls)
+    }
+
+    @Test
+    fun `setup exception after pending async stop still closes every resource once`() = runTest {
+        val resources = FakeProjectionResources(
+            blockRegistration = true,
+            failRegistrationAfterBlock = true,
+        )
+        val controller = controller(resources) { error("must not process") }
+        var startResult = true
+
+        val starter = thread(name = "failing-callback-registration") {
+            startResult = controller.start(grant())
+        }
+        assertTrue(resources.registrationEntered.await(5, TimeUnit.SECONDS))
+        resources.emitProjectionStop()
+        assertFalse(resources.imageReaderClosed)
+        assertFalse(resources.projectionStopped)
+        resources.releaseRegistration.countDown()
+        starter.join(5_000L)
+
+        assertFalse(starter.isAlive)
+        assertFalse(startResult)
+        assertFalse(resources.callbackRegistered)
+        resources.assertAllSessionResourcesClosedExactlyOnce()
+        assertEquals(1, resources.finishedCalls)
+    }
+
     private fun CoroutineScope.controller(
         resources: FakeProjectionResources,
         scheduler: FakeTimeoutScheduler = FakeTimeoutScheduler(),
@@ -319,25 +396,47 @@ class OneShotProjectionControllerTest {
         private val failCreatingDisplay: Boolean = false,
         private val throwDuringCleanup: Boolean = false,
         private val stopDuringRegistration: Boolean = false,
+        private val blockRegistration: Boolean = false,
+        private val failRegistrationAfterBlock: Boolean = false,
+        private val blockDisplayCreation: Boolean = false,
     ) : ProjectionCaptureResources {
         var factoryCalls = 0
         var virtualDisplayCreates = 0
         var finishedCalls = 0
         val setupEvents = mutableListOf<String>()
-        var virtualDisplayReleased = false
-        var imageReaderClosed = false
-        var projectionCallbackUnregistered = false
-        var projectionStopped = false
-        var handlerThreadQuit = false
+        @Volatile var virtualDisplayReleased = false
+        @Volatile var imageReaderClosed = false
+        @Volatile var projectionCallbackUnregistered = false
+        @Volatile var projectionStopped = false
+        @Volatile var handlerThreadQuit = false
+        @Volatile var virtualDisplayPresent = false
+        val registrationEntered = CountDownLatch(1)
+        val releaseRegistration = CountDownLatch(1)
+        val displayCreationEntered = CountDownLatch(1)
+        val releaseDisplayCreation = CountDownLatch(1)
+        var virtualDisplayReleaseCalls = 0
+        var imageReaderCloseCalls = 0
+        var projectionCallbackUnregisterCalls = 0
+        var projectionStopCalls = 0
+        var handlerThreadQuitCalls = 0
         private val frames = ArrayDeque<ProjectionFrame>()
         private var imageListener: (() -> Unit)? = null
-        private var stopListener: (() -> Unit)? = null
+        @Volatile private var stopListener: (() -> Unit)? = null
+        @Volatile private var inFlightStopListener: (() -> Unit)? = null
         private var errorListener: (() -> Unit)? = null
+        val callbackRegistered: Boolean get() = stopListener != null
 
         override fun registerProjectionCallback(onStop: () -> Unit) {
             setupEvents += "projection-callback"
-            stopListener = onStop
+            inFlightStopListener = onStop
             if (stopDuringRegistration) onStop()
+            if (blockRegistration) {
+                registrationEntered.countDown()
+                check(releaseRegistration.await(5, TimeUnit.SECONDS))
+            }
+            if (failRegistrationAfterBlock) error("registration failed")
+            stopListener = onStop
+            inFlightStopListener = null
         }
 
         override fun setImageListener(onImage: () -> Unit, onError: () -> Unit) {
@@ -350,31 +449,43 @@ class OneShotProjectionControllerTest {
             setupEvents += "virtual-display"
             virtualDisplayCreates += 1
             if (failCreatingDisplay) error("display setup failed")
+            if (blockDisplayCreation) {
+                displayCreationEntered.countDown()
+                check(releaseDisplayCreation.await(5, TimeUnit.SECONDS))
+            }
+            virtualDisplayPresent = true
         }
 
         override fun acquireLatestImage(): ProjectionFrame? = frames.removeFirstOrNull()
 
         override fun releaseVirtualDisplay() {
+            virtualDisplayReleaseCalls += 1
             virtualDisplayReleased = true
+            virtualDisplayPresent = false
             if (throwDuringCleanup) error("release failed")
         }
 
         override fun closeImageReader() {
+            imageReaderCloseCalls += 1
             imageReaderClosed = true
             if (throwDuringCleanup) error("reader close failed")
         }
 
         override fun unregisterProjectionCallback() {
+            projectionCallbackUnregisterCalls += 1
             projectionCallbackUnregistered = true
+            stopListener = null
             if (throwDuringCleanup) error("callback unregister failed")
         }
 
         override fun stopProjection() {
+            projectionStopCalls += 1
             projectionStopped = true
             if (throwDuringCleanup) error("projection stop failed")
         }
 
         override fun quitHandlerThread() {
+            handlerThreadQuitCalls += 1
             handlerThreadQuit = true
             if (throwDuringCleanup) error("thread quit failed")
         }
@@ -384,7 +495,7 @@ class OneShotProjectionControllerTest {
             imageListener?.invoke()
         }
 
-        fun emitProjectionStop() = stopListener?.invoke() ?: Unit
+        fun emitProjectionStop() = (stopListener ?: inFlightStopListener)?.invoke() ?: Unit
         fun emitError() = errorListener?.invoke() ?: Unit
 
         fun assertAllSessionResourcesClosed() {
@@ -396,6 +507,15 @@ class OneShotProjectionControllerTest {
         }
 
         fun assertAllSessionCleanupAttempted() = assertAllSessionResourcesClosed()
+
+        fun assertAllSessionResourcesClosedExactlyOnce() {
+            assertAllSessionResourcesClosed()
+            assertEquals(1, imageReaderCloseCalls)
+            assertEquals(1, virtualDisplayReleaseCalls)
+            assertEquals(1, projectionCallbackUnregisterCalls)
+            assertEquals(1, projectionStopCalls)
+            assertEquals(1, handlerThreadQuitCalls)
+        }
     }
 
     private class FakeProjectionFrame(

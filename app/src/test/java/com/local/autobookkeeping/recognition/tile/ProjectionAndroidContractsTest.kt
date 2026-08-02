@@ -163,7 +163,41 @@ class ProjectionAndroidContractsTest {
         assertEquals(Service.START_NOT_STICKY, coordinator.onStart(grant))
         assertEquals(Service.START_NOT_STICKY, coordinator.onStart(grant))
 
-        assertEquals(listOf("foreground", "capture", "finish", "foreground"), events)
+        assertEquals(listOf("foreground", "capture", "finish"), events)
+    }
+
+    @Test
+    fun `successful service command ignores duplicate without foregrounding again`() {
+        val grant = ProjectionGrant(Activity.RESULT_OK, Intent("one-shot"))
+        val events = mutableListOf<String>()
+        val coordinator = ProjectionServiceStartCoordinator(
+            startForeground = { events += "foreground" },
+            startCapture = { events += "capture" },
+            finish = { events += "finish" },
+        )
+
+        assertEquals(Service.START_NOT_STICKY, coordinator.onStart(grant))
+        assertEquals(Service.START_NOT_STICKY, coordinator.onStart(grant))
+
+        assertEquals(listOf("foreground", "capture"), events)
+    }
+
+    @Test
+    fun `invalid first command finishes once and ignores later valid command`() {
+        val events = mutableListOf<String>()
+        val coordinator = ProjectionServiceStartCoordinator(
+            startForeground = { events += "foreground" },
+            startCapture = { events += "capture" },
+            finish = { events += "finish" },
+        )
+
+        assertEquals(Service.START_NOT_STICKY, coordinator.onStart(null))
+        assertEquals(
+            Service.START_NOT_STICKY,
+            coordinator.onStart(ProjectionGrant(Activity.RESULT_OK, Intent("queued-valid"))),
+        )
+
+        assertEquals(listOf("foreground", "finish"), events)
     }
 
     private fun putRgba(
