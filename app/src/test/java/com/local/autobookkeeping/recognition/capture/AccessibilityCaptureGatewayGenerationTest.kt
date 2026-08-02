@@ -74,7 +74,10 @@ class AccessibilityCaptureGatewayGenerationTest {
         gateway.detach()
         release.complete(Unit)
 
-        assertEquals(CaptureResult.RequiresSystemConsent, capture.await())
+        assertEquals(
+            CaptureResult.Failure(CaptureFailure.INVALID_DISPLAY),
+            capture.await(),
+        )
         assertTrue(bitmap.isRecycled)
     }
 
@@ -95,7 +98,10 @@ class AccessibilityCaptureGatewayGenerationTest {
         gateway.attachManual { CaptureResult.Failure(CaptureFailure.SECURE_WINDOW) }
         release.complete(Unit)
 
-        assertEquals(CaptureResult.RequiresSystemConsent, staleCapture.await())
+        assertEquals(
+            CaptureResult.Failure(CaptureFailure.INVALID_DISPLAY),
+            staleCapture.await(),
+        )
         assertTrue(staleBitmap.isRecycled)
         val currentSession = gateway.beginManualCaptureSession()
         assertEquals(

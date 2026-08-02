@@ -3,4 +3,6 @@
     <string name="payment_page_accessibility_label">微信与支付宝账单识别</string>
     <string name="payment_page_accessibility_description">只读识别微信与支付宝支付结果，不执行点击或手势操作</string>
     <string name="screenshot_bookkeeping_tile_label">截屏记账</string>
+    <string name="projection_notification_channel">截屏识别</string>
+    <string name="projection_notification_title">正在识别当前页面</string>
 </resources>

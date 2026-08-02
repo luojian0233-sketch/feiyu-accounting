@@ -49,7 +49,7 @@ class AccessibilityCaptureGateway internal constructor(
     private var manualProvider: ManualCaptureProvider? = null
     private var providerGeneration = 0L
     private var manualProviderGeneration = 0L
-    private var activeManualSession: SessionRecord? = null
+    private var activeManualSession: ManualSessionRecord? = null
     private var nextManualToken = 0L
 
     fun attach(provider: suspend () -> CaptureResult) {
@@ -84,13 +84,12 @@ class AccessibilityCaptureGateway internal constructor(
             null
         }
         synchronized(providerLock) {
-            if (
-                session.token == nextManualToken &&
-                binding != null &&
-                reservation != null &&
-                isCurrent(binding)
-            ) {
-                activeManualSession = SessionRecord(
+            if (session.token != nextManualToken) return@synchronized
+            activeManualSession = when {
+                binding == null -> ManualSessionRecord.Unavailable(session)
+                reservation == null || !isCurrent(binding) ->
+                    ManualSessionRecord.Invalid(session)
+                else -> ManualSessionRecord.Ready(
                     session = session,
                     expiresAtMillis = elapsedRealtimeMillis() + MANUAL_SESSION_TTL_MILLIS,
                     binding = binding,
@@ -128,18 +127,30 @@ class AccessibilityCaptureGateway internal constructor(
 
 
     suspend fun capture(session: ManualCaptureSession): CaptureResult = captureMutex.withLock {
-        val invocation = synchronized(providerLock) {
+        val decision = synchronized(providerLock) {
             val record = activeManualSession
             if (record?.session != session) {
-                null
+                ManualCaptureDecision.Invalid
             } else {
                 activeManualSession = null
-                record.binding.takeIf {
-                    elapsedRealtimeMillis() <= record.expiresAtMillis &&
-                        it != null && isCurrent(it)
-                }?.let { ManualInvocation(it, record.reservation) }
+                when (record) {
+                    is ManualSessionRecord.Unavailable -> ManualCaptureDecision.Unavailable
+                    is ManualSessionRecord.Invalid -> ManualCaptureDecision.Invalid
+                    is ManualSessionRecord.Ready -> record.binding.takeIf {
+                        elapsedRealtimeMillis() <= record.expiresAtMillis && isCurrent(it)
+                    }?.let {
+                        ManualCaptureDecision.Invoke(ManualInvocation(it, record.reservation))
+                    } ?: ManualCaptureDecision.Invalid
+                }
             }
-        } ?: return@withLock CaptureResult.RequiresSystemConsent
+        }
+        val invocation = when (decision) {
+            ManualCaptureDecision.Unavailable ->
+                return@withLock CaptureResult.RequiresSystemConsent
+            ManualCaptureDecision.Invalid ->
+                return@withLock CaptureResult.Failure(CaptureFailure.INVALID_DISPLAY)
+            is ManualCaptureDecision.Invoke -> decision.invocation
+        }
         val result = try {
             invocation.binding.provider.capture(invocation.reservation)
         } catch (cancellation: CancellationException) {
@@ -162,7 +173,7 @@ class AccessibilityCaptureGateway internal constructor(
         result: CaptureResult,
     ): CaptureResult {
         val isCurrent = synchronized(providerLock) { isCurrent(binding) }
-        return result.takeIf { isCurrent } ?: result.invalidated()
+        return result.takeIf { isCurrent } ?: result.invalidatedManual()
     }
 
     private fun isCurrent(binding: ManualProviderBinding): Boolean =
@@ -173,12 +184,35 @@ class AccessibilityCaptureGateway internal constructor(
         return CaptureResult.RequiresSystemConsent
     }
 
-    private data class SessionRecord(
-        val session: ManualCaptureSession,
-        val expiresAtMillis: Long,
-        val binding: ManualProviderBinding?,
-        val reservation: ManualCaptureReservation,
-    )
+    private fun CaptureResult.invalidatedManual(): CaptureResult {
+        if (this is CaptureResult.Success && !bitmap.isRecycled) bitmap.recycle()
+        return CaptureResult.Failure(CaptureFailure.INVALID_DISPLAY)
+    }
+
+    private sealed interface ManualSessionRecord {
+        val session: ManualCaptureSession
+
+        data class Unavailable(
+            override val session: ManualCaptureSession,
+        ) : ManualSessionRecord
+
+        data class Invalid(
+            override val session: ManualCaptureSession,
+        ) : ManualSessionRecord
+
+        data class Ready(
+            override val session: ManualCaptureSession,
+            val expiresAtMillis: Long,
+            val binding: ManualProviderBinding,
+            val reservation: ManualCaptureReservation,
+        ) : ManualSessionRecord
+    }
+
+    private sealed interface ManualCaptureDecision {
+        data object Unavailable : ManualCaptureDecision
+        data object Invalid : ManualCaptureDecision
+        data class Invoke(val invocation: ManualInvocation) : ManualCaptureDecision
+    }
 
     private data class ProviderBinding(
         val provider: suspend () -> CaptureResult,

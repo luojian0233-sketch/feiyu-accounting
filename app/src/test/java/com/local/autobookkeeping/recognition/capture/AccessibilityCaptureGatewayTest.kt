@@ -52,7 +52,10 @@ class AccessibilityCaptureGatewayTest {
         val session = gateway.beginManualCaptureSession()
 
         assertEquals(CaptureResult.Failure(CaptureFailure.SECURE_WINDOW), gateway.capture(session))
-        assertEquals(CaptureResult.RequiresSystemConsent, gateway.capture(session))
+        assertEquals(
+            CaptureResult.Failure(CaptureFailure.INVALID_DISPLAY),
+            gateway.capture(session),
+        )
         assertEquals(1, calls)
     }
 
@@ -67,7 +70,10 @@ class AccessibilityCaptureGatewayTest {
         val stale = gateway.beginManualCaptureSession()
         val current = gateway.beginManualCaptureSession()
 
-        assertEquals(CaptureResult.RequiresSystemConsent, gateway.capture(stale))
+        assertEquals(
+            CaptureResult.Failure(CaptureFailure.INVALID_DISPLAY),
+            gateway.capture(stale),
+        )
         assertEquals(CaptureResult.Failure(CaptureFailure.SECURE_WINDOW), gateway.capture(current))
         assertEquals(1, calls)
     }
@@ -84,7 +90,10 @@ class AccessibilityCaptureGatewayTest {
         val session = gateway.beginManualCaptureSession()
         elapsed += 2_001L
 
-        assertEquals(CaptureResult.RequiresSystemConsent, gateway.capture(session))
+        assertEquals(
+            CaptureResult.Failure(CaptureFailure.INVALID_DISPLAY),
+            gateway.capture(session),
+        )
         assertEquals(0, calls)
     }
 
@@ -121,8 +130,39 @@ class AccessibilityCaptureGatewayTest {
 
         gateway.detach()
 
-        assertEquals(CaptureResult.RequiresSystemConsent, gateway.capture(session))
+        assertEquals(
+            CaptureResult.Failure(CaptureFailure.INVALID_DISPLAY),
+            gateway.capture(session),
+        )
         assertEquals(0, calls)
+    }
+
+    @Test
+    fun `manual session with no accessibility provider explicitly requires system consent`() = runTest {
+        val gateway = AccessibilityCaptureGateway()
+
+        val session = gateway.beginManualCaptureSession()
+
+        assertEquals(CaptureResult.RequiresSystemConsent, gateway.capture(session))
+    }
+
+    @Test
+    fun `failed safety reservation is invalid display and cannot request projection fallback`() = runTest {
+        val gateway = AccessibilityCaptureGateway()
+        gateway.attachManual(
+            object : ManualCaptureProvider {
+                override fun reserve(): ManualCaptureReservation? = null
+                override suspend fun capture(reservation: ManualCaptureReservation): CaptureResult =
+                    error("must not capture without a safety proof")
+            },
+        )
+
+        val session = gateway.beginManualCaptureSession()
+
+        assertEquals(
+            CaptureResult.Failure(CaptureFailure.INVALID_DISPLAY),
+            gateway.capture(session),
+        )
     }
 
     @Test
