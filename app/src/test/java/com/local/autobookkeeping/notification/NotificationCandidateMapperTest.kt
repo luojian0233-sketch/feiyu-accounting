@@ -17,6 +17,7 @@ import java.time.Instant
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -91,6 +92,40 @@ class NotificationCandidateMapperTest {
         assertTrue(saved.dedupeKey.isNullOrBlank())
     }
 
+    @Test
+    fun `opposite transfer and red packet directions have distinct digests and both save`() = runTest {
+        val cases = listOf(
+            "transfer" to listOf(
+                "转账到账 人民币12.50",
+                "转账已支付 人民币12.50",
+            ),
+            "red packet" to listOf(
+                "收到红包 人民币12.50",
+                "红包已支付 人民币12.50",
+            ),
+        )
+
+        cases.forEach { (label, bodies) ->
+            val candidates = bodies.map { body ->
+                requireNotNull(
+                    AlipayParser.parse(
+                        NotificationText("支付宝", body, NotificationRouter.ALIPAY_PACKAGE, NOW),
+                    ),
+                ).toRecognitionCandidate()
+            }
+            val store = RecordingRecognitionStore()
+            val coordinator = RecognitionCoordinator(store, AutoSavePolicy { true })
+
+            assertNotEquals(candidates[0].evidenceDigest, candidates[1].evidenceDigest, label)
+            val outcomes = candidates.map { coordinator.process(it) }
+
+            assertTrue(outcomes.all { it is RecognitionOutcome.Saved }, label)
+            assertEquals(2, store.transactions.size, label)
+            assertEquals(2, store.receipts.size, label)
+            assertEquals(setOf(Direction.INCOME, Direction.EXPENSE), store.transactions.map { it.direction }.toSet())
+        }
+    }
+
     private fun paymentCandidate(
         sourcePackage: String = NotificationRouter.WECHAT_PACKAGE,
         eventKind: PaymentEventKind = PaymentEventKind.PAYMENT,
@@ -117,7 +152,7 @@ class NotificationCandidateMapperTest {
         override suspend fun findMatches(query: RecognitionMatchQuery): List<Transaction> = emptyList()
 
         override suspend fun create(transaction: Transaction, receipt: RecognitionReceipt): Long {
-            val id = 1L
+            val id = transactions.size + 1L
             transactions += transaction.copy(id = id)
             receipts += receipt.copy(transactionId = id)
             return id

@@ -223,6 +223,7 @@ internal fun buildCandidate(
         notification.packageName,
         amountMinor.toString(),
         eventSignal,
+        direction?.name ?: "UNSPECIFIED",
         bucket.toString(),
         notification.postedAt.epochSecond.toString(),
     ).joinToString("|")
