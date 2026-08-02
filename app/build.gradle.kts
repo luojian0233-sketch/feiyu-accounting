@@ -53,9 +53,11 @@ dependencies {
     implementation(libs.mlkit.text.recognition.chinese)
 
     testImplementation(libs.junit.jupiter)
+    testImplementation("junit:junit:4.13.2")
     testRuntimeOnly(libs.junit.platform.launcher)
     testImplementation(libs.robolectric)
     testImplementation(libs.kotlinx.coroutines.test)
+    testRuntimeOnly("org.junit.vintage:junit-vintage-engine:5.12.2")
 
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

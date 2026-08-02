@@ -1,0 +1,105 @@
+package com.local.autobookkeeping.recognition.capture
+
+import android.accessibilityservice.AccessibilityService
+import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+
+class AccessibilityCaptureGatewayTest {
+    @Test
+    fun `framework screenshot errors map only to redacted failure enums`() {
+        assertEquals(
+            CaptureFailure.SECURE_WINDOW,
+            mapScreenshotError(AccessibilityService.ERROR_TAKE_SCREENSHOT_SECURE_WINDOW),
+        )
+        assertEquals(
+            CaptureFailure.TOO_FREQUENT,
+            mapScreenshotError(AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT),
+        )
+        assertEquals(
+            CaptureFailure.NO_ACCESSIBILITY_ACCESS,
+            mapScreenshotError(AccessibilityService.ERROR_TAKE_SCREENSHOT_NO_ACCESSIBILITY_ACCESS),
+        )
+        assertEquals(
+            CaptureFailure.INVALID_DISPLAY,
+            mapScreenshotError(AccessibilityService.ERROR_TAKE_SCREENSHOT_INVALID_DISPLAY),
+        )
+        assertEquals(CaptureFailure.INTERNAL, mapScreenshotError(Int.MIN_VALUE))
+    }
+
+    @Test
+    fun `detached gateway requires system consent without invoking old provider`() = runTest {
+        val gateway = AccessibilityCaptureGateway()
+        var calls = 0
+        gateway.attach {
+            calls += 1
+            CaptureResult.Failure(CaptureFailure.INTERNAL)
+        }
+        gateway.detach()
+
+        assertEquals(CaptureResult.RequiresSystemConsent, gateway.capture())
+        assertEquals(0, calls)
+    }
+
+    @Test
+    fun `attach replaces provider and each capture invokes current provider once`() = runTest {
+        val gateway = AccessibilityCaptureGateway()
+        var firstCalls = 0
+        var secondCalls = 0
+        gateway.attach {
+            firstCalls += 1
+            CaptureResult.Failure(CaptureFailure.SECURE_WINDOW)
+        }
+        gateway.attach {
+            secondCalls += 1
+            CaptureResult.Failure(CaptureFailure.TOO_FREQUENT)
+        }
+
+        assertEquals(CaptureResult.Failure(CaptureFailure.TOO_FREQUENT), gateway.capture())
+        assertEquals(0, firstCalls)
+        assertEquals(1, secondCalls)
+    }
+
+    @Test
+    fun `concurrent capture calls are serialized`() = runTest {
+        val gateway = AccessibilityCaptureGateway()
+        var active = 0
+        var maximumActive = 0
+        var calls = 0
+        gateway.attach {
+            calls += 1
+            active += 1
+            maximumActive = maxOf(maximumActive, active)
+            delay(10)
+            active -= 1
+            CaptureResult.Failure(CaptureFailure.INTERNAL)
+        }
+
+        List(3) { async { gateway.capture() } }.awaitAll()
+
+        assertEquals(3, calls)
+        assertEquals(1, maximumActive)
+    }
+
+    @Test
+    fun `provider failures are redacted while cancellation propagates`() = runTest {
+        val gateway = AccessibilityCaptureGateway()
+        gateway.attach { error("raw framework error") }
+
+        assertEquals(CaptureResult.Failure(CaptureFailure.INTERNAL), gateway.capture())
+
+        gateway.attach { throw CancellationException("cancel") }
+        val thrown = try {
+            gateway.capture()
+            null
+        } catch (failure: Throwable) {
+            failure
+        }
+        assertTrue(thrown is CancellationException)
+    }
+}
