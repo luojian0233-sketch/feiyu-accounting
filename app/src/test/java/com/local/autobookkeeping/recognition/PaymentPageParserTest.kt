@@ -527,6 +527,38 @@ class PaymentPageParserTest {
     }
 
     @Test
+    fun `shared detail heading cannot authorize a bare timestamp above side by side events`() {
+        listOf("2026-07-20 08:00", "07-20 08:00").forEach { pageTime ->
+            val outcome = GenericBillParser.parse(
+                PageSnapshot(
+                    packageName = null,
+                    elements = listOf(
+                        ObservedTextElement("账单详情", TextBounds(40, 40, 600, 60)),
+                        ObservedTextElement(pageTime, TextBounds(40, 70, 600, 90)),
+                        ObservedTextElement("转出", TextBounds(40, 120, 280, 140)),
+                        ObservedTextElement("实付 ¥5.00", TextBounds(40, 160, 280, 180)),
+                        ObservedTextElement("转入", TextBounds(320, 120, 560, 140)),
+                        ObservedTextElement("实付 ¥6.00", TextBounds(320, 160, 560, 180)),
+                    ),
+                    observedAt = OBSERVED_AT,
+                ),
+            ) as ExtractionOutcome.Multiple
+
+            assertEquals(listOf(500L, 600L), outcome.options.map { it.amountMinor }, pageTime)
+            assertEquals(
+                listOf(Direction.EXPENSE, Direction.INCOME),
+                outcome.options.map { it.direction },
+                pageTime,
+            )
+            assertEquals(
+                listOf(OBSERVED_AT, OBSERVED_AT),
+                outcome.options.map { it.occurredAt },
+                pageTime,
+            )
+        }
+    }
+
+    @Test
     fun `ordinary text after the amount is not a standalone merchant or digest input`() {
         fun parse(description: String): ExtractionOutcome.Single = GenericBillParser.parse(
             PageSnapshot(

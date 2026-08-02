@@ -722,7 +722,7 @@ private fun isTimeOwnedByCard(
     val clause = timeElement.text.clauseContaining(match.range)
     if (TIME_FIELD_LABELS.any(clause::contains)) return true
     val followsTransactionAnchor = cardElements.any { anchor ->
-        isTransactionRegionAnchor(anchor) &&
+        isTransactionTimeAnchor(anchor) &&
             timeElement.bounds.top >= anchor.bounds.top &&
             horizontalOverlap(timeElement.bounds, anchor.bounds) > 0
     }
@@ -731,9 +731,9 @@ private fun isTimeOwnedByCard(
     return followsTransactionAnchor || followsAmount
 }
 
-private fun isTransactionRegionAnchor(element: ObservedTextElement): Boolean {
+private fun isTransactionTimeAnchor(element: ObservedTextElement): Boolean {
     val text = element.text.trim()
-    return text in TRANSACTION_DETAIL_SIGNATURES || EVENT_SIGNALS.keys.any(text::contains)
+    return EVENT_SIGNALS.keys.any(text::contains)
 }
 
 private fun horizontalOverlap(first: TextBounds, second: TextBounds): Int =
