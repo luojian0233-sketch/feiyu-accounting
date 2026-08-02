@@ -3,14 +3,17 @@ package com.local.autobookkeeping
 import android.app.Application
 import com.local.autobookkeeping.backup.AppDatabaseBackupStore
 import com.local.autobookkeeping.backup.BackupManager
+import com.local.autobookkeeping.data.RoomRecognitionStore
 import com.local.autobookkeeping.data.RoomLedgerRepository
 import com.local.autobookkeeping.data.SettingsRepository
 import com.local.autobookkeeping.data.db.AppDatabase
-import com.local.autobookkeeping.notification.CandidateProcessor
 import com.local.autobookkeeping.notification.InMemoryNotificationDiagnostics
 import com.local.autobookkeeping.notification.NotificationRouter
 import com.local.autobookkeeping.notification.PendingConfirmationNotifier
 import com.local.autobookkeeping.notification.NotificationAccess
+import com.local.autobookkeeping.recognition.AutoSavePolicy
+import com.local.autobookkeeping.recognition.InMemoryRecognitionDiagnostics
+import com.local.autobookkeeping.recognition.RecognitionCoordinator
 import com.local.autobookkeeping.ui.home.NotificationPermissionProvider
 
 open class AutoBookkeepingApplication : Application() {
@@ -42,7 +45,15 @@ class ApplicationGraph(
     val notificationRouter by lazy {
         NotificationRouter(settingsRepository, diagnostics = notificationDiagnostics)
     }
-    val candidateProcessor by lazy { CandidateProcessor(ledgerRepository) }
+    val recognitionDiagnostics = InMemoryRecognitionDiagnostics()
+    private val recognitionStore by lazy { RoomRecognitionStore(database) }
+    val recognitionCoordinator by lazy {
+        RecognitionCoordinator(
+            store = recognitionStore,
+            autoSavePolicy = AutoSavePolicy { true },
+            diagnostics = recognitionDiagnostics,
+        )
+    }
     val pendingConfirmationNotifier by lazy { PendingConfirmationNotifier(appContext) }
     val notificationPermissionProvider = NotificationPermissionProvider {
         NotificationAccess.isEnabled(appContext)

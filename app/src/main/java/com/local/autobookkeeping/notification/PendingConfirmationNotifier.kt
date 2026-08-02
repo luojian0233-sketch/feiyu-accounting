@@ -13,11 +13,32 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.local.autobookkeeping.MainActivity
+import com.local.autobookkeeping.domain.model.RecognitionCandidate
+import com.local.autobookkeeping.domain.model.RecognitionOutcome
 
 class PendingConfirmationNotifier(context: Context) {
     private val appContext = context.applicationContext
 
-    fun notifyPending() {
+    fun notifyPending() = notify(
+        notificationId = PENDING_NOTIFICATION_ID,
+        title = CONTENT_TITLE,
+        text = CONTENT_TEXT,
+        category = NotificationCompat.CATEGORY_REMINDER,
+    )
+
+    fun notifySaved() = notify(
+        notificationId = SUCCESS_NOTIFICATION_ID,
+        title = SUCCESS_CONTENT_TITLE,
+        text = SUCCESS_CONTENT_TEXT,
+        category = NotificationCompat.CATEGORY_STATUS,
+    )
+
+    private fun notify(
+        notificationId: Int,
+        title: String,
+        text: String,
+        category: String,
+    ) {
         try {
             if (
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -31,7 +52,7 @@ class PendingConfirmationNotifier(context: Context) {
             val manager = NotificationManagerCompat.from(appContext)
             if (!manager.areNotificationsEnabled()) return
             createChannel()
-            manager.notify(NOTIFICATION_ID, buildNotification())
+            manager.notify(notificationId, buildNotification(title, text, category))
         } catch (_: SecurityException) {
             // The pending row is already persisted; reminder delivery is optional.
         } catch (_: RuntimeException) {
@@ -52,7 +73,7 @@ class PendingConfirmationNotifier(context: Context) {
         manager.createNotificationChannel(channel)
     }
 
-    private fun buildNotification(): Notification {
+    private fun buildNotification(title: String, text: String, category: String): Notification {
         val launchIntent = (
             appContext.packageManager.getLaunchIntentForPackage(appContext.packageName)
                 ?: Intent(appContext, MainActivity::class.java)
@@ -65,10 +86,11 @@ class PendingConfirmationNotifier(context: Context) {
         )
         return NotificationCompat.Builder(appContext, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle(CONTENT_TITLE)
-            .setContentText(CONTENT_TEXT)
+            .setContentTitle(title)
+            .setContentText(text)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setLocalOnly(true)
+            .setCategory(category)
             .setContentIntent(contentIntent)
             .setAutoCancel(true)
             .build()
@@ -77,28 +99,37 @@ class PendingConfirmationNotifier(context: Context) {
     companion object {
         internal const val CONTENT_TITLE = "有一笔记录待确认"
         internal const val CONTENT_TEXT = "请打开自记账查看"
+        internal const val SUCCESS_CONTENT_TITLE = "自动记账已保存"
+        internal const val SUCCESS_CONTENT_TEXT = "请打开自记账查看"
         private const val CHANNEL_ID = "pending_bookkeeping_confirmation"
-        private const val CHANNEL_NAME = "待确认记账"
-        private const val CHANNEL_DESCRIPTION = "提醒您确认自动识别的记账记录"
-        private const val NOTIFICATION_ID = 1001
+        private const val CHANNEL_NAME = "自动记账状态"
+        private const val CHANNEL_DESCRIPTION = "提醒自动记账保存或待确认状态"
+        private const val PENDING_NOTIFICATION_ID = 1001
+        private const val SUCCESS_NOTIFICATION_ID = 1002
         private const val REQUEST_CODE = 1001
     }
 }
 
 object PendingConfirmationCoordinator {
     suspend fun process(
-        candidate: PaymentCandidate,
-        persist: suspend (PaymentCandidate) -> Long?,
+        candidate: RecognitionCandidate,
+        recognize: suspend (RecognitionCandidate) -> RecognitionOutcome,
         notifyPending: () -> Unit,
-    ): Long? {
-        val savedId = persist(candidate)
-        if (savedId != null && CandidateProcessor.requiresConfirmation(candidate)) {
-            try {
-                notifyPending()
-            } catch (_: RuntimeException) {
-                // Persistence is authoritative; reminder delivery is best effort.
-            }
+        notifySaved: () -> Unit,
+    ): RecognitionOutcome {
+        val outcome = recognize(candidate)
+        val notify = when (outcome) {
+            is RecognitionOutcome.Saved -> if (outcome.pending) notifyPending else notifySaved
+            is RecognitionOutcome.NeedsSelection -> notifyPending
+            RecognitionOutcome.Duplicate,
+            is RecognitionOutcome.Rejected,
+            -> null
         }
-        return savedId
+        try {
+            notify?.invoke()
+        } catch (_: RuntimeException) {
+            // Persistence is authoritative; reminder delivery is best effort.
+        }
+        return outcome
     }
 }

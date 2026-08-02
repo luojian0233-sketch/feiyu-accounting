@@ -22,6 +22,61 @@ class PaymentParserTest {
     private val instant = Instant.parse("2026-01-02T03:04:05Z")
 
     @Test
+    fun `real wechat paid notification creates an expense candidate`() {
+        val candidate = WechatParser.parse(
+            NotificationText("微信支付", "已支付¥1.00", "com.tencent.mm", instant),
+        )
+
+        assertEquals(100L, candidate?.amountMinor)
+        assertEquals(Direction.EXPENSE, candidate?.direction)
+        assertEquals(PaymentEventKind.PAYMENT, candidate?.eventKind)
+    }
+
+    @Test
+    fun `wechat chat with paid words is rejected`() {
+        assertNull(
+            WechatParser.parse(
+                NotificationText("张三", "我已支付¥1.00", "com.tencent.mm", instant),
+            ),
+        )
+    }
+
+    @Test
+    fun `real wechat paid notification rejects ambiguous amounts and promotion`() {
+        val bodies = listOf(
+            "已支付¥1.00，优惠¥2.00",
+            "已支付¥1.00，领取优惠券",
+            "已支付¥1.00，退款到账",
+        )
+
+        bodies.forEach { body ->
+            assertNull(
+                WechatParser.parse(NotificationText("微信支付", body, "com.tencent.mm", instant)),
+                body,
+            )
+        }
+    }
+
+    @Test
+    fun `alipay refunds transfers and red packets preserve event direction`() {
+        val cases = listOf(
+            "退款到账 人民币10.00" to (PaymentEventKind.REFUND to Direction.INCOME),
+            "转账到账 人民币20.00" to (PaymentEventKind.TRANSFER to Direction.INCOME),
+            "转账已支付 人民币30.00" to (PaymentEventKind.TRANSFER to Direction.EXPENSE),
+            "收到红包 人民币40.00" to (PaymentEventKind.RED_PACKET to Direction.INCOME),
+            "红包已支付 人民币50.00" to (PaymentEventKind.RED_PACKET to Direction.EXPENSE),
+        )
+
+        cases.forEach { (body, expected) ->
+            val candidate = AlipayParser.parse(
+                NotificationText("支付宝", body, "com.eg.android.AlipayGphone", instant),
+            )
+            assertEquals(expected.first, candidate?.eventKind, body)
+            assertEquals(expected.second, candidate?.direction, body)
+        }
+    }
+
+    @Test
     fun `wechat expense parses yuan into minor units`() {
         val candidate = WechatParser.parse(
             NotificationText("微信支付", "支付成功 ￥28.00", "com.tencent.mm", instant),

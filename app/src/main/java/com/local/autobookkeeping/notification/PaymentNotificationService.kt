@@ -40,9 +40,10 @@ class PaymentNotificationService : NotificationListenerService() {
                 )
                 graph.notificationRouter.route(input)?.let { candidate ->
                     PendingConfirmationCoordinator.process(
-                        candidate = candidate,
-                        persist = graph.candidateProcessor::process,
+                        candidate = candidate.toRecognitionCandidate(),
+                        recognize = graph.recognitionCoordinator::process,
                         notifyPending = graph.pendingConfirmationNotifier::notifyPending,
+                        notifySaved = graph.pendingConfirmationNotifier::notifySaved,
                     )
                 }
             } catch (cancellation: CancellationException) {

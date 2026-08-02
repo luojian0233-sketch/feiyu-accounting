@@ -53,6 +53,7 @@ enum class PaymentEventKind {
     DEBIT,
     CREDIT,
     TRANSFER,
+    RED_PACKET,
     AMBIGUOUS,
 }
 
@@ -120,6 +121,8 @@ internal fun parseSourceCandidate(
     expenseEventKind: PaymentEventKind = PaymentEventKind.PAYMENT,
     incomeEventKind: PaymentEventKind = PaymentEventKind.RECEIPT,
     refundKeywords: Set<String> = emptySet(),
+    expenseRedPacketKeywords: Set<String> = emptySet(),
+    incomeRedPacketKeywords: Set<String> = emptySet(),
     transferKeywords: Set<String> = TRANSFER_KEYWORDS,
     clearConfidence: Int,
     ambiguousConfidence: Int,
@@ -139,7 +142,20 @@ internal fun parseSourceCandidate(
     val expenseSignals = findSignals(normalized, expenseKeywords, Direction.EXPENSE, expenseEventKind)
     val incomeSignals = findSignals(normalized, incomeKeywords, Direction.INCOME, incomeEventKind)
     val refundSignals = findSignals(normalized, refundKeywords, Direction.INCOME, PaymentEventKind.REFUND)
-    val signals = expenseSignals + incomeSignals + refundSignals + transferSignals
+    val expenseRedPacketSignals = findSignals(
+        normalized,
+        expenseRedPacketKeywords,
+        Direction.EXPENSE,
+        PaymentEventKind.RED_PACKET,
+    )
+    val incomeRedPacketSignals = findSignals(
+        normalized,
+        incomeRedPacketKeywords,
+        Direction.INCOME,
+        PaymentEventKind.RED_PACKET,
+    )
+    val redPacketSignals = expenseRedPacketSignals + incomeRedPacketSignals
+    val signals = expenseSignals + incomeSignals + refundSignals + redPacketSignals + transferSignals
     val contextRanges = fallbackContextKeywords.flatMap { keyword ->
         normalized.rangesOf(keyword.lowercase(Locale.ROOT))
     }
@@ -171,6 +187,8 @@ internal fun parseSourceCandidate(
         transferSignals.isNotEmpty() -> PaymentEventKind.TRANSFER
         direction == null -> PaymentEventKind.AMBIGUOUS
         refundSignals.isNotEmpty() && expenseSignals.isEmpty() -> PaymentEventKind.REFUND
+        redPacketSignals.isNotEmpty() && signalKinds == setOf(PaymentEventKind.RED_PACKET) ->
+            PaymentEventKind.RED_PACKET
         signalKinds.size != 1 -> PaymentEventKind.AMBIGUOUS
         else -> signalKinds.single()
     }
