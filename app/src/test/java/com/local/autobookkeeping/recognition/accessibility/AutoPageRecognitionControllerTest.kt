@@ -8,10 +8,15 @@ import com.local.autobookkeeping.recognition.ObservedTextElement
 import com.local.autobookkeeping.recognition.PageSnapshot
 import com.local.autobookkeeping.recognition.TextBounds
 import com.local.autobookkeeping.recognition.capture.AccessibilityCaptureGateway
+import com.local.autobookkeeping.recognition.capture.CaptureFailure
 import com.local.autobookkeeping.recognition.capture.CaptureResult
 import com.local.autobookkeeping.recognition.capture.LocalTextRecognizer
 import java.time.Instant
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -75,6 +80,94 @@ class AutoPageRecognitionControllerTest {
     }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `concurrent same signed page has only one in flight processor`() = runTest {
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val blockingProcessor = object : RecognitionCandidateProcessor {
+            var calls = 0
+            override suspend fun process(candidate: RecognitionCandidate): RecognitionOutcome {
+                calls += 1
+                entered.complete(Unit)
+                release.await()
+                return RecognitionOutcome.Duplicate
+            }
+        }
+        val blockingController = controller(recognizer, candidateProcessor = blockingProcessor)
+
+        val first = async { blockingController.onWindowChanged(completeWechatPage()) }
+        entered.await()
+        val second = async { blockingController.onWindowChanged(completeWechatPage()) }
+        runCurrent()
+
+        assertEquals(1, blockingProcessor.calls)
+        release.complete(Unit)
+        first.await()
+        second.await()
+    }
+
+    @Test
+    fun `coordinator exception releases page for immediate retry`() = runTest {
+        val flakyProcessor = object : RecognitionCandidateProcessor {
+            var calls = 0
+            override suspend fun process(candidate: RecognitionCandidate): RecognitionOutcome {
+                calls += 1
+                if (calls == 1) error("transient store failure")
+                return RecognitionOutcome.Duplicate
+            }
+        }
+        val flakyController = controller(recognizer, candidateProcessor = flakyProcessor)
+
+        try {
+            flakyController.onWindowChanged(completeWechatPage())
+        } catch (_: IllegalStateException) {
+            Unit
+        }
+        flakyController.onWindowChanged(completeWechatPage())
+
+        assertEquals(2, flakyProcessor.calls)
+    }
+
+    @Test
+    fun `coordinator cancellation propagates and releases page for retry`() = runTest {
+        val cancellingProcessor = object : RecognitionCandidateProcessor {
+            var calls = 0
+            override suspend fun process(candidate: RecognitionCandidate): RecognitionOutcome {
+                calls += 1
+                if (calls == 1) throw CancellationException("cancel")
+                return RecognitionOutcome.Duplicate
+            }
+        }
+        val cancellingController = controller(recognizer, candidateProcessor = cancellingProcessor)
+
+        val thrown = try {
+            cancellingController.onWindowChanged(completeWechatPage())
+            null
+        } catch (failure: Throwable) {
+            failure
+        }
+        cancellingController.onWindowChanged(completeWechatPage())
+
+        assertTrue(thrown is CancellationException)
+        assertEquals(2, cancellingProcessor.calls)
+    }
+
+    @Test
+    fun `temporary capture failure releases page for immediate retry`() = runTest {
+        var screenshotCalls = 0
+        gateway.attach {
+            screenshotCalls += 1
+            CaptureResult.Failure(CaptureFailure.INTERNAL)
+        }
+
+        repeat(2) {
+            controller.onWindowChanged(page(WECHAT_PACKAGE, "微信支付", "账单详情"))
+        }
+
+        assertEquals(2, screenshotCalls)
+    }
+
+    @Test
     fun `complete Alipay page is processed without screenshot`() = runTest {
         var screenshotCalls = 0
         gateway.attach {
@@ -99,6 +192,29 @@ class AutoPageRecognitionControllerTest {
         controller.onWindowChanged(page(WECHAT_PACKAGE, "发现", "朋友圈"))
 
         assertEquals(0, screenshotCalls)
+        assertEquals(0, processor.calls)
+    }
+
+    @Test
+    fun `unsigned page does not occupy debounce storage`() = runTest {
+        val debouncer = RecognitionDebouncer(windowMillis = 1_000, maxEntries = 1)
+        val unsigned = page(WECHAT_PACKAGE, "发现", "朋友圈")
+        val unsignedController = controller(recognizer, debouncer = debouncer)
+
+        unsignedController.onWindowChanged(unsigned)
+
+        assertTrue(debouncer.reserve(unsigned, 10_000) != null)
+    }
+
+    @Test
+    fun `signed conflicting page commits a deterministic debounce terminal`() = runTest {
+        val debouncer = RecognitionDebouncer(windowMillis = 1_000, maxEntries = 1)
+        val conflicting = page(WECHAT_PACKAGE, "微信支付", "支付成功 退款成功 ¥1.00")
+        val conflictingController = controller(recognizer, debouncer = debouncer)
+
+        conflictingController.onWindowChanged(conflicting)
+
+        assertTrue(debouncer.reserve(conflicting, 10_000) == null)
         assertEquals(0, processor.calls)
     }
 
@@ -155,19 +271,53 @@ class AutoPageRecognitionControllerTest {
     }
 
     @Test
-    fun `OCR exception is redacted and captured bitmap is recycled`() = runTest {
-        val bitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888)
-        gateway.attach { CaptureResult.Success(bitmap, WECHAT_PACKAGE) }
+    fun `OCR exception releases page for retry and every captured bitmap is recycled`() = runTest {
+        val bitmaps = mutableListOf<Bitmap>()
+        gateway.attach {
+            Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888).let { bitmap ->
+                bitmaps += bitmap
+                CaptureResult.Success(bitmap, WECHAT_PACKAGE)
+            }
+        }
         val throwingController = controller(LocalTextRecognizer { error("private page text") })
 
-        throwingController.onWindowChanged(page(WECHAT_PACKAGE, "微信支付", "账单详情"))
+        repeat(2) {
+            throwingController.onWindowChanged(page(WECHAT_PACKAGE, "微信支付", "账单详情"))
+        }
 
         assertEquals(0, processor.calls)
-        assertTrue(bitmap.isRecycled)
+        assertEquals(2, bitmaps.size)
+        assertTrue(bitmaps.all(Bitmap::isRecycled))
         assertEquals(
             com.local.autobookkeeping.recognition.RecognitionDiagnostic.OCR_FAILED,
             diagnostics.state.value,
         )
+    }
+
+    @Test
+    fun `OCR conflicting direction is a deterministic debounce terminal`() = runTest {
+        var screenshotCalls = 0
+        gateway.attach {
+            screenshotCalls += 1
+            CaptureResult.Success(
+                Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888),
+                WECHAT_PACKAGE,
+            )
+        }
+        val conflictingRecognizer = LocalTextRecognizer {
+            listOf(
+                element("微信支付", 0),
+                element("支付成功 退款成功 ¥1.00", 40),
+            )
+        }
+        val conflictingController = controller(conflictingRecognizer)
+
+        repeat(2) {
+            conflictingController.onWindowChanged(page(WECHAT_PACKAGE, "微信支付", "账单详情"))
+        }
+
+        assertEquals(1, screenshotCalls)
+        assertEquals(0, processor.calls)
     }
 
     private fun controller(
@@ -176,13 +326,15 @@ class AutoPageRecognitionControllerTest {
             settingsCalls += 1
             enabled
         },
+        candidateProcessor: RecognitionCandidateProcessor = processor,
+        debouncer: RecognitionDebouncer = RecognitionDebouncer(windowMillis = 1_000),
     ) = AutoPageRecognitionController(
         settings = settings,
         captureGateway = gateway,
         textRecognizer = recognizer,
-        candidateProcessor = processor,
+        candidateProcessor = candidateProcessor,
         diagnostics = diagnostics,
-        debouncer = RecognitionDebouncer(windowMillis = 1_000),
+        debouncer = debouncer,
         elapsedRealtimeMillis = { 10_000L },
     )
 

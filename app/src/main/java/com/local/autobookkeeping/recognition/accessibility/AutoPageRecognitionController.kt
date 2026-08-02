@@ -29,24 +29,66 @@ internal fun interface RecognitionCandidateProcessor {
 
 class RecognitionDebouncer(
     private val windowMillis: Long = DEFAULT_WINDOW_MILLIS,
+    private val maxEntries: Int = DEFAULT_MAX_ENTRIES,
 ) {
     private val lock = Any()
-    private val lastSeenByDigest = mutableMapOf<String, Long>()
+    private val entries = mutableMapOf<String, Entry>()
+    private var nextToken = 0L
 
     init {
         require(windowMillis >= 0)
+        require(maxEntries > 0)
     }
 
-    fun shouldProcess(snapshot: PageSnapshot, nowMillis: Long): Boolean {
+    class Reservation internal constructor(
+        internal val digest: String,
+        internal val token: Long,
+    )
+
+    fun reserve(snapshot: PageSnapshot, nowMillis: Long): Reservation? {
         val digest = snapshot.normalizedDigest()
         return synchronized(lock) {
-            val previous = lastSeenByDigest[digest]
-            if (previous != null && nowMillis >= previous && nowMillis - previous < windowMillis) {
-                false
-            } else {
-                lastSeenByDigest[digest] = nowMillis
-                true
+            removeExpiredCommitted(nowMillis)
+            if (digest in entries) return@synchronized null
+            if (entries.size >= maxEntries) {
+                entries.entries
+                    .filter { it.value.committed }
+                    .minByOrNull { it.value.recordedAtMillis }
+                    ?.key
+                    ?.let(entries::remove)
             }
+            if (entries.size >= maxEntries) return@synchronized null
+            val token = ++nextToken
+            entries[digest] = Entry(token, nowMillis, committed = false)
+            Reservation(digest, token)
+        }
+    }
+
+    fun commit(reservation: Reservation, nowMillis: Long) {
+        synchronized(lock) {
+            val current = entries[reservation.digest]
+            if (current?.token == reservation.token) {
+                entries[reservation.digest] = current.copy(
+                    recordedAtMillis = nowMillis,
+                    committed = true,
+                )
+            }
+        }
+    }
+
+    fun release(reservation: Reservation) {
+        synchronized(lock) {
+            if (entries[reservation.digest]?.token == reservation.token) {
+                entries.remove(reservation.digest)
+            }
+        }
+    }
+
+    private fun removeExpiredCommitted(nowMillis: Long) {
+        entries.entries.removeAll { (_, entry) ->
+            entry.committed &&
+                nowMillis >= entry.recordedAtMillis &&
+                nowMillis - entry.recordedAtMillis >= windowMillis
         }
     }
 
@@ -76,8 +118,15 @@ class RecognitionDebouncer(
 
     private companion object {
         const val DEFAULT_WINDOW_MILLIS = 1_000L
+        const val DEFAULT_MAX_ENTRIES = 128
         val WHITESPACE = Regex("\\s+")
     }
+
+    private data class Entry(
+        val token: Long,
+        val recordedAtMillis: Long,
+        val committed: Boolean,
+    )
 }
 
 class AutoPageRecognitionController internal constructor(
@@ -110,16 +159,42 @@ class AutoPageRecognitionController internal constructor(
     suspend fun onWindowChanged(snapshot: PageSnapshot) {
         val parser = parserFor(snapshot.packageName) ?: return
         if (!isEnabled(snapshot.packageName.orEmpty())) return
-        if (!debouncer.shouldProcess(snapshot, elapsedRealtimeMillis())) return
-
-        when (val parsed = parser.parse(snapshot)) {
-            is ExtractionOutcome.Single -> candidateProcessor.process(parsed.candidate)
-            is ExtractionOutcome.Multiple -> parsed.options.forEach { candidateProcessor.process(it) }
-            is ExtractionOutcome.Rejected -> if (
-                parsed.reason == RecognitionRejectReason.INCOMPLETE_FIELDS
-            ) {
-                processSingleOcrFallback(snapshot, parser)
+        val parsed = parser.parse(snapshot)
+        if (
+            parsed is ExtractionOutcome.Rejected &&
+            parsed.reason == RecognitionRejectReason.NOT_PAYMENT_PAGE
+        ) {
+            return
+        }
+        val reservation = debouncer.reserve(snapshot, elapsedRealtimeMillis()) ?: return
+        var terminal = false
+        try {
+            terminal = processSignedPage(parsed, snapshot, parser)
+        } finally {
+            if (terminal) {
+                debouncer.commit(reservation, elapsedRealtimeMillis())
+            } else {
+                debouncer.release(reservation)
             }
+        }
+    }
+
+    private suspend fun processSignedPage(
+        parsed: ExtractionOutcome,
+        snapshot: PageSnapshot,
+        parser: PaymentPageParser,
+    ): Boolean = when (parsed) {
+        is ExtractionOutcome.Single -> candidateProcessor.process(parsed.candidate).isTerminal()
+        is ExtractionOutcome.Multiple -> {
+            parsed.options.forEach { candidateProcessor.process(it).isTerminal() }
+            true
+        }
+        is ExtractionOutcome.Rejected -> if (
+            parsed.reason == RecognitionRejectReason.INCOMPLETE_FIELDS
+        ) {
+            processSingleOcrFallback(snapshot, parser)
+        } else {
+            true
         }
     }
 
@@ -134,24 +209,28 @@ class AutoPageRecognitionController internal constructor(
     private suspend fun processSingleOcrFallback(
         original: PageSnapshot,
         parser: PaymentPageParser,
-    ) {
-        when (val captured = captureGateway.capture()) {
+    ): Boolean = when (val captured = captureGateway.capture()) {
             is CaptureResult.Success -> processCapturedBitmap(captured, original, parser)
-            is CaptureResult.Failure -> diagnostics.record(captured.reason.toDiagnostic())
-            CaptureResult.RequiresSystemConsent -> diagnostics.record(RecognitionDiagnostic.PERMISSION_MISSING)
+            is CaptureResult.Failure -> {
+                diagnostics.record(captured.reason.toDiagnostic())
+                false
+            }
+            CaptureResult.RequiresSystemConsent -> {
+                diagnostics.record(RecognitionDiagnostic.PERMISSION_MISSING)
+                false
+            }
         }
-    }
 
     private suspend fun processCapturedBitmap(
         captured: CaptureResult.Success,
         original: PageSnapshot,
         parser: PaymentPageParser,
-    ) {
+    ): Boolean {
         val bitmap = captured.bitmap
         try {
             if (captured.foregroundPackage != original.packageName) {
                 diagnostics.record(RecognitionDiagnostic.CAPTURE_FAILED)
-                return
+                return false
             }
             val elements = try {
                 textRecognizer.recognize(bitmap)
@@ -159,17 +238,21 @@ class AutoPageRecognitionController internal constructor(
                 throw cancellation
             } catch (_: Exception) {
                 diagnostics.record(RecognitionDiagnostic.OCR_FAILED)
-                return
+                return false
             }
             val ocrSnapshot = PageSnapshot(
                 packageName = original.packageName,
                 elements = elements,
                 observedAt = original.observedAt,
             )
-            when (val parsed = parser.parse(ocrSnapshot)) {
-                is ExtractionOutcome.Single -> candidateProcessor.process(parsed.candidate)
-                is ExtractionOutcome.Multiple -> parsed.options.forEach { candidateProcessor.process(it) }
-                is ExtractionOutcome.Rejected -> Unit
+            return when (val parsed = parser.parse(ocrSnapshot)) {
+                is ExtractionOutcome.Single -> candidateProcessor.process(parsed.candidate).isTerminal()
+                is ExtractionOutcome.Multiple -> {
+                    parsed.options.forEach { candidateProcessor.process(it).isTerminal() }
+                    true
+                }
+                is ExtractionOutcome.Rejected ->
+                    parsed.reason == RecognitionRejectReason.CONFLICTING_DIRECTION
             }
         } finally {
             if (!bitmap.isRecycled) bitmap.recycle()
@@ -185,6 +268,14 @@ class AutoPageRecognitionController internal constructor(
     private fun CaptureFailure.toDiagnostic(): RecognitionDiagnostic = when (this) {
         CaptureFailure.NO_ACCESSIBILITY_ACCESS -> RecognitionDiagnostic.PERMISSION_MISSING
         else -> RecognitionDiagnostic.CAPTURE_FAILED
+    }
+
+    private fun RecognitionOutcome.isTerminal(): Boolean = when (this) {
+        is RecognitionOutcome.Saved,
+        is RecognitionOutcome.NeedsSelection,
+        RecognitionOutcome.Duplicate,
+        is RecognitionOutcome.Rejected,
+        -> true
     }
 
     companion object {

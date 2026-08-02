@@ -27,6 +27,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 class PaymentPageAccessibilityService : AccessibilityService() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val captureGateway = AccessibilityCaptureGateway()
+    private val packageGuard = ActiveWindowPackageGuard(ALLOWED_PACKAGES)
     private var controller: AutoPageRecognitionController? = null
     private var textRecognizer: MlKitTextRecognizer? = null
 
@@ -107,7 +108,42 @@ class PaymentPageAccessibilityService : AccessibilityService() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             return CaptureResult.RequiresSystemConsent
         }
-        return AccessibilityScreenshotApi30.take(this) { foregroundPackage }
+        val reservation = packageGuard.reserve(
+            cachedPackage = foregroundPackage,
+            livePackage = activeWindowPackage(),
+        ) ?: return CaptureResult.Failure(CaptureFailure.INVALID_DISPLAY)
+        return AccessibilityScreenshotApi30.take(
+            service = this,
+            packageName = reservation.packageName,
+            validateDelivery = { captured ->
+                packageGuard.validateDelivery(
+                    captured = captured,
+                    reservation = reservation,
+                    livePackage = activeWindowPackage(),
+                )
+            },
+        )
+    }
+
+    private fun activeWindowPackage(): String? {
+        val root = try {
+            rootInActiveWindow
+        } catch (_: Exception) {
+            null
+        } ?: return null
+        var packageName: String? = null
+        try {
+            packageName = root.packageName?.toString()
+        } catch (_: Exception) {
+            Unit
+        } finally {
+            try {
+                AccessibilitySnapshotFactory.release(root)
+            } catch (_: Exception) {
+                Unit
+            }
+        }
+        return packageName
     }
 
     private companion object {
@@ -126,7 +162,8 @@ class PaymentPageAccessibilityService : AccessibilityService() {
 private object AccessibilityScreenshotApi30 {
     suspend fun take(
         service: AccessibilityService,
-        foregroundPackage: () -> String?,
+        packageName: String,
+        validateDelivery: (CaptureResult) -> CaptureResult,
     ): CaptureResult = suspendCancellableCoroutine { continuation ->
         try {
             service.takeScreenshot(
@@ -134,8 +171,9 @@ private object AccessibilityScreenshotApi30 {
                 service.mainExecutor,
                 object : AccessibilityService.TakeScreenshotCallback {
                     override fun onSuccess(screenshot: AccessibilityService.ScreenshotResult) {
+                        val captured = screenshot.toSoftwareCapture(packageName)
                         continuation.resumeCapture(
-                            screenshot.toSoftwareCapture(foregroundPackage()),
+                            validateDelivery(captured),
                         )
                     }
 
