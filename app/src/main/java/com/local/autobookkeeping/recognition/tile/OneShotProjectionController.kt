@@ -58,6 +58,7 @@ internal class OneShotProjectionController(
     private val processingJob = AtomicReference<Job?>()
     private val finishedCallbackSent = AtomicBoolean(false)
     private val pendingSetupFrame = AtomicReference<ProjectionFrame?>()
+    private val setupOwnershipLock = Any()
 
     fun start(grant: ProjectionGrant): Boolean {
         if (!state.compareAndSet(CaptureState.NEW, CaptureState.SETTING_UP)) return false
@@ -74,13 +75,26 @@ internal class OneShotProjectionController(
             )
             if (setupStopIsPending()) return finishSetupWithoutWaiting()
             opened.createVirtualDisplay()
-            if (setupStopIsPending()) return finishSetupWithoutWaiting()
-            if (state.compareAndSet(CaptureState.SETTING_UP, CaptureState.WAITING)) {
+            var pendingFrame: ProjectionFrame? = null
+            val setupCompleted = synchronized(setupOwnershipLock) {
+                if (state.get() != CaptureState.SETTING_UP) {
+                    false
+                } else {
+                    pendingFrame = pendingSetupFrame.getAndSet(null)
+                    state.set(
+                        if (pendingFrame == null) CaptureState.WAITING else CaptureState.COPYING,
+                    )
+                    true
+                }
+            }
+            if (setupCompleted) {
                 readyToWait = true
-                val scheduled = timeoutScheduler.schedule(timeoutMillis, ::onWaitingTimeout)
-                timeout.set(scheduled)
-                if (state.get() != CaptureState.WAITING) scheduled.cancelSafely()
-                pendingSetupFrame.getAndSet(null)?.let { onFrameAvailable(opened, it) }
+                val claimedPendingFrame = pendingFrame
+                if (claimedPendingFrame == null) {
+                    armWaitingTimeout()
+                } else {
+                    copyClaimedFrame(claimedPendingFrame)
+                }
             }
         } catch (_: Exception) {
             return finishSetupWithoutWaiting()
@@ -117,7 +131,7 @@ internal class OneShotProjectionController(
                     return
                 }
                 CaptureState.SETTING_UP -> {
-                    if (state.compareAndSet(CaptureState.SETTING_UP, CaptureState.SETUP_STOP_PENDING)) return
+                    if (requestSetupStop()) return
                 }
                 CaptureState.SETUP_STOP_PENDING -> return
                 CaptureState.FINISHED -> return
@@ -140,18 +154,18 @@ internal class OneShotProjectionController(
             if (state.get() == CaptureState.WAITING) stop()
             return
         } ?: return
-        onFrameAvailable(activeResources, image)
+        onFrameAvailable(image)
     }
 
-    private fun onFrameAvailable(activeResources: ProjectionCaptureResources, image: ProjectionFrame) {
-        if (setupIsInProgress()) {
-            stashSetupFrame(activeResources, image)
-            return
+    private fun onFrameAvailable(image: ProjectionFrame) {
+        when (claimFrame(image)) {
+            FrameClaim.STASHED -> Unit
+            FrameClaim.CLAIMED -> copyClaimedFrame(image)
+            FrameClaim.CLOSE -> image.closeSafely()
         }
-        if (!state.compareAndSet(CaptureState.WAITING, CaptureState.COPYING)) {
-            image.closeSafely()
-            return
-        }
+    }
+
+    private fun copyClaimedFrame(image: ProjectionFrame) {
         cancelWaitingTimeout()
         var bitmap: Bitmap? = null
         try {
@@ -174,17 +188,22 @@ internal class OneShotProjectionController(
         }
     }
 
-    private fun stashSetupFrame(activeResources: ProjectionCaptureResources, image: ProjectionFrame) {
-        if (!pendingSetupFrame.compareAndSet(null, image)) {
-            image.closeSafely()
-            return
-        }
+    private fun claimFrame(image: ProjectionFrame): FrameClaim = synchronized(setupOwnershipLock) {
         when (state.get()) {
+            CaptureState.SETTING_UP,
+            CaptureState.SETUP_STOP_PENDING,
+            -> if (pendingSetupFrame.compareAndSet(null, image)) {
+                FrameClaim.STASHED
+            } else {
+                FrameClaim.CLOSE
+            }
             CaptureState.WAITING ->
-                if (pendingSetupFrame.compareAndSet(image, null)) onFrameAvailable(activeResources, image)
-            CaptureState.FINISHED ->
-                if (pendingSetupFrame.compareAndSet(image, null)) image.closeSafely()
-            else -> Unit
+                if (state.compareAndSet(CaptureState.WAITING, CaptureState.COPYING)) {
+                    FrameClaim.CLAIMED
+                } else {
+                    FrameClaim.CLOSE
+                }
+            else -> FrameClaim.CLOSE
         }
     }
 
@@ -251,13 +270,35 @@ internal class OneShotProjectionController(
         timeout.getAndSet(null)?.cancelSafely()
     }
 
+    private fun armWaitingTimeout() {
+        val scheduled = timeoutScheduler.schedule(timeoutMillis, ::onWaitingTimeout)
+        timeout.set(scheduled)
+        if (state.get() != CaptureState.WAITING) cancelWaitingTimeout()
+    }
+
     private fun finishSetupWithoutWaiting(): Boolean {
-        pendingSetupFrame.getAndSet(null)?.closeSafely()
-        state.set(CaptureState.FINISHED)
+        val pendingFrame = synchronized(setupOwnershipLock) {
+            state.set(CaptureState.FINISHED)
+            pendingSetupFrame.getAndSet(null)
+        }
+        pendingFrame?.closeSafely()
         cancelWaitingTimeout()
         closeCaptureResources()
         notifyFinished()
         return false
+    }
+
+    private fun requestSetupStop(): Boolean = synchronized(setupOwnershipLock) {
+        when (state.get()) {
+            CaptureState.SETTING_UP -> {
+                state.set(CaptureState.SETUP_STOP_PENDING)
+                true
+            }
+            CaptureState.SETUP_STOP_PENDING,
+            CaptureState.FINISHED,
+            -> true
+            else -> false
+        }
     }
 
     private fun setupIsInProgress(): Boolean = when (state.get()) {
@@ -308,5 +349,11 @@ internal class OneShotProjectionController(
         PROCESSING,
         STOP_DURING_PROCESSING,
         FINISHED,
+    }
+
+    private enum class FrameClaim {
+        STASHED,
+        CLAIMED,
+        CLOSE,
     }
 }

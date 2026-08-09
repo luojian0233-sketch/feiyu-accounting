@@ -141,3 +141,24 @@ AndroidTest 编译仍显示仓库既有 Compose test v1 deprecation 警告；APK
 - Static check: `git diff --check` completed with exit code 0. The controller was also manually checked for every `CaptureState` branch and for the setup-to-waiting/frame handoff race.
 - Dynamic Round 3 verification was **not run to completion**. In this managed sandbox Gradle fails during configuration because Java ZipFS cannot close a Gradle distribution JAR (`java.nio.file.AccessDeniedException`); an earlier wrapper attempt also failed while downloading with `java.net.SocketException: Permission denied: getsockopt`. No Gradle command reached test execution, so this report does not claim GREEN.
 - Round 2's historical baseline reported 355 JVM tests, `compileDebugAndroidTestKotlin`, and `assembleDebug` as successful. Those results predate Round 3 and do not verify these changes.
+
+## Round 4 independent-review repair
+
+### Deterministic regression coverage
+
+- Added a blocked-close setup-failure regression. A setup-pending first frame blocks in `close()` after cleanup detaches it; a second callback then arrives in the former `SETTING_UP -> FINISHED` gap. The test requires both frames to close, zero copies/process calls, and exactly-once session cleanup.
+- Added a setup-success handoff regression. A first frame is retained while VirtualDisplay creation is blocked, while the timeout scheduler hook emits a second frame if setup exposes `WAITING`. The test requires the first frame to be processed, the second to close without copying, and zero waiting-timeout schedules when a pending first frame exists.
+- Preserved all prior Round 3 stop-before-start, blocked callback registration, blocked VirtualDisplay creation, pending-frame stop/failure, and setup-exception regressions.
+
+### Production change
+
+- Added a short setup-ownership lock shared by setup completion/failure, setup stop publication, and frame stash/claim. Publishing `FINISHED` and detaching the pending frame now happen in one boundary; a callback entering afterward observes `FINISHED` and closes its own frame.
+- Successful setup now detaches any pending first frame and publishes `COPYING` in the same boundary. It copies that claimed frame outside the lock and never exposes `WAITING` or arms a waiting timeout for this path.
+- Setup publishes `WAITING` and schedules a timeout only when no pending frame exists. After the scheduler returns, the handle is published and immediately removed/cancelled if a frame or stop already moved the state away from `WAITING`.
+- Android/framework calls, timeout scheduling, bitmap copying, frame closing, and resource cleanup remain outside the setup-ownership lock.
+
+### Round 4 verification status
+
+- Static verification: `git diff --check` completed with exit code 0. A line-by-line state/lock audit confirmed that every pending-frame access participating in setup ownership is under the same lock and that no resource/framework/close operation runs while it is held.
+- Dynamic Round 4 tests were **not executed**. Per the managed-sandbox handoff, Gradle is known to fail during configuration in Java ZipFS with `AccessDeniedException`; this round did not retry Gradle, download artifacts, or request elevated permissions. This report therefore does not claim a dynamic GREEN result.
+- Round 2's historical baseline reported 355 JVM tests, `compileDebugAndroidTestKotlin`, and `assembleDebug` as successful. That baseline predates and does not cover either Round 3 or Round 4.

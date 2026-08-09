@@ -471,6 +471,85 @@ class OneShotProjectionControllerTest {
     }
 
     @Test
+    fun `frame arriving while failed setup closes detached pending frame is also closed`() = runTest {
+        val resources = FakeProjectionResources(
+            blockDisplayCreation = true,
+            failDisplayAfterBlock = true,
+        )
+        val processCalls = AtomicInteger(0)
+        val controller = controller(resources) { processCalls.incrementAndGet() }
+        val first = BlockingCloseProjectionFrame(bitmap())
+        val second = FakeProjectionFrame(bitmap())
+        var startResult = true
+
+        val starter = thread(name = "frame-during-failed-setup-cleanup") {
+            startResult = controller.start(grant())
+        }
+        assertTrue(resources.displayCreationEntered.await(5, TimeUnit.SECONDS))
+        resources.emit(first)
+        resources.releaseDisplayCreation.countDown()
+        assertTrue(first.closeStarted.await(5, TimeUnit.SECONDS))
+
+        resources.emit(second)
+        first.releaseClose.countDown()
+        starter.join(5_000L)
+        advanceUntilIdle()
+
+        assertFalse(starter.isAlive)
+        assertFalse(startResult)
+        assertEquals(0, first.copyCalls)
+        assertEquals(0, second.copyCalls)
+        assertEquals(0, processCalls.get())
+        assertTrue(first.closed)
+        assertTrue(second.closed)
+        first.bitmap.recycle()
+        second.bitmap.recycle()
+        resources.assertAllSessionResourcesClosedExactlyOnce()
+        assertEquals(1, resources.finishedCalls)
+    }
+
+    @Test
+    fun `pending setup frame owns handoff before waiting timeout or later frame`() = runTest {
+        val resources = FakeProjectionResources(blockDisplayCreation = true)
+        val handoffStarted = CountDownLatch(1)
+        val first = BlockingProjectionFrame(bitmap(), copyStartedSignal = handoffStarted)
+        val second = FakeProjectionFrame(bitmap())
+        val processed = mutableListOf<Bitmap>()
+        val scheduler = FakeTimeoutScheduler(
+            onSchedule = {
+                resources.emit(second)
+                handoffStarted.countDown()
+            },
+        )
+        val controller = controller(resources, scheduler) { processed += it }
+
+        val starter = thread(name = "pending-frame-owns-setup-handoff") {
+            controller.start(grant())
+        }
+        assertTrue(resources.displayCreationEntered.await(5, TimeUnit.SECONDS))
+        resources.emit(first)
+        resources.releaseDisplayCreation.countDown()
+        assertTrue(handoffStarted.await(5, TimeUnit.SECONDS))
+        if (scheduler.scheduleCalls == 0) resources.emit(second)
+        first.releaseCopy.countDown()
+        starter.join(5_000L)
+        advanceUntilIdle()
+
+        assertFalse(starter.isAlive)
+        assertEquals(0, scheduler.scheduleCalls)
+        assertEquals(1, processed.size)
+        assertSame(first.bitmap, processed.single())
+        assertEquals(1, first.copyCalls)
+        assertEquals(0, second.copyCalls)
+        assertTrue(first.closed)
+        assertTrue(second.closed)
+        assertTrue(first.bitmap.isRecycled)
+        second.bitmap.recycle()
+        resources.assertAllSessionResourcesClosedExactlyOnce()
+        assertEquals(1, resources.finishedCalls)
+    }
+
+    @Test
     fun `setup exception after pending async stop still closes every resource once`() = runTest {
         val resources = FakeProjectionResources(
             blockRegistration = true,
@@ -664,13 +743,17 @@ class OneShotProjectionControllerTest {
 
     private class BlockingProjectionFrame(
         val bitmap: Bitmap,
+        private val copyStartedSignal: CountDownLatch? = null,
     ) : ProjectionFrame {
         val copyStarted = CountDownLatch(1)
         val releaseCopy = CountDownLatch(1)
         @Volatile var closed = false
+        @Volatile var copyCalls = 0
 
         override fun copyToSoftwareBitmap(): Bitmap {
+            copyCalls += 1
             copyStarted.countDown()
+            copyStartedSignal?.countDown()
             check(releaseCopy.await(5, TimeUnit.SECONDS))
             return bitmap
         }
@@ -680,13 +763,38 @@ class OneShotProjectionControllerTest {
         }
     }
 
-    private class FakeTimeoutScheduler : ProjectionTimeoutScheduler {
+    private class BlockingCloseProjectionFrame(
+        val bitmap: Bitmap,
+    ) : ProjectionFrame {
+        val closeStarted = CountDownLatch(1)
+        val releaseClose = CountDownLatch(1)
+        @Volatile var closed = false
+        @Volatile var copyCalls = 0
+
+        override fun copyToSoftwareBitmap(): Bitmap {
+            copyCalls += 1
+            return bitmap
+        }
+
+        override fun close() {
+            closeStarted.countDown()
+            check(releaseClose.await(5, TimeUnit.SECONDS))
+            closed = true
+        }
+    }
+
+    private class FakeTimeoutScheduler(
+        private val onSchedule: () -> Unit = {},
+    ) : ProjectionTimeoutScheduler {
         val timeout = FakeTimeout()
         private var action: (() -> Unit)? = null
+        @Volatile var scheduleCalls = 0
 
         override fun schedule(delayMillis: Long, action: () -> Unit): ProjectionTimeout {
             assertEquals(1_000L, delayMillis)
+            scheduleCalls += 1
             this.action = action
+            onSchedule()
             return timeout
         }
 
