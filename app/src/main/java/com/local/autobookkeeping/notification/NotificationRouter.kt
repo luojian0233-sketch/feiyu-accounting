@@ -49,10 +49,14 @@ class NotificationRouter(
     }
 
     suspend fun isSourceEnabled(packageName: String): Boolean = try {
-        when (packageName) {
-            WECHAT_PACKAGE -> settings.wechatEnabled.first()
-            ALIPAY_PACKAGE -> settings.alipayEnabled.first()
-            else -> packageName in settings.enabledBankPackages.first()
+        if (!settings.autoBookkeepingEnabled.first()) {
+            false
+        } else {
+            when (packageName) {
+                WECHAT_PACKAGE -> settings.wechatEnabled.first()
+                ALIPAY_PACKAGE -> settings.alipayEnabled.first()
+                else -> packageName in settings.enabledBankPackages.first()
+            }
         }
     } catch (cancellation: CancellationException) {
         throw cancellation

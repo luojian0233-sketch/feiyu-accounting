@@ -160,6 +160,8 @@ class EntryViewModelTest {
 
     private class FakeSettingsOperations : SettingsOperations {
         override val theme = MutableStateFlow(ThemeStyle.CLEAR_MINT)
+        override val autoBookkeepingEnabled = MutableStateFlow(false)
+        override val autoSaveHighConfidence = MutableStateFlow(true)
         override val wechatEnabled = MutableStateFlow(false)
         override val alipayEnabled = MutableStateFlow(false)
         override val enabledBankPackages = MutableStateFlow<Set<String>>(emptySet())
@@ -179,6 +181,8 @@ class EntryViewModelTest {
         override val visibleAccounts = MutableStateFlow(accounts.value.filterNot { it.hidden })
         override val transactionCount = MutableStateFlow(0)
         override suspend fun setTheme(style: ThemeStyle) = Unit
+        override suspend fun setAutoBookkeepingEnabled(enabled: Boolean) = Unit
+        override suspend fun setAutoSaveHighConfidence(enabled: Boolean) = Unit
         override suspend fun setWechatEnabled(enabled: Boolean) = Unit
         override suspend fun setAlipayEnabled(enabled: Boolean) = Unit
         override suspend fun setEnabledBankPackages(packages: Set<String>) = Unit

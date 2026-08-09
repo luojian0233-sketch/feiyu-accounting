@@ -24,8 +24,14 @@ fun interface NotificationAccessProvider {
     fun isEnabled(): Boolean
 }
 
+fun interface AccessibilityAccessProvider {
+    fun isEnabled(): Boolean
+}
+
 data class SettingsUiState(
     val theme: ThemeStyle = ThemeStyle.CLEAR_MINT,
+    val autoBookkeepingEnabled: Boolean = false,
+    val autoSaveHighConfidence: Boolean = true,
     val wechatEnabled: Boolean = false,
     val alipayEnabled: Boolean = false,
     val bankPackageDraft: String = "",
@@ -33,6 +39,8 @@ data class SettingsUiState(
     val accounts: List<AccountSetting> = emptyList(),
     val transactionCount: Int = 0,
     val notificationAccessEnabled: Boolean = false,
+    val accessibilityAccessEnabled: Boolean = false,
+    val automaticAccessMessage: String = "通知读取和页面识别服务未开启",
     val busy: Boolean = false,
     val error: String? = null,
     val backupStatus: String? = null,
@@ -45,18 +53,26 @@ data class SettingsUiState(
 class SettingsViewModel(
     private val repository: SettingsOperations,
     private val backupOperations: BackupOperations? = null,
+    private val accessibilityAccess: AccessibilityAccessProvider = AccessibilityAccessProvider {
+        false
+    },
     private val notificationAccess: NotificationAccessProvider,
 ) : ViewModel() {
-    private val mutableState = MutableStateFlow(
-        SettingsUiState(notificationAccessEnabled = notificationAccess.isEnabled()),
-    )
+    private val mutableState = MutableStateFlow(SettingsUiState())
     val state: StateFlow<SettingsUiState> = mutableState.asStateFlow()
     private val operationMutex = Mutex()
     private var bankPackagesInitialized = false
 
     init {
+        refreshAutomaticAccess()
         repository.theme.onEach { value ->
             mutableState.value = mutableState.value.copy(theme = value)
+        }.launchIn(viewModelScope)
+        repository.autoBookkeepingEnabled.onEach { value ->
+            mutableState.value = mutableState.value.copy(autoBookkeepingEnabled = value)
+        }.launchIn(viewModelScope)
+        repository.autoSaveHighConfidence.onEach { value ->
+            mutableState.value = mutableState.value.copy(autoSaveHighConfidence = value)
         }.launchIn(viewModelScope)
         repository.wechatEnabled.onEach { value ->
             mutableState.value = mutableState.value.copy(wechatEnabled = value)
@@ -84,8 +100,19 @@ class SettingsViewModel(
     }
 
     fun refreshNotificationAccess() {
+        refreshAutomaticAccess()
+    }
+
+    fun refreshAutomaticAccess() {
+        val notificationEnabled = accessEnabled(notificationAccess::isEnabled)
+        val accessibilityEnabled = accessEnabled(accessibilityAccess::isEnabled)
         mutableState.value = mutableState.value.copy(
-            notificationAccessEnabled = notificationAccess.isEnabled(),
+            notificationAccessEnabled = notificationEnabled,
+            accessibilityAccessEnabled = accessibilityEnabled,
+            automaticAccessMessage = automaticAccessMessage(
+                notificationEnabled,
+                accessibilityEnabled,
+            ),
         )
     }
 
@@ -96,6 +123,24 @@ class SettingsViewModel(
     fun reportNotificationSettingsLaunchFailure() {
         mutableState.value = mutableState.value.copy(
             error = "无法打开系统设置，请手动开启通知使用权",
+        )
+    }
+
+    fun reportAutomaticSettingsLaunchFailure() {
+        mutableState.value = mutableState.value.copy(
+            error = "无法打开系统设置，请手动检查自动记账权限",
+        )
+    }
+
+    fun reportQuickSettingsTileFailure() {
+        mutableState.value = mutableState.value.copy(
+            error = "无法添加截屏记账按钮，请在快捷设置中手动添加",
+        )
+    }
+
+    fun reportQuickSettingsTileManualInstructions() {
+        mutableState.value = mutableState.value.copy(
+            error = "请在快捷设置编辑中手动添加截屏记账按钮",
         )
     }
 
@@ -201,6 +246,14 @@ class SettingsViewModel(
 
     suspend fun setTheme(style: ThemeStyle): Result<Unit> = execute {
         repository.setTheme(style)
+    }
+
+    suspend fun setAutoBookkeepingEnabled(enabled: Boolean): Result<Unit> = execute {
+        repository.setAutoBookkeepingEnabled(enabled)
+    }
+
+    suspend fun setAutoSaveHighConfidence(enabled: Boolean): Result<Unit> = execute {
+        repository.setAutoSaveHighConfidence(enabled)
     }
 
     suspend fun setWechatEnabled(enabled: Boolean): Result<Unit> = execute {
@@ -322,6 +375,24 @@ class SettingsViewModel(
         mutableState.value = mutableState.value.copy(error = message)
         return Result.failure(IllegalArgumentException(message))
     }
+}
+
+private fun accessEnabled(read: () -> Boolean): Boolean = try {
+    read()
+} catch (_: SecurityException) {
+    false
+} catch (_: RuntimeException) {
+    false
+}
+
+private fun automaticAccessMessage(
+    notificationEnabled: Boolean,
+    accessibilityEnabled: Boolean,
+): String = when {
+    notificationEnabled && accessibilityEnabled -> "自动识别权限已开启"
+    notificationEnabled -> "页面识别服务未开启"
+    accessibilityEnabled -> "通知读取权限未开启"
+    else -> "通知读取和页面识别服务未开启"
 }
 
 class SettingsOperationInProgressException : IllegalStateException("正在处理，请稍候")

@@ -24,7 +24,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 
@@ -51,15 +50,7 @@ class PaymentPageAccessibilityService : AccessibilityService() {
         val gateway = graph.accessibilityCaptureGateway
         captureGateway = gateway
         controller = AutoPageRecognitionController(
-            settings = AutomaticPageRecognitionSettings { packageName ->
-                when (packageName) {
-                    AutoPageRecognitionController.WECHAT_PACKAGE ->
-                        graph.settingsRepository.wechatEnabled.first()
-                    AutoPageRecognitionController.ALIPAY_PACKAGE ->
-                        graph.settingsRepository.alipayEnabled.first()
-                    else -> false
-                }
-            },
+            settings = SettingsAutomaticPageRecognitionSettings(graph.settingsRepository),
             captureGateway = gateway,
             textRecognizer = recognizer,
             coordinator = graph.recognitionCoordinator,

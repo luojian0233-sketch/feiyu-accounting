@@ -21,12 +21,15 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import java.io.IOException
 
 interface NotificationSourceSettings {
+    val autoBookkeepingEnabled: Flow<Boolean>
     val wechatEnabled: Flow<Boolean>
     val alipayEnabled: Flow<Boolean>
     val enabledBankPackages: Flow<Set<String>>
@@ -49,6 +52,7 @@ data class AccountSetting(
 
 interface SettingsOperations : NotificationSourceSettings {
     val theme: Flow<ThemeStyle>
+    val autoSaveHighConfidence: Flow<Boolean>
     val categories: Flow<List<CategorySetting>>
     val visibleCategories: Flow<List<CategorySetting>>
     val accounts: Flow<List<AccountSetting>>
@@ -56,6 +60,8 @@ interface SettingsOperations : NotificationSourceSettings {
     val transactionCount: Flow<Int>
 
     suspend fun setTheme(style: ThemeStyle)
+    suspend fun setAutoBookkeepingEnabled(enabled: Boolean)
+    suspend fun setAutoSaveHighConfidence(enabled: Boolean)
     suspend fun setWechatEnabled(enabled: Boolean)
     suspend fun setAlipayEnabled(enabled: Boolean)
     suspend fun setEnabledBankPackages(packages: Set<String>)
@@ -74,7 +80,10 @@ class SettingsValidationException(message: String) : IllegalArgumentException(me
 
 internal interface SettingsPreferenceStore : NotificationSourceSettings {
     val theme: Flow<ThemeStyle>
+    val autoSaveHighConfidence: Flow<Boolean>
     suspend fun setTheme(style: ThemeStyle)
+    suspend fun setAutoBookkeepingEnabled(enabled: Boolean)
+    suspend fun setAutoSaveHighConfidence(enabled: Boolean)
     suspend fun setWechatEnabled(enabled: Boolean)
     suspend fun setAlipayEnabled(enabled: Boolean)
     suspend fun setEnabledBankPackages(packages: Set<String>)
@@ -127,6 +136,8 @@ class SettingsRepository internal constructor(
         localSettings = RoomLocalSettingsStore(database),
     )
 
+    override val autoBookkeepingEnabled: Flow<Boolean> = preferences.autoBookkeepingEnabled
+    override val autoSaveHighConfidence: Flow<Boolean> = preferences.autoSaveHighConfidence
     override val wechatEnabled: Flow<Boolean> = preferences.wechatEnabled
     override val alipayEnabled: Flow<Boolean> = preferences.alipayEnabled
     override val enabledBankPackages: Flow<Set<String>> = preferences.enabledBankPackages
@@ -140,6 +151,10 @@ class SettingsRepository internal constructor(
     override val transactionCount: Flow<Int> = localSettings.transactionCount
 
     override suspend fun setTheme(style: ThemeStyle) = preferences.setTheme(style)
+    override suspend fun setAutoBookkeepingEnabled(enabled: Boolean) =
+        preferences.setAutoBookkeepingEnabled(enabled)
+    override suspend fun setAutoSaveHighConfidence(enabled: Boolean) =
+        preferences.setAutoSaveHighConfidence(enabled)
     override suspend fun setWechatEnabled(enabled: Boolean) = preferences.setWechatEnabled(enabled)
     override suspend fun setAlipayEnabled(enabled: Boolean) = preferences.setAlipayEnabled(enabled)
 
@@ -211,12 +226,18 @@ class SettingsRepository internal constructor(
 
     companion object {
         internal const val DEFAULT_SOURCE_ENABLED = false
+        internal const val DEFAULT_AUTO_SAVE_HIGH_CONFIDENCE = true
     }
 }
 
 private class DataStoreSettingsPreferenceStore(
     private val dataStore: DataStore<Preferences>,
 ) : SettingsPreferenceStore {
+    override val autoBookkeepingEnabled: Flow<Boolean> = migratedAutoBookkeepingSetting()
+    override val autoSaveHighConfidence: Flow<Boolean> = booleanSetting(
+        AUTO_SAVE_HIGH_CONFIDENCE,
+        SettingsRepository.DEFAULT_AUTO_SAVE_HIGH_CONFIDENCE,
+    )
     override val wechatEnabled: Flow<Boolean> = booleanSetting(WECHAT_ENABLED)
     override val alipayEnabled: Flow<Boolean> = booleanSetting(ALIPAY_ENABLED)
     override val enabledBankPackages: Flow<Set<String>> = recoverPreferenceReads(dataStore.data)
@@ -234,6 +255,10 @@ private class DataStoreSettingsPreferenceStore(
 
     override suspend fun setWechatEnabled(enabled: Boolean) = setBoolean(WECHAT_ENABLED, enabled)
     override suspend fun setAlipayEnabled(enabled: Boolean) = setBoolean(ALIPAY_ENABLED, enabled)
+    override suspend fun setAutoBookkeepingEnabled(enabled: Boolean) =
+        setBoolean(AUTO_BOOKKEEPING_ENABLED, enabled)
+    override suspend fun setAutoSaveHighConfidence(enabled: Boolean) =
+        setBoolean(AUTO_SAVE_HIGH_CONFIDENCE, enabled)
 
     override suspend fun setEnabledBankPackages(packages: Set<String>) {
         dataStore.edit { preferences -> preferences[ENABLED_BANK_PACKAGES] = packages }
@@ -243,16 +268,37 @@ private class DataStoreSettingsPreferenceStore(
         dataStore.edit { preferences -> preferences[THEME_STYLE] = style.name }
     }
 
-    private fun booleanSetting(key: Preferences.Key<Boolean>): Flow<Boolean> =
+    private fun booleanSetting(
+        key: Preferences.Key<Boolean>,
+        default: Boolean = SettingsRepository.DEFAULT_SOURCE_ENABLED,
+    ): Flow<Boolean> =
         recoverPreferenceReads(dataStore.data)
-        .map { preferences -> preferences[key] ?: SettingsRepository.DEFAULT_SOURCE_ENABLED }
+        .map { preferences -> preferences[key] ?: default }
         .distinctUntilChanged()
+
+    private fun migratedAutoBookkeepingSetting(): Flow<Boolean> = flow {
+        val initial = recoverPreferenceReads(dataStore.data).first()
+        if (!initial.contains(AUTO_BOOKKEEPING_ENABLED)) {
+            dataStore.edit { latest ->
+                if (!latest.contains(AUTO_BOOKKEEPING_ENABLED)) {
+                    latest[AUTO_BOOKKEEPING_ENABLED] = latest[WECHAT_ENABLED] == true ||
+                        latest[ALIPAY_ENABLED] == true ||
+                        sanitizeBankPackages(
+                            latest[ENABLED_BANK_PACKAGES].orEmpty(),
+                        ).isNotEmpty()
+                }
+            }
+        }
+        emitAll(booleanSetting(AUTO_BOOKKEEPING_ENABLED))
+    }.distinctUntilChanged()
 
     private suspend fun setBoolean(key: Preferences.Key<Boolean>, enabled: Boolean) {
         dataStore.edit { preferences -> preferences[key] = enabled }
     }
 
     private companion object {
+        val AUTO_BOOKKEEPING_ENABLED = booleanPreferencesKey("auto_bookkeeping_enabled")
+        val AUTO_SAVE_HIGH_CONFIDENCE = booleanPreferencesKey("auto_save_high_confidence")
         val WECHAT_ENABLED = booleanPreferencesKey("wechat_enabled")
         val ALIPAY_ENABLED = booleanPreferencesKey("alipay_enabled")
         val ENABLED_BANK_PACKAGES = stringSetPreferencesKey("enabled_bank_packages")

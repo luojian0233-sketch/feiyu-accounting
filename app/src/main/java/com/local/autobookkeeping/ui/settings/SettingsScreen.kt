@@ -1,5 +1,7 @@
 package com.local.autobookkeeping.ui.settings
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -35,11 +37,16 @@ import com.local.autobookkeeping.ui.theme.ThemeStyle
 fun SettingsScreen(
     state: SettingsUiState,
     onThemeSelected: (ThemeStyle) -> Unit,
+    onAutoChanged: (Boolean) -> Unit = {},
     onWechatChanged: (Boolean) -> Unit,
     onAlipayChanged: (Boolean) -> Unit,
+    onAutoSaveChanged: (Boolean) -> Unit = {},
     onBankDraftChanged: (String) -> Unit,
     onSaveBankPackages: () -> Unit,
     onOpenNotificationAccess: () -> Unit,
+    onOpenAccessibility: () -> Unit = {},
+    onAddQuickSettingsTile: () -> Unit = {},
+    onOpenBatteryOptimization: () -> Unit = {},
     onAddCategory: (String) -> Unit,
     onRenameCategory: (Long, String) -> Unit,
     onMoveCategory: (Long, Int) -> Unit,
@@ -62,6 +69,27 @@ fun SettingsScreen(
     var newAccount by rememberSaveable { mutableStateOf("") }
     var categoryToRename by rememberSaveable { mutableStateOf<Long?>(null) }
     var accountToRename by rememberSaveable { mutableStateOf<Long?>(null) }
+    var showAutomaticSettings by rememberSaveable { mutableStateOf(false) }
+
+    BackHandler(enabled = showAutomaticSettings) {
+        showAutomaticSettings = false
+    }
+    if (showAutomaticSettings) {
+        AutomaticBookkeepingSettingsScreen(
+            state = state,
+            onBack = { showAutomaticSettings = false },
+            onAutoChanged = onAutoChanged,
+            onWechatChanged = onWechatChanged,
+            onAlipayChanged = onAlipayChanged,
+            onAutoSaveChanged = onAutoSaveChanged,
+            onOpenNotificationAccess = onOpenNotificationAccess,
+            onOpenAccessibility = onOpenAccessibility,
+            onAddQuickSettingsTile = onAddQuickSettingsTile,
+            onOpenBatteryOptimization = onOpenBatteryOptimization,
+            modifier = modifier,
+        )
+        return
+    }
 
     LazyColumn(
         modifier = modifier
@@ -94,11 +122,30 @@ fun SettingsScreen(
             }
         }
         item {
+            AppSectionCard(
+                modifier = Modifier
+                    .testTag("automatic-bookkeeping-entry")
+                    .clickable { showAutomaticSettings = true },
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        SectionTitle("自动记账")
+                        Text(
+                            state.automaticAccessMessage,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    Text("›", style = MaterialTheme.typography.titleMedium)
+                }
+            }
+        }
+        item {
             AppSectionCard {
-                SectionTitle("自动记账来源")
-                ToggleRow("微信支付通知", state.wechatEnabled, !state.busy, onWechatChanged)
-                AppSeparator(Modifier.padding(vertical = 6.dp))
-                ToggleRow("支付宝通知", state.alipayEnabled, !state.busy, onAlipayChanged)
+                SectionTitle("银行通知来源")
                 OutlinedTextField(
                     value = state.bankPackageDraft,
                     onValueChange = onBankDraftChanged,
@@ -113,22 +160,10 @@ fun SettingsScreen(
                     enabled = !state.busy,
                     modifier = Modifier.padding(top = 8.dp),
                 ) { Text("保存银行白名单") }
-            }
-        }
-        item {
-            AppSectionCard {
-                SectionTitle("通知读取权限")
                 Text(
-                    if (state.notificationAccessEnabled) "已开启" else "未开启",
-                    color = if (state.notificationAccessEnabled) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.error
-                    },
+                    "由自动记账总开关统一控制。",
+                    style = MaterialTheme.typography.bodySmall,
                 )
-                OutlinedButton(onClick = onOpenNotificationAccess) {
-                    Text("打开系统通知使用权设置")
-                }
             }
         }
         item {

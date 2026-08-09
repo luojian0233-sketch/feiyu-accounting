@@ -5,6 +5,7 @@ import com.local.autobookkeeping.data.SettingsRepository
 import java.time.Instant
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -99,6 +100,23 @@ class NotificationAccessTest {
     }
 
     @Test
+    fun `disabled master switch ignores enabled source before parsing`() = runTest {
+        var parseCalls = 0
+        val parser = PaymentParser {
+            parseCalls++
+            candidate(it)
+        }
+        val router = NotificationRouter(
+            settings = FakeSettingsRepository(automatic = false, wechat = true),
+            wechatParser = parser,
+            alipayParser = parser,
+        )
+
+        assertNull(router.route(notification(WECHAT_PACKAGE)))
+        assertEquals(0, parseCalls)
+    }
+
+    @Test
     fun `wechat and alipay defaults are explicit and bank allowlist is empty`() = runTest {
         val settings = FakeSettingsRepository()
 
@@ -180,6 +198,31 @@ class NotificationAccessTest {
         }
     }
 
+    @Test
+    fun `master settings cancellation propagates and ordinary failure is fail closed`() = runTest {
+        fun settings(master: Flow<Boolean>) = object : NotificationSourceSettings {
+            override val autoBookkeepingEnabled = master
+            override val wechatEnabled = MutableStateFlow(true)
+            override val alipayEnabled = MutableStateFlow(true)
+            override val enabledBankPackages = MutableStateFlow<Set<String>>(emptySet())
+        }
+
+        val cancelled = NotificationRouter(
+            settings(flow { throw CancellationException("cancel") }),
+        )
+        assertThrows<CancellationException> {
+            kotlinx.coroutines.runBlocking { cancelled.isSourceEnabled(WECHAT_PACKAGE) }
+        }
+
+        val diagnostics = InMemoryNotificationDiagnostics()
+        val failed = NotificationRouter(
+            settings = settings(flow { throw IllegalStateException("private setting") }),
+            diagnostics = diagnostics,
+        )
+        assertFalse(failed.isSourceEnabled(WECHAT_PACKAGE))
+        assertEquals(NotificationDiagnostic.SETTINGS_FAILURE, diagnostics.state.value)
+    }
+
     private fun notification(packageName: String) = NotificationText(
         title = "private title",
         body = "private body",
@@ -197,10 +240,12 @@ class NotificationAccessTest {
     )
 
     private class FakeSettingsRepository(
+        automatic: Boolean = true,
         wechat: Boolean = false,
         alipay: Boolean = false,
         banks: Set<String> = emptySet(),
     ) : NotificationSourceSettings {
+        override val autoBookkeepingEnabled = MutableStateFlow(automatic)
         override val wechatEnabled = MutableStateFlow(wechat)
         override val alipayEnabled = MutableStateFlow(alipay)
         override val enabledBankPackages = MutableStateFlow(banks)

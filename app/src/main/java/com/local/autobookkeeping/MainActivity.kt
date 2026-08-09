@@ -21,6 +21,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -60,6 +61,7 @@ import com.local.autobookkeeping.ui.settings.SettingsUiState
 import com.local.autobookkeeping.ui.settings.SettingsViewModel
 import com.local.autobookkeeping.ui.theme.AutoBookkeepingTheme
 import com.local.autobookkeeping.ui.theme.ThemeStyle
+import com.local.autobookkeeping.recognition.tile.TileAddResult
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -88,6 +90,7 @@ fun AutoBookkeepingRoot(
     val current = navigator.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val automaticAccess = remember(context) { AutomaticBookkeepingAccess(context) }
     val homeViewModel = viewModel {
         HomeViewModel(
             repository = repository,
@@ -128,7 +131,8 @@ fun AutoBookkeepingRoot(
         viewModel<SettingsViewModel> {
             SettingsViewModel(
                 repository = settings,
-                notificationAccess = { notificationPermission.isEnabled() },
+                notificationAccess = automaticAccess::isNotificationAccessEnabled,
+                accessibilityAccess = automaticAccess::isAccessibilityAccessEnabled,
                 backupOperations = backupOperations,
             )
         }
@@ -206,7 +210,7 @@ fun AutoBookkeepingRoot(
     }
     DisposableEffect(lifecycleOwner, settingsViewModel) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) settingsViewModel?.refreshNotificationAccess()
+            if (event == Lifecycle.Event.ON_RESUME) settingsViewModel?.refreshAutomaticAccess()
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -372,13 +376,45 @@ fun AutoBookkeepingRoot(
                         SettingsScreen(
                             state = settingsState,
                             onThemeSelected = { scope.launch { settingsViewModel.setTheme(it) } },
+                            onAutoChanged = {
+                                scope.launch { settingsViewModel.setAutoBookkeepingEnabled(it) }
+                            },
                             onWechatChanged = { scope.launch { settingsViewModel.setWechatEnabled(it) } },
                             onAlipayChanged = { scope.launch { settingsViewModel.setAlipayEnabled(it) } },
+                            onAutoSaveChanged = {
+                                scope.launch { settingsViewModel.setAutoSaveHighConfidence(it) }
+                            },
                             onBankDraftChanged = settingsViewModel::updateBankPackageDraft,
                             onSaveBankPackages = { scope.launch { settingsViewModel.saveBankPackages() } },
                             onOpenNotificationAccess = {
-                                if (!openNotificationAccessSafely(AndroidNotificationSettingsLauncher(context))) {
+                                if (!automaticAccess.openNotificationAccess()) {
                                     settingsViewModel.reportNotificationSettingsLaunchFailure()
+                                }
+                            },
+                            onOpenAccessibility = {
+                                if (!automaticAccess.openAccessibilitySettings()) {
+                                    settingsViewModel.reportAutomaticSettingsLaunchFailure()
+                                }
+                            },
+                            onAddQuickSettingsTile = {
+                                val handleTileResult: (TileAddResult) -> Unit = { result ->
+                                    when (result) {
+                                        TileAddResult.Failed ->
+                                            settingsViewModel.reportQuickSettingsTileFailure()
+                                        TileAddResult.ManualInstructions ->
+                                            settingsViewModel.reportQuickSettingsTileManualInstructions()
+                                        TileAddResult.Requested,
+                                        TileAddResult.AlreadyAdded,
+                                        -> Unit
+                                    }
+                                }
+                                handleTileResult(
+                                    automaticAccess.requestAddQuickSettingsTile(handleTileResult),
+                                )
+                            },
+                            onOpenBatteryOptimization = {
+                                if (!automaticAccess.openBatteryOptimizationSettings()) {
+                                    settingsViewModel.reportAutomaticSettingsLaunchFailure()
                                 }
                             },
                             onAddCategory = { scope.launch { settingsViewModel.addCategory(it) } },

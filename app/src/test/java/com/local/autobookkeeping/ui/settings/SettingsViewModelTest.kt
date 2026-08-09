@@ -41,6 +41,45 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun `resume refresh shows missing accessibility without disabling manual bookkeeping`() {
+        var notificationEnabled = true
+        var accessibilityEnabled = false
+        val viewModel = SettingsViewModel(
+            repository = FakeSettingsOperations(),
+            notificationAccess = { notificationEnabled },
+            accessibilityAccess = { accessibilityEnabled },
+        )
+
+        viewModel.refreshAutomaticAccess()
+
+        assertTrue(viewModel.state.value.notificationAccessEnabled)
+        assertFalse(viewModel.state.value.accessibilityAccessEnabled)
+        assertEquals("页面识别服务未开启", viewModel.state.value.automaticAccessMessage)
+
+        notificationEnabled = false
+        accessibilityEnabled = true
+        viewModel.refreshAutomaticAccess()
+        assertEquals("通知读取权限未开启", viewModel.state.value.automaticAccessMessage)
+    }
+
+    @Test
+    fun `automatic master and auto save mutations are independent`() = runTest(dispatcher) {
+        val repository = FakeSettingsOperations()
+        val viewModel = SettingsViewModel(
+            repository = repository,
+            notificationAccess = { false },
+            accessibilityAccess = { false },
+        )
+
+        assertTrue(viewModel.setAutoBookkeepingEnabled(true).isSuccess)
+        assertTrue(viewModel.setAutoSaveHighConfidence(false).isSuccess)
+        testScheduler.runCurrent()
+
+        assertTrue(repository.autoBookkeepingEnabled.value)
+        assertFalse(repository.autoSaveHighConfidence.value)
+    }
+
+    @Test
     fun `bank allowlist rejects any invalid package and preserves saved values`() = runTest(dispatcher) {
         val repository = FakeSettingsOperations()
         val viewModel = SettingsViewModel(repository) { true }
@@ -148,6 +187,21 @@ class SettingsViewModelTest {
         viewModel.reportNotificationSettingsLaunchFailure()
 
         assertEquals("无法打开系统设置，请手动开启通知使用权", viewModel.state.value.error)
+    }
+
+    @Test
+    fun `automatic recovery launch failures use stable Chinese without internal detail`() {
+        val viewModel = SettingsViewModel(FakeSettingsOperations()) { false }
+
+        viewModel.reportAutomaticSettingsLaunchFailure()
+        assertEquals("无法打开系统设置，请手动检查自动记账权限", viewModel.state.value.error)
+
+        viewModel.reportQuickSettingsTileFailure()
+        assertEquals(
+            "无法添加截屏记账按钮，请在快捷设置中手动添加",
+            viewModel.state.value.error,
+        )
+        assertFalse(viewModel.state.value.error.orEmpty().contains("/data/"))
     }
 
     @Test
@@ -304,6 +358,8 @@ class SettingsViewModelTest {
         private val operationFailure: Throwable? = null,
     ) : SettingsOperations {
         override val theme = MutableStateFlow(ThemeStyle.CLEAR_MINT)
+        override val autoBookkeepingEnabled = MutableStateFlow(false)
+        override val autoSaveHighConfidence = MutableStateFlow(true)
         override val wechatEnabled = MutableStateFlow(false)
         override val alipayEnabled = MutableStateFlow(false)
         override val enabledBankPackages = MutableStateFlow<Set<String>>(emptySet())
@@ -317,6 +373,14 @@ class SettingsViewModelTest {
 
         override suspend fun setTheme(style: ThemeStyle) {
             theme.value = style
+        }
+
+        override suspend fun setAutoBookkeepingEnabled(enabled: Boolean) {
+            autoBookkeepingEnabled.value = enabled
+        }
+
+        override suspend fun setAutoSaveHighConfidence(enabled: Boolean) {
+            autoSaveHighConfidence.value = enabled
         }
 
         override suspend fun setWechatEnabled(enabled: Boolean) {

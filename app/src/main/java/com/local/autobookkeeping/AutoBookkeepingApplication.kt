@@ -21,6 +21,7 @@ import com.local.autobookkeeping.recognition.capture.AccessibilityCaptureGateway
 import com.local.autobookkeeping.recognition.capture.MlKitTextRecognizer
 import com.local.autobookkeeping.recognition.capture.ScreenshotRecognitionController
 import com.local.autobookkeeping.ui.home.NotificationPermissionProvider
+import kotlinx.coroutines.flow.first
 
 open class AutoBookkeepingApplication : Application() {
     val applicationGraph: ApplicationGraph by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
@@ -56,7 +57,9 @@ class ApplicationGraph(
     val recognitionCoordinator by lazy {
         RecognitionCoordinator(
             store = recognitionStore,
-            autoSavePolicy = AutoSavePolicy { true },
+            autoSavePolicy = AutoSavePolicy {
+                settingsRepository.autoSaveHighConfidence.first()
+            },
             diagnostics = recognitionDiagnostics,
         )
     }

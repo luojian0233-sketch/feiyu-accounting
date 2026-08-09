@@ -1,6 +1,7 @@
 package com.local.autobookkeeping.recognition.accessibility
 
 import android.graphics.Bitmap
+import com.local.autobookkeeping.data.NotificationSourceSettings
 import com.local.autobookkeeping.domain.model.RecognitionCandidate
 import com.local.autobookkeeping.domain.model.RecognitionOutcome
 import com.local.autobookkeeping.recognition.InMemoryRecognitionDiagnostics
@@ -16,6 +17,7 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -235,6 +237,20 @@ class AutoPageRecognitionControllerTest {
     }
 
     @Test
+    fun `repository adapter requires master and matching platform source`() = runTest {
+        val settings = FakeSourceSettings(automatic = false, wechat = true, alipay = true)
+        val adapter = SettingsAutomaticPageRecognitionSettings(settings)
+
+        assertTrue(!adapter.isEnabled(WECHAT_PACKAGE))
+        settings.autoBookkeepingEnabled.value = true
+        assertTrue(adapter.isEnabled(WECHAT_PACKAGE))
+        settings.wechatEnabled.value = false
+        assertTrue(!adapter.isEnabled(WECHAT_PACKAGE))
+        assertTrue(adapter.isEnabled(ALIPAY_PACKAGE))
+        assertTrue(!adapter.isEnabled("com.example.bank"))
+    }
+
+    @Test
     fun `settings read failure is fail closed and cancellation still propagates`() = runTest {
         val failureController = controller(
             recognizer = recognizer,
@@ -344,6 +360,17 @@ class AutoPageRecognitionControllerTest {
             calls += 1
             return RecognitionOutcome.Duplicate
         }
+    }
+
+    private class FakeSourceSettings(
+        automatic: Boolean,
+        wechat: Boolean,
+        alipay: Boolean,
+    ) : NotificationSourceSettings {
+        override val autoBookkeepingEnabled = MutableStateFlow(automatic)
+        override val wechatEnabled = MutableStateFlow(wechat)
+        override val alipayEnabled = MutableStateFlow(alipay)
+        override val enabledBankPackages = MutableStateFlow<Set<String>>(emptySet())
     }
 
     private companion object {

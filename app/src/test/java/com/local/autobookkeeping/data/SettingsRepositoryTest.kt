@@ -1,5 +1,9 @@
 package com.local.autobookkeeping.data
 
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.local.autobookkeeping.ui.theme.ThemeStyle
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.CancellationException
@@ -7,14 +11,85 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.first
 import androidx.datastore.preferences.core.emptyPreferences
 import java.io.IOException
+import java.nio.file.Path
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.fail
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 
 class SettingsRepositoryTest {
+    @TempDir
+    lateinit var tempDirectory: Path
+
+    @Test
+    fun `automatic settings default to off except high confidence auto save`() = runTest {
+        val repository = SettingsRepository(testDataStore("automatic-defaults.preferences_pb"))
+
+        assertFalse(repository.autoBookkeepingEnabled.first())
+        assertFalse(repository.wechatEnabled.first())
+        assertFalse(repository.alipayEnabled.first())
+        assertTrue(repository.autoSaveHighConfidence.first())
+    }
+
+    @Test
+    fun `absent total switch migrates an existing enabled source once`() = runTest {
+        val dataStore = testDataStore("automatic-migration.preferences_pb")
+        dataStore.edit { preferences ->
+            preferences[booleanPreferencesKey("wechat_enabled")] = true
+        }
+        val repository = SettingsRepository(dataStore)
+
+        assertTrue(repository.autoBookkeepingEnabled.first())
+
+        dataStore.edit { preferences ->
+            preferences[booleanPreferencesKey("wechat_enabled")] = false
+        }
+        assertTrue(repository.autoBookkeepingEnabled.first())
+    }
+
+    @Test
+    fun `explicit false total switch is never overwritten by enabled legacy source`() = runTest {
+        val dataStore = testDataStore("automatic-explicit-false.preferences_pb")
+        dataStore.edit { preferences ->
+            preferences[booleanPreferencesKey("auto_bookkeeping_enabled")] = false
+            preferences[booleanPreferencesKey("alipay_enabled")] = true
+        }
+
+        assertFalse(SettingsRepository(dataStore).autoBookkeepingEnabled.first())
+    }
+
+    @Test
+    fun `absent total switch migrates alipay and bank legacy sources`() = runTest {
+        val alipayStore = testDataStore("automatic-alipay-migration.preferences_pb")
+        alipayStore.edit { preferences ->
+            preferences[booleanPreferencesKey("alipay_enabled")] = true
+        }
+        val bankStore = testDataStore("automatic-bank-migration.preferences_pb")
+        bankStore.edit { preferences ->
+            preferences[stringSetPreferencesKey("enabled_bank_packages")] =
+                setOf("com.example.bank")
+        }
+
+        assertTrue(SettingsRepository(alipayStore).autoBookkeepingEnabled.first())
+        assertTrue(SettingsRepository(bankStore).autoBookkeepingEnabled.first())
+    }
+
+    @Test
+    fun `automatic preferences persist repository mutations`() = runTest {
+        val dataStore = testDataStore("automatic-mutations.preferences_pb")
+        val repository = SettingsRepository(dataStore)
+
+        repository.setAutoBookkeepingEnabled(true)
+        repository.setAutoSaveHighConfidence(false)
+
+        val recreated = SettingsRepository(dataStore)
+        assertTrue(recreated.autoBookkeepingEnabled.first())
+        assertFalse(recreated.autoSaveHighConfidence.first())
+    }
+
     @Test
     fun `theme defaults to clear mint and survives repository recreation`() = runTest {
         val preferences = InMemorySettingsPreferenceStore()
@@ -188,9 +263,17 @@ class SettingsRepositoryTest {
             assertTrue(failure is T)
         }
     }
+
+    private fun kotlinx.coroutines.test.TestScope.testDataStore(fileName: String) =
+        PreferenceDataStoreFactory.create(
+            scope = backgroundScope,
+            produceFile = { tempDirectory.resolve(fileName).toFile() },
+        )
 }
 
 private class InMemorySettingsPreferenceStore : SettingsPreferenceStore {
+    override val autoBookkeepingEnabled = MutableStateFlow(false)
+    override val autoSaveHighConfidence = MutableStateFlow(true)
     override val wechatEnabled = MutableStateFlow(false)
     override val alipayEnabled = MutableStateFlow(false)
     override val enabledBankPackages = MutableStateFlow<Set<String>>(emptySet())
@@ -198,6 +281,14 @@ private class InMemorySettingsPreferenceStore : SettingsPreferenceStore {
 
     override suspend fun setWechatEnabled(enabled: Boolean) {
         wechatEnabled.value = enabled
+    }
+
+    override suspend fun setAutoBookkeepingEnabled(enabled: Boolean) {
+        autoBookkeepingEnabled.value = enabled
+    }
+
+    override suspend fun setAutoSaveHighConfidence(enabled: Boolean) {
+        autoSaveHighConfidence.value = enabled
     }
 
     override suspend fun setAlipayEnabled(enabled: Boolean) {

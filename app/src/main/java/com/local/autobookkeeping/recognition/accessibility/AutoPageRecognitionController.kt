@@ -1,5 +1,6 @@
 package com.local.autobookkeeping.recognition.accessibility
 
+import com.local.autobookkeeping.data.NotificationSourceSettings
 import com.local.autobookkeeping.domain.model.RecognitionCandidate
 import com.local.autobookkeeping.domain.model.RecognitionOutcome
 import com.local.autobookkeeping.domain.model.RecognitionRejectReason
@@ -18,9 +19,23 @@ import com.local.autobookkeeping.recognition.capture.CaptureResult
 import com.local.autobookkeeping.recognition.capture.LocalTextRecognizer
 import java.security.MessageDigest
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.flow.first
 
 fun interface AutomaticPageRecognitionSettings {
     suspend fun isEnabled(packageName: String): Boolean
+}
+
+class SettingsAutomaticPageRecognitionSettings(
+    private val settings: NotificationSourceSettings,
+) : AutomaticPageRecognitionSettings {
+    override suspend fun isEnabled(packageName: String): Boolean {
+        if (!settings.autoBookkeepingEnabled.first()) return false
+        return when (packageName) {
+            AutoPageRecognitionController.WECHAT_PACKAGE -> settings.wechatEnabled.first()
+            AutoPageRecognitionController.ALIPAY_PACKAGE -> settings.alipayEnabled.first()
+            else -> false
+        }
+    }
 }
 
 internal fun interface RecognitionCandidateProcessor {
