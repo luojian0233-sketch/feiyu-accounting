@@ -234,10 +234,15 @@ private class DataStoreSettingsPreferenceStore(
     private val dataStore: DataStore<Preferences>,
 ) : SettingsPreferenceStore {
     override val autoBookkeepingEnabled: Flow<Boolean> = migratedAutoBookkeepingSetting()
-    override val autoSaveHighConfidence: Flow<Boolean> = booleanSetting(
-        AUTO_SAVE_HIGH_CONFIDENCE,
-        SettingsRepository.DEFAULT_AUTO_SAVE_HIGH_CONFIDENCE,
-    )
+    override val autoSaveHighConfidence: Flow<Boolean> = dataStore.data
+        .map { preferences ->
+            preferences[AUTO_SAVE_HIGH_CONFIDENCE]
+                ?: SettingsRepository.DEFAULT_AUTO_SAVE_HIGH_CONFIDENCE
+        }
+        .catch { failure ->
+            if (failure is IOException) emit(false) else throw failure
+        }
+        .distinctUntilChanged()
     override val wechatEnabled: Flow<Boolean> = booleanSetting(WECHAT_ENABLED)
     override val alipayEnabled: Flow<Boolean> = booleanSetting(ALIPAY_ENABLED)
     override val enabledBankPackages: Flow<Set<String>> = recoverPreferenceReads(dataStore.data)

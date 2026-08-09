@@ -1,6 +1,5 @@
 package com.local.autobookkeeping
 
-import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 
@@ -20,7 +19,9 @@ internal class AndroidNotificationSettingsLauncher(
         Intent(action).resolveActivity(context.packageManager) != null
 
     override fun open(action: String) {
-        context.startActivity(Intent(action))
+        context.startActivity(
+            Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
     }
 }
 
@@ -30,16 +31,14 @@ internal fun openNotificationAccessSafely(
     for (action in listOf(NOTIFICATION_ACCESS_ACTION, GENERAL_SETTINGS_ACTION)) {
         val resolvable = try {
             launcher.canOpen(action)
-        } catch (_: SecurityException) {
+        } catch (_: RuntimeException) {
             false
         }
         if (!resolvable) continue
         try {
             launcher.open(action)
             return true
-        } catch (_: ActivityNotFoundException) {
-            // Try the general settings fallback.
-        } catch (_: SecurityException) {
+        } catch (_: RuntimeException) {
             // Try the general settings fallback.
         }
     }

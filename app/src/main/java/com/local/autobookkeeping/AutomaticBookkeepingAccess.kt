@@ -5,6 +5,7 @@ import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ResolveInfo
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
 import com.local.autobookkeeping.notification.NotificationAccess
@@ -19,25 +20,26 @@ object AccessibilityAccess {
             PaymentPageAccessibilityService::class.java,
         )
         val manager = context.getSystemService(AccessibilityManager::class.java) ?: return false
-        val enabledServices = try {
+        return isEnabled(expectedService) {
             manager.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
-                .mapNotNull { service ->
-                    service.resolveInfo?.serviceInfo?.let { info ->
-                        ComponentName(info.packageName, info.name)
-                    }
-                }
-        } catch (_: SecurityException) {
-            return false
-        } catch (_: RuntimeException) {
-            return false
+                .map { service -> service.resolveInfo }
         }
-        return isEnabled(expectedService, enabledServices)
     }
 
     internal fun isEnabled(
         expectedService: ComponentName,
-        enabledServices: List<ComponentName>,
-    ): Boolean = enabledServices.any { component -> component == expectedService }
+        enabledServices: () -> List<ResolveInfo?>,
+    ): Boolean = try {
+        enabledServices().any { resolveInfo ->
+            resolveInfo?.serviceInfo?.let { info ->
+                ComponentName.createRelative(info.packageName, info.name)
+            } == expectedService
+        }
+    } catch (_: SecurityException) {
+        false
+    } catch (_: RuntimeException) {
+        false
+    }
 }
 
 class AutomaticBookkeepingAccess(context: Context) {

@@ -1,6 +1,8 @@
 package com.local.autobookkeeping.data
 
+import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringSetPreferencesKey
@@ -89,6 +91,24 @@ class SettingsRepositoryTest {
         assertTrue(recreated.autoBookkeepingEnabled.first())
         assertFalse(recreated.autoSaveHighConfidence.first())
     }
+
+    @Test
+    fun `high confidence auto save fails closed when preference flow throws IOException`() =
+        runTest {
+            val repository = SettingsRepository(
+                object : DataStore<Preferences> {
+                    override val data = flow<Preferences> {
+                        throw IOException("unreadable preference file")
+                    }
+
+                    override suspend fun updateData(
+                        transform: suspend (t: Preferences) -> Preferences,
+                    ): Preferences = throw IOException("unreadable preference file")
+                },
+            )
+
+            assertFalse(repository.autoSaveHighConfidence.first())
+        }
 
     @Test
     fun `theme defaults to clear mint and survives repository recreation`() = runTest {

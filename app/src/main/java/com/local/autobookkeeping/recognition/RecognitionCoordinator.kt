@@ -14,11 +14,26 @@ import com.local.autobookkeeping.domain.model.Source
 import com.local.autobookkeeping.domain.model.Transaction
 import com.local.autobookkeeping.domain.model.TransactionEventKind
 import kotlin.math.max
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 fun interface AutoSavePolicy {
     suspend fun isEnabled(): Boolean
+
+    companion object {
+        fun failClosed(enabled: Flow<Boolean>): AutoSavePolicy = AutoSavePolicy {
+            try {
+                enabled.first()
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                false
+            }
+        }
+    }
 }
 
 class RecognitionCoordinator(
