@@ -300,6 +300,18 @@ class OneShotProjectionControllerTest {
     }
 
     @Test
+    fun `stop before start permanently prevents resource factory open`() = runTest {
+        val resources = FakeProjectionResources()
+        val controller = controller(resources) { error("must not process") }
+
+        controller.stop()
+
+        assertFalse(controller.start(grant()))
+        assertEquals(0, resources.factoryCalls)
+        assertEquals(1, resources.finishedCalls)
+    }
+
+    @Test
     fun `async stop while callback registration is blocked waits for publication then cleans once`() = runTest {
         val resources = FakeProjectionResources(blockRegistration = true)
         val controller = controller(resources) { error("must not process") }
@@ -347,6 +359,114 @@ class OneShotProjectionControllerTest {
         assertFalse(resources.callbackRegistered)
         resources.assertAllSessionResourcesClosedExactlyOnce()
         assertEquals(1, resources.virtualDisplayCreates)
+        assertEquals(1, resources.finishedCalls)
+    }
+
+    @Test
+    fun `frame emitted before virtual display publication waits without copying or cleanup`() = runTest {
+        val resources = FakeProjectionResources(blockDisplayCreation = true)
+        val processCalls = AtomicInteger(0)
+        val controller = controller(resources) { processCalls.incrementAndGet() }
+        val frame = FakeProjectionFrame(bitmap())
+
+        val starter = thread(name = "frame-before-virtual-display-publication") {
+            controller.start(grant())
+        }
+        assertTrue(resources.displayCreationEntered.await(5, TimeUnit.SECONDS))
+        resources.emit(frame)
+        val copyCallsBeforePublication = frame.copyCalls
+        val processCallsBeforePublication = processCalls.get()
+        val frameClosedBeforePublication = frame.closed
+        val readerClosedBeforePublication = resources.imageReaderClosed
+        val projectionStoppedBeforePublication = resources.projectionStopped
+
+        resources.releaseDisplayCreation.countDown()
+        starter.join(5_000L)
+        advanceUntilIdle()
+
+        assertFalse(starter.isAlive)
+        assertEquals(0, copyCallsBeforePublication)
+        assertEquals(0, processCallsBeforePublication)
+        assertFalse(frameClosedBeforePublication)
+        assertFalse(readerClosedBeforePublication)
+        assertFalse(projectionStoppedBeforePublication)
+        assertEquals(1, frame.copyCalls)
+        assertEquals(1, processCalls.get())
+        assertTrue(frame.closed)
+        assertTrue(frame.bitmap.isRecycled)
+        resources.assertAllSessionResourcesClosedExactlyOnce()
+        assertEquals(1, resources.finishedCalls)
+    }
+
+    @Test
+    fun `pending setup frame and stop close both frames without copying after display publication`() = runTest {
+        val resources = FakeProjectionResources(blockDisplayCreation = true)
+        val processCalls = AtomicInteger(0)
+        val controller = controller(resources) { processCalls.incrementAndGet() }
+        val first = FakeProjectionFrame(bitmap())
+        val second = FakeProjectionFrame(bitmap())
+
+        val starter = thread(name = "pending-frame-stop-before-display-publication") {
+            controller.start(grant())
+        }
+        assertTrue(resources.displayCreationEntered.await(5, TimeUnit.SECONDS))
+        resources.emit(first)
+        resources.emit(second)
+        controller.stop()
+        val firstClosedBeforePublication = first.closed
+        val secondClosedBeforePublication = second.closed
+        val readerClosedBeforePublication = resources.imageReaderClosed
+
+        resources.releaseDisplayCreation.countDown()
+        starter.join(5_000L)
+        advanceUntilIdle()
+
+        assertFalse(starter.isAlive)
+        assertFalse(firstClosedBeforePublication)
+        assertTrue(secondClosedBeforePublication)
+        assertFalse(readerClosedBeforePublication)
+        assertEquals(0, first.copyCalls)
+        assertEquals(0, second.copyCalls)
+        assertEquals(0, processCalls.get())
+        assertTrue(first.closed)
+        assertTrue(second.closed)
+        first.bitmap.recycle()
+        second.bitmap.recycle()
+        resources.assertAllSessionResourcesClosedExactlyOnce()
+        assertEquals(1, resources.finishedCalls)
+    }
+
+    @Test
+    fun `pending setup frame is closed without copying when display creation fails`() = runTest {
+        val resources = FakeProjectionResources(
+            blockDisplayCreation = true,
+            failDisplayAfterBlock = true,
+        )
+        val processCalls = AtomicInteger(0)
+        val controller = controller(resources) { processCalls.incrementAndGet() }
+        val frame = FakeProjectionFrame(bitmap())
+        var startResult = true
+
+        val starter = thread(name = "pending-frame-display-failure") {
+            startResult = controller.start(grant())
+        }
+        assertTrue(resources.displayCreationEntered.await(5, TimeUnit.SECONDS))
+        resources.emit(frame)
+        assertEquals(0, frame.copyCalls)
+        assertFalse(frame.closed)
+        assertFalse(resources.imageReaderClosed)
+
+        resources.releaseDisplayCreation.countDown()
+        starter.join(5_000L)
+        advanceUntilIdle()
+
+        assertFalse(starter.isAlive)
+        assertFalse(startResult)
+        assertEquals(0, frame.copyCalls)
+        assertEquals(0, processCalls.get())
+        assertTrue(frame.closed)
+        frame.bitmap.recycle()
+        resources.assertAllSessionResourcesClosedExactlyOnce()
         assertEquals(1, resources.finishedCalls)
     }
 
@@ -399,6 +519,7 @@ class OneShotProjectionControllerTest {
         private val blockRegistration: Boolean = false,
         private val failRegistrationAfterBlock: Boolean = false,
         private val blockDisplayCreation: Boolean = false,
+        private val failDisplayAfterBlock: Boolean = false,
     ) : ProjectionCaptureResources {
         var factoryCalls = 0
         var virtualDisplayCreates = 0
@@ -453,6 +574,7 @@ class OneShotProjectionControllerTest {
                 displayCreationEntered.countDown()
                 check(releaseDisplayCreation.await(5, TimeUnit.SECONDS))
             }
+            if (failDisplayAfterBlock) error("display setup failed after block")
             virtualDisplayPresent = true
         }
 
@@ -525,8 +647,10 @@ class OneShotProjectionControllerTest {
     ) : ProjectionFrame {
         var closeAttempted = false
         var closed = false
+        @Volatile var copyCalls = 0
 
         override fun copyToSoftwareBitmap(): Bitmap {
+            copyCalls += 1
             if (copyFailure) error("invalid plane")
             return bitmap
         }

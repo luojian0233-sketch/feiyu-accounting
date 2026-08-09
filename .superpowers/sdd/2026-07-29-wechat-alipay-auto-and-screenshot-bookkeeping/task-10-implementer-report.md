@@ -126,3 +126,18 @@ AndroidTest 编译仍显示仓库既有 Compose test v1 deprecation 警告；APK
 - `compileDebugAndroidTestKotlin`：`BUILD SUCCESSFUL`。
 - `assembleDebug`：`BUILD SUCCESSFUL`，debug APK 存在。
 - 所有 Gradle 命令均使用 `--max-workers=1` 和明确超时；未运行 connected、adb，未创建 `local.properties`。
+
+## Round 3 independent-review repair
+
+### Regression coverage and production change
+
+- Added focused `OneShotProjectionControllerTest` coverage for stop-before-start, blocking factory/callback/VirtualDisplay setup, setup-pending first-frame handoff, pending stop, second-frame closure, and setup failure.
+- `OneShotProjectionController` now atomically claims `NEW -> SETTING_UP` before any factory call. `stop()` moves setup only to `SETUP_STOP_PENDING`; setup publishes or finishes its active framework call, then closes the pending frame and every published resource exactly once.
+- A frame arriving during setup is retained only if it is the first one; later frames close immediately. Once setup reaches `WAITING`, the retained frame is handed off through the normal copy path. If a stop is pending, it is closed without copying.
+- Removed the unused `kotlinx.coroutines.delay` import from `ScreenshotCaptureActivity`.
+
+### Verification status
+
+- Static check: `git diff --check` completed with exit code 0. The controller was also manually checked for every `CaptureState` branch and for the setup-to-waiting/frame handoff race.
+- Dynamic Round 3 verification was **not run to completion**. In this managed sandbox Gradle fails during configuration because Java ZipFS cannot close a Gradle distribution JAR (`java.nio.file.AccessDeniedException`); an earlier wrapper attempt also failed while downloading with `java.net.SocketException: Permission denied: getsockopt`. No Gradle command reached test execution, so this report does not claim GREEN.
+- Round 2's historical baseline reported 355 JVM tests, `compileDebugAndroidTestKotlin`, and `assembleDebug` as successful. Those results predate Round 3 and do not verify these changes.

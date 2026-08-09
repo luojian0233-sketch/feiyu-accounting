@@ -51,59 +51,48 @@ internal class OneShotProjectionController(
     private val timeoutMillis: Long,
     private val onFinished: () -> Unit,
 ) {
-    private val started = AtomicBoolean(false)
     private val state = AtomicReference(CaptureState.NEW)
     private val resources = AtomicReference<ProjectionCaptureResources?>()
     private val resourcesClosed = AtomicBoolean(false)
     private val timeout = AtomicReference<ProjectionTimeout?>()
     private val processingJob = AtomicReference<Job?>()
     private val finishedCallbackSent = AtomicBoolean(false)
-    private val setupInProgress = AtomicBoolean(false)
-    private val pendingSetupStop = AtomicBoolean(false)
+    private val pendingSetupFrame = AtomicReference<ProjectionFrame?>()
 
     fun start(grant: ProjectionGrant): Boolean {
-        if (!started.compareAndSet(false, true) || state.get() != CaptureState.NEW) return false
-        setupInProgress.set(true)
-        var setupSucceeded = false
+        if (!state.compareAndSet(CaptureState.NEW, CaptureState.SETTING_UP)) return false
+        var readyToWait = false
         try {
             val opened = resourceFactory.open(grant)
             resources.set(opened)
-            if (!pendingSetupStop.get() && state.compareAndSet(CaptureState.NEW, CaptureState.WAITING)) {
+            if (setupStopIsPending()) return finishSetupWithoutWaiting()
+            opened.registerProjectionCallback(::stop)
+            if (setupStopIsPending()) return finishSetupWithoutWaiting()
+            opened.setImageListener(
+                onImage = { onImageAvailable(opened) },
+                onError = ::stop,
+            )
+            if (setupStopIsPending()) return finishSetupWithoutWaiting()
+            opened.createVirtualDisplay()
+            if (setupStopIsPending()) return finishSetupWithoutWaiting()
+            if (state.compareAndSet(CaptureState.SETTING_UP, CaptureState.WAITING)) {
+                readyToWait = true
                 val scheduled = timeoutScheduler.schedule(timeoutMillis, ::onWaitingTimeout)
                 timeout.set(scheduled)
-                if (state.get() != CaptureState.WAITING || pendingSetupStop.get()) {
-                    scheduled.cancelSafely()
-                }
-                if (!pendingSetupStop.get() && state.get() == CaptureState.WAITING) {
-                    opened.registerProjectionCallback(::stop)
-                }
-                if (!pendingSetupStop.get() && state.get() == CaptureState.WAITING) {
-                    opened.setImageListener(
-                        onImage = { onImageAvailable(opened) },
-                        onError = ::stop,
-                    )
-                }
-                if (!pendingSetupStop.get() && state.get() == CaptureState.WAITING) {
-                    opened.createVirtualDisplay()
-                }
-                setupSucceeded = !pendingSetupStop.get() && state.get() == CaptureState.WAITING
-            } else {
-                pendingSetupStop.set(true)
+                if (state.get() != CaptureState.WAITING) scheduled.cancelSafely()
+                pendingSetupFrame.getAndSet(null)?.let { onFrameAvailable(opened, it) }
             }
         } catch (_: Exception) {
-            pendingSetupStop.set(true)
+            return finishSetupWithoutWaiting()
         } finally {
-            setupInProgress.set(false)
-            if (pendingSetupStop.get()) stop()
+            if (!readyToWait && setupIsInProgress()) finishSetupWithoutWaiting()
         }
-        return setupSucceeded && state.get() == CaptureState.WAITING
+        return readyToWait
     }
 
     fun stop() {
-        if (deferStopForSetup()) return
         while (true) {
             when (val current = state.get()) {
-                CaptureState.NEW,
                 CaptureState.WAITING,
                 -> if (state.compareAndSet(current, CaptureState.FINISHED)) {
                     cancelWaitingTimeout()
@@ -123,6 +112,14 @@ internal class OneShotProjectionController(
                     processingJob.get()?.cancel()
                     return
                 }
+                CaptureState.NEW -> if (state.compareAndSet(current, CaptureState.FINISHED)) {
+                    notifyFinished()
+                    return
+                }
+                CaptureState.SETTING_UP -> {
+                    if (state.compareAndSet(CaptureState.SETTING_UP, CaptureState.SETUP_STOP_PENDING)) return
+                }
+                CaptureState.SETUP_STOP_PENDING -> return
                 CaptureState.FINISHED -> return
             }
         }
@@ -130,17 +127,10 @@ internal class OneShotProjectionController(
 
     private fun onWaitingTimeout() {
         if (state.get() != CaptureState.WAITING) return
-        if (deferStopForSetup()) return
         if (!state.compareAndSet(CaptureState.WAITING, CaptureState.FINISHED)) return
         cancelWaitingTimeout()
         closeCaptureResources()
         notifyFinished()
-    }
-
-    private fun deferStopForSetup(): Boolean {
-        if (!setupInProgress.get()) return false
-        pendingSetupStop.set(true)
-        return setupInProgress.get()
     }
 
     private fun onImageAvailable(activeResources: ProjectionCaptureResources) {
@@ -150,6 +140,14 @@ internal class OneShotProjectionController(
             if (state.get() == CaptureState.WAITING) stop()
             return
         } ?: return
+        onFrameAvailable(activeResources, image)
+    }
+
+    private fun onFrameAvailable(activeResources: ProjectionCaptureResources, image: ProjectionFrame) {
+        if (setupIsInProgress()) {
+            stashSetupFrame(activeResources, image)
+            return
+        }
         if (!state.compareAndSet(CaptureState.WAITING, CaptureState.COPYING)) {
             image.closeSafely()
             return
@@ -173,6 +171,20 @@ internal class OneShotProjectionController(
         } else {
             bitmap.recycleSafely()
             completeWithoutProcessing()
+        }
+    }
+
+    private fun stashSetupFrame(activeResources: ProjectionCaptureResources, image: ProjectionFrame) {
+        if (!pendingSetupFrame.compareAndSet(null, image)) {
+            image.closeSafely()
+            return
+        }
+        when (state.get()) {
+            CaptureState.WAITING ->
+                if (pendingSetupFrame.compareAndSet(image, null)) onFrameAvailable(activeResources, image)
+            CaptureState.FINISHED ->
+                if (pendingSetupFrame.compareAndSet(image, null)) image.closeSafely()
+            else -> Unit
         }
     }
 
@@ -239,6 +251,24 @@ internal class OneShotProjectionController(
         timeout.getAndSet(null)?.cancelSafely()
     }
 
+    private fun finishSetupWithoutWaiting(): Boolean {
+        pendingSetupFrame.getAndSet(null)?.closeSafely()
+        state.set(CaptureState.FINISHED)
+        cancelWaitingTimeout()
+        closeCaptureResources()
+        notifyFinished()
+        return false
+    }
+
+    private fun setupIsInProgress(): Boolean = when (state.get()) {
+        CaptureState.SETTING_UP,
+        CaptureState.SETUP_STOP_PENDING,
+        -> true
+        else -> false
+    }
+
+    private fun setupStopIsPending(): Boolean = state.get() == CaptureState.SETUP_STOP_PENDING
+
     private fun closeCaptureResources() {
         val opened = resources.getAndSet(null) ?: return
         if (!resourcesClosed.compareAndSet(false, true)) return
@@ -270,6 +300,8 @@ internal class OneShotProjectionController(
 
     private enum class CaptureState {
         NEW,
+        SETTING_UP,
+        SETUP_STOP_PENDING,
         WAITING,
         COPYING,
         STOP_DURING_COPY,
