@@ -6,9 +6,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.espresso.Espresso.pressBack
 import com.local.autobookkeeping.domain.model.CaptureChannel
@@ -64,10 +64,12 @@ class RecognitionReviewFlowTest(
             }
         }
 
-        compose.onNodeWithText("支出 ¥123.45").assertIsDisplayed()
-        compose.onNodeWithText("中国电信").assertIsDisplayed()
-        compose.onNodeWithText("转账").assertIsDisplayed()
-        compose.onNodeWithText("2026-07-29 16:30").assertIsDisplayed()
+        compose.onNodeWithTag("review-option-0").apply {
+            assertTextContains("支出 ¥123.45")
+            assertTextContains("中国电信")
+            assertTextContains("2026-07-29 16:30")
+        }
+        compose.onNodeWithTag("review-option-1").assertTextContains("转账")
         compose.onNodeWithTag("review-option-0").performClick()
         compose.waitForIdle()
         compose.onNodeWithTag("review-option-0").assertIsNotEnabled()
@@ -83,17 +85,25 @@ class RecognitionReviewFlowTest(
         var backCalls = 0
         compose.setContent {
             AutoBookkeepingTheme(theme) {
-                RecognitionReviewScreen(
-                    request = ReviewRequest(listOf(RecognitionChoice(candidate()))),
-                    processing = false,
-                    onChoiceSelected = {},
-                    onBack = { backCalls += 1 },
-                )
+                var reviewVisible by remember { mutableStateOf(true) }
+                if (reviewVisible) {
+                    RecognitionReviewScreen(
+                        request = ReviewRequest(listOf(RecognitionChoice(candidate()))),
+                        processing = false,
+                        onChoiceSelected = {},
+                        onBack = {
+                            backCalls += 1
+                            reviewVisible = false
+                        },
+                    )
+                }
             }
         }
 
         pressBack()
+        compose.waitForIdle()
 
+        compose.onNodeWithTag("review-option-0").assertDoesNotExist()
         assertEquals(1, backCalls)
     }
 

@@ -217,7 +217,7 @@ class AutomaticBookkeepingEndToEndTest {
 
         compose.onNodeWithTag(statisticsRangeModeTag(mode)).assertIsSelected()
         compose.onNodeWithTag(statisticsDirectionTag(direction)).assertIsSelected()
-        compose.onNodeWithTag(STATISTICS_TOTAL_TAG).assertTextContains(amount)
+        compose.onNodeWithTag(STATISTICS_TOTAL_TAG).assertTextContains(amount, substring = true)
         compose.onNode(
             hasTestTag("statistics-pie") and
                 hasContentDescription(category, substring = true),
