@@ -1,5 +1,6 @@
 package com.local.autobookkeeping.recognition.tile
 
+import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
@@ -58,6 +59,7 @@ class ScreenshotBookkeepingTileService : TileService(), TileActivityHost {
         TileCaptureActivityLauncher.launch(this, this, session, Build.VERSION.SDK_INT)
     }
 
+    @SuppressLint("StartActivityAndCollapseDeprecated")
     override fun startAndCollapse(intent: Intent) {
         @Suppress("DEPRECATION")
         startActivityAndCollapse(intent)

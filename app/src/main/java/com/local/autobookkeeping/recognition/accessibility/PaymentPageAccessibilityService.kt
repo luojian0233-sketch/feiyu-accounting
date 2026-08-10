@@ -15,7 +15,6 @@ import com.local.autobookkeeping.recognition.capture.CaptureFailure
 import com.local.autobookkeeping.recognition.capture.CaptureResult
 import com.local.autobookkeeping.recognition.capture.ManualCaptureProvider
 import com.local.autobookkeeping.recognition.capture.ManualCaptureReservation
-import com.local.autobookkeeping.recognition.capture.MlKitTextRecognizer
 import com.local.autobookkeeping.recognition.capture.mapScreenshotError
 import java.time.Instant
 import kotlin.coroutines.cancellation.CancellationException
@@ -36,7 +35,6 @@ class PaymentPageAccessibilityService : AccessibilityService() {
     )
     private var captureGateway: AccessibilityCaptureGateway? = null
     private var controller: AutoPageRecognitionController? = null
-    private var textRecognizer: MlKitTextRecognizer? = null
 
     @Volatile
     private var foregroundPackage: String? = null
@@ -44,18 +42,9 @@ class PaymentPageAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         val graph = (application as? AutoBookkeepingApplication)?.applicationGraph ?: return
-        textRecognizer?.close()
-        val recognizer = MlKitTextRecognizer()
-        textRecognizer = recognizer
         val gateway = graph.accessibilityCaptureGateway
         captureGateway = gateway
-        controller = AutoPageRecognitionController(
-            settings = SettingsAutomaticPageRecognitionSettings(graph.settingsRepository),
-            captureGateway = gateway,
-            textRecognizer = recognizer,
-            coordinator = graph.recognitionCoordinator,
-            diagnostics = graph.recognitionDiagnostics,
-        )
+        controller = graph.automaticPageRecognitionController
         gateway.attach(::takeAccessibilityScreenshot)
         gateway.attachManual(
             object : ManualCaptureProvider {
@@ -110,8 +99,6 @@ class PaymentPageAccessibilityService : AccessibilityService() {
         captureGateway?.detach()
         captureGateway = null
         controller = null
-        textRecognizer?.close()
-        textRecognizer = null
         serviceScope.cancel()
         super.onDestroy()
     }

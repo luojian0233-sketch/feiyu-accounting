@@ -79,12 +79,13 @@ import com.local.autobookkeeping.recognition.ReviewRequestCodec
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
-    private val reviewCodec = ReviewRequestCodec()
+    private lateinit var reviewCodec: ReviewRequestCodec
     private lateinit var launchViewModel: MainLaunchViewModel
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val graph = (application as AutoBookkeepingApplication).applicationGraph
+        reviewCodec = graph.reviewRequestCodec
         launchViewModel = ViewModelProvider(
             this,
             viewModelFactory {
@@ -107,6 +108,7 @@ class MainActivity : ComponentActivity() {
                 settingsRepository = graph.settingsRepository,
                 backupOperations = graph.backupManager,
                 recognitionConfirmation = graph.recognitionStore,
+                automaticBookkeepingAccess = graph.automaticBookkeepingAccess,
                 mainLaunchViewModel = launchViewModel,
             )
         }
@@ -206,13 +208,14 @@ internal fun AutoBookkeepingRoot(
     settingsRepository: SettingsOperations? = null,
     backupOperations: BackupOperations? = null,
     recognitionConfirmation: RecognitionConfirmationOperations? = null,
+    automaticBookkeepingAccess: AutomaticBookkeepingAccess? = null,
     mainLaunchViewModel: MainLaunchViewModel? = null,
 ) {
     val navigator = rememberSaveable(saver = AppNavigator.Saver) { AppNavigator() }
     val current = navigator.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val automaticAccess = remember(context) { AutomaticBookkeepingAccess(context) }
+    val automaticAccess = automaticBookkeepingAccess
     val homeViewModel = viewModel {
         HomeViewModel(
             repository = repository,
@@ -255,8 +258,12 @@ internal fun AutoBookkeepingRoot(
         viewModel<SettingsViewModel> {
             SettingsViewModel(
                 repository = settings,
-                notificationAccess = automaticAccess::isNotificationAccessEnabled,
-                accessibilityAccess = automaticAccess::isAccessibilityAccessEnabled,
+                notificationAccess = {
+                    automaticAccess?.isNotificationAccessEnabled() == true
+                },
+                accessibilityAccess = {
+                    automaticAccess?.isAccessibilityAccessEnabled() == true
+                },
                 backupOperations = backupOperations,
             )
         }
@@ -464,7 +471,7 @@ internal fun AutoBookkeepingRoot(
                             navigator.select(AppDestination.LEDGER)
                         },
                         onOpenNotificationSettings = {
-                            if (!openNotificationAccessSafely(AndroidNotificationSettingsLauncher(context))) {
+                            if (automaticAccess?.openNotificationAccess() != true) {
                                 settingsViewModel?.reportNotificationSettingsLaunchFailure()
                             }
                         },
@@ -554,12 +561,12 @@ internal fun AutoBookkeepingRoot(
                             onBankDraftChanged = settingsViewModel::updateBankPackageDraft,
                             onSaveBankPackages = { scope.launch { settingsViewModel.saveBankPackages() } },
                             onOpenNotificationAccess = {
-                                if (!automaticAccess.openNotificationAccess()) {
+                                if (automaticAccess?.openNotificationAccess() != true) {
                                     settingsViewModel.reportNotificationSettingsLaunchFailure()
                                 }
                             },
                             onOpenAccessibility = {
-                                if (!automaticAccess.openAccessibilitySettings()) {
+                                if (automaticAccess?.openAccessibilitySettings() != true) {
                                     settingsViewModel.reportAutomaticSettingsLaunchFailure()
                                 }
                             },
@@ -576,11 +583,12 @@ internal fun AutoBookkeepingRoot(
                                     }
                                 }
                                 handleTileResult(
-                                    automaticAccess.requestAddQuickSettingsTile(handleTileResult),
+                                    automaticAccess?.requestAddQuickSettingsTile(handleTileResult)
+                                        ?: TileAddResult.Failed,
                                 )
                             },
                             onOpenBatteryOptimization = {
-                                if (!automaticAccess.openBatteryOptimizationSettings()) {
+                                if (automaticAccess?.openBatteryOptimizationSettings() != true) {
                                     settingsViewModel.reportAutomaticSettingsLaunchFailure()
                                 }
                             },

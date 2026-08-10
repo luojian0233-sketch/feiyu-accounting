@@ -15,9 +15,14 @@ import com.local.autobookkeeping.recognition.AutoSavePolicy
 import com.local.autobookkeeping.recognition.AlipayPageParser
 import com.local.autobookkeeping.recognition.GenericBillParser
 import com.local.autobookkeeping.recognition.InMemoryRecognitionDiagnostics
+import com.local.autobookkeeping.recognition.MerchantClassifier
 import com.local.autobookkeeping.recognition.RecognitionCoordinator
+import com.local.autobookkeeping.recognition.ReviewRequestCodec
 import com.local.autobookkeeping.recognition.WechatPageParser
+import com.local.autobookkeeping.recognition.accessibility.AutoPageRecognitionController
+import com.local.autobookkeeping.recognition.accessibility.SettingsAutomaticPageRecognitionSettings
 import com.local.autobookkeeping.recognition.capture.AccessibilityCaptureGateway
+import com.local.autobookkeeping.recognition.capture.LocalTextRecognizer
 import com.local.autobookkeeping.recognition.capture.MlKitTextRecognizer
 import com.local.autobookkeeping.recognition.capture.ScreenshotRecognitionController
 import com.local.autobookkeeping.ui.home.NotificationPermissionProvider
@@ -38,6 +43,9 @@ class ApplicationGraph(
     },
     private val settingsRepositoryProvider: (Application, AppDatabase) -> SettingsRepository =
         { app, database -> SettingsRepository(app, database) },
+    private val localTextRecognizerProvider: () -> LocalTextRecognizer = {
+        MlKitTextRecognizer()
+    },
 ) {
     private val appContext = application.applicationContext
     private val database by lazy { databaseProvider(application) }
@@ -53,26 +61,42 @@ class ApplicationGraph(
     }
     val recognitionDiagnostics = InMemoryRecognitionDiagnostics()
     val recognitionStore by lazy { RoomRecognitionStore(database) }
+    val merchantClassifier by lazy { MerchantClassifier(recognitionStore) }
     val recognitionCoordinator by lazy {
         RecognitionCoordinator(
             store = recognitionStore,
             autoSavePolicy = AutoSavePolicy.failClosed(
                 settingsRepository.autoSaveHighConfidence,
             ),
+            classifier = merchantClassifier,
             diagnostics = recognitionDiagnostics,
         )
     }
     val accessibilityCaptureGateway = AccessibilityCaptureGateway()
+    val localTextRecognizer by lazy { localTextRecognizerProvider() }
+    val automaticPageRecognitionController by lazy {
+        AutoPageRecognitionController(
+            settings = SettingsAutomaticPageRecognitionSettings(settingsRepository),
+            captureGateway = accessibilityCaptureGateway,
+            textRecognizer = localTextRecognizer,
+            coordinator = recognitionCoordinator,
+            diagnostics = recognitionDiagnostics,
+        )
+    }
     val screenshotRecognitionController by lazy {
         ScreenshotRecognitionController(
-            textRecognizer = MlKitTextRecognizer(),
+            textRecognizer = localTextRecognizer,
             wechatParser = WechatPageParser,
             alipayParser = AlipayPageParser,
             genericParser = GenericBillParser,
             coordinator = recognitionCoordinator,
         )
     }
-    val pendingConfirmationNotifier by lazy { PendingConfirmationNotifier(appContext) }
+    val automaticBookkeepingAccess by lazy { AutomaticBookkeepingAccess(appContext) }
+    val reviewRequestCodec by lazy { ReviewRequestCodec() }
+    val pendingConfirmationNotifier by lazy {
+        PendingConfirmationNotifier(appContext, reviewRequestCodec)
+    }
     val notificationPermissionProvider = NotificationPermissionProvider {
         NotificationAccess.isEnabled(appContext)
     }
