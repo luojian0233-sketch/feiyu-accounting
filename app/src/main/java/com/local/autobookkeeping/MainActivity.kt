@@ -40,8 +40,12 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.createSavedStateHandle
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import com.local.autobookkeeping.data.LedgerRepository
 import com.local.autobookkeeping.data.RecognitionConfirmationOperations
 import com.local.autobookkeeping.data.SettingsOperations
@@ -70,20 +74,32 @@ import com.local.autobookkeeping.recognition.tile.TileAddResult
 import com.local.autobookkeeping.domain.model.RecognitionChoice
 import com.local.autobookkeeping.domain.model.RecognitionOutcome
 import com.local.autobookkeeping.notification.PendingConfirmationNotifier
-import com.local.autobookkeeping.recognition.RecognitionCoordinator
 import com.local.autobookkeeping.recognition.ReviewRequest
 import com.local.autobookkeeping.recognition.ReviewRequestCodec
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val reviewCodec = ReviewRequestCodec()
-    private var launchRequest by mutableStateOf<MainLaunchRequest?>(null)
+    private lateinit var launchViewModel: MainLaunchViewModel
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        launchRequest = consumeMainLaunchRequest(intent, reviewCodec)
         val graph = (application as AutoBookkeepingApplication).applicationGraph
+        launchViewModel = ViewModelProvider(
+            this,
+            viewModelFactory {
+                initializer {
+                    MainLaunchViewModel(
+                        savedStateHandle = createSavedStateHandle(),
+                        reviewCodec = reviewCodec,
+                        findById = graph.ledgerRepository::findById,
+                        resolve = graph.recognitionCoordinator::resolve,
+                    )
+                }
+            },
+        )[MainLaunchViewModel::class.java]
+        consumeInitialMainLaunchRequest(intent, savedInstanceState, reviewCodec)
+            ?.let(launchViewModel::accept)
         setContent {
             AutoBookkeepingRoot(
                 repository = graph.ledgerRepository,
@@ -91,9 +107,7 @@ class MainActivity : ComponentActivity() {
                 settingsRepository = graph.settingsRepository,
                 backupOperations = graph.backupManager,
                 recognitionConfirmation = graph.recognitionStore,
-                recognitionCoordinator = graph.recognitionCoordinator,
-                launchRequest = launchRequest,
-                onLaunchRequestConsumed = { launchRequest = null },
+                mainLaunchViewModel = launchViewModel,
             )
         }
     }
@@ -101,13 +115,23 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        launchRequest = consumeMainLaunchRequest(intent, reviewCodec)
+        consumeMainLaunchRequest(intent, reviewCodec)?.let(launchViewModel::accept)
     }
 }
 
 internal const val EXTRA_PENDING_TRANSACTION_ID = "pending_transaction_id"
 internal const val EXTRA_REVIEW_REQUEST = "recognition_review_request"
 internal const val SAVED_INTENT_DATA = "autobookkeeping://recognition/saved"
+
+internal fun consumeInitialMainLaunchRequest(
+    intent: Intent?,
+    savedInstanceState: Bundle?,
+    codec: ReviewRequestCodec = ReviewRequestCodec(),
+): MainLaunchRequest? = if (savedInstanceState == null) {
+    consumeMainLaunchRequest(intent, codec)
+} else {
+    null
+}
 
 sealed interface MainLaunchRequest {
     data class Pending(val transactionId: Long) : MainLaunchRequest
@@ -176,15 +200,13 @@ internal fun RecognitionOutcome.toReviewResolution(): ReviewResolution = when (t
 }
 
 @Composable
-fun AutoBookkeepingRoot(
+internal fun AutoBookkeepingRoot(
     repository: LedgerRepository,
     notificationPermission: NotificationPermissionProvider,
     settingsRepository: SettingsOperations? = null,
     backupOperations: BackupOperations? = null,
     recognitionConfirmation: RecognitionConfirmationOperations? = null,
-    recognitionCoordinator: RecognitionCoordinator? = null,
-    launchRequest: MainLaunchRequest? = null,
-    onLaunchRequestConsumed: () -> Unit = {},
+    mainLaunchViewModel: MainLaunchViewModel? = null,
 ) {
     val navigator = rememberSaveable(saver = AppNavigator.Saver) { AppNavigator() }
     val current = navigator.current
@@ -239,8 +261,6 @@ fun AutoBookkeepingRoot(
             )
         }
     }
-    var activeReview by remember { mutableStateOf<ReviewRequest?>(null) }
-    var reviewProcessing by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     var pendingRestoreUri by rememberSaveable { mutableStateOf<String?>(null) }
     val exportBackupLauncher = rememberLauncherForActivityResult(
@@ -284,35 +304,28 @@ fun AutoBookkeepingRoot(
         ?.collectAsStateWithLifecycle(initialValue = ThemeStyle.CLEAR_MINT)
         ?.value
         ?: ThemeStyle.CLEAR_MINT
-    LaunchedEffect(launchRequest) {
-        val requested = launchRequest ?: return@LaunchedEffect
-        onLaunchRequestConsumed()
-        when (requested) {
-            is MainLaunchRequest.Pending -> {
-                activeReview = null
-                reviewProcessing = false
-                val transaction = try {
-                    repository.findById(requested.transactionId)
-                } catch (cancellation: CancellationException) {
-                    throw cancellation
-                } catch (_: Throwable) {
-                    null
-                }
-                if (transaction == null) {
-                    snackbarHostState.showSnackbar("无法打开待核对记录")
-                } else {
-                    entryViewModel.edit(transaction)
-                    navigator.openEntry()
-                }
+    val mainLaunchState = mainLaunchViewModel
+        ?.state
+        ?.collectAsStateWithLifecycle()
+        ?.value
+        ?: MainLaunchUiState.Idle
+    LaunchedEffect(mainLaunchState) {
+        when (val launch = mainLaunchState) {
+            MainLaunchUiState.Idle -> Unit
+            is MainLaunchUiState.Pending -> mainLaunchViewModel?.loadPending(launch.token)
+            is MainLaunchUiState.Review -> Unit
+            is MainLaunchUiState.OpenPending -> {
+                entryViewModel.edit(launch.transaction)
+                navigator.openEntry()
+                mainLaunchViewModel?.acknowledge(launch.token)
             }
-            is MainLaunchRequest.Review -> {
-                activeReview = requested.request
-                reviewProcessing = false
-            }
-            MainLaunchRequest.Saved -> {
-                activeReview = null
-                reviewProcessing = false
+            is MainLaunchUiState.OpenLedger -> {
                 navigator.select(AppDestination.LEDGER)
+                mainLaunchViewModel?.acknowledge(launch.token)
+            }
+            is MainLaunchUiState.Message -> {
+                snackbarHostState.showSnackbar(launch.text)
+                mainLaunchViewModel?.acknowledge(launch.token)
             }
         }
     }
@@ -352,6 +365,7 @@ fun AutoBookkeepingRoot(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
+    val activeReview = mainLaunchState as? MainLaunchUiState.Review
     BackHandler(enabled = activeReview == null && navigator.canHandleBack) {
         if (
             navigator.isStatisticsDrilldownActive &&
@@ -363,65 +377,17 @@ fun AutoBookkeepingRoot(
     }
 
     AutoBookkeepingTheme(themeStyle) {
-        val review = activeReview
-        if (review != null) {
+        if (activeReview != null) {
             RecognitionReviewScreen(
-                request = review,
-                processing = reviewProcessing,
+                request = activeReview.request,
+                processing = activeReview.processing,
                 onChoiceSelected = { choice ->
-                    if (!reviewProcessing) {
-                        reviewProcessing = true
-                        scope.launch {
-                            val resolution = try {
-                                recognitionCoordinator
-                                    ?.resolve(choice)
-                                    ?.toReviewResolution()
-                                    ?: ReviewResolution.Message("无法完成识别")
-                            } catch (cancellation: CancellationException) {
-                                reviewProcessing = false
-                                throw cancellation
-                            } catch (_: Throwable) {
-                                ReviewResolution.Message("无法完成识别")
-                            }
-                            when (resolution) {
-                                is ReviewResolution.OpenPending -> {
-                                    val transaction = try {
-                                        repository.findById(resolution.transactionId)
-                                    } catch (cancellation: CancellationException) {
-                                        reviewProcessing = false
-                                        throw cancellation
-                                    } catch (_: Throwable) {
-                                        null
-                                    }
-                                    activeReview = null
-                                    reviewProcessing = false
-                                    if (transaction == null) {
-                                        snackbarHostState.showSnackbar("无法打开待核对记录")
-                                    } else {
-                                        entryViewModel.edit(transaction)
-                                        navigator.openEntry()
-                                    }
-                                }
-                                ReviewResolution.OpenLedger -> {
-                                    activeReview = null
-                                    reviewProcessing = false
-                                    navigator.select(AppDestination.LEDGER)
-                                }
-                                is ReviewResolution.SelectAgain -> {
-                                    activeReview = resolution.request
-                                    reviewProcessing = false
-                                }
-                                is ReviewResolution.Message -> {
-                                    activeReview = null
-                                    reviewProcessing = false
-                                    snackbarHostState.showSnackbar(resolution.text)
-                                }
-                            }
-                        }
-                    }
+                    mainLaunchViewModel?.selectReview(activeReview.token, choice)
                 },
                 onBack = {
-                    if (!reviewProcessing) activeReview = null
+                    if (!activeReview.processing) {
+                        mainLaunchViewModel?.acknowledge(activeReview.token)
+                    }
                 },
             )
             return@AutoBookkeepingTheme

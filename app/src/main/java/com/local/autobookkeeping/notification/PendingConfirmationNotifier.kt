@@ -15,7 +15,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.local.autobookkeeping.EXTRA_PENDING_TRANSACTION_ID
 import com.local.autobookkeeping.EXTRA_REVIEW_REQUEST
-import com.local.autobookkeeping.MainActivity
+import com.local.autobookkeeping.RecognitionReviewLaunchActivity
 import com.local.autobookkeeping.SAVED_INTENT_DATA
 import com.local.autobookkeeping.domain.model.RecognitionCandidate
 import com.local.autobookkeeping.domain.model.RecognitionOutcome
@@ -145,7 +145,7 @@ class PendingConfirmationNotifier(
         data: String,
         extraName: String? = null,
         extraValue: Any? = null,
-    ): Intent = Intent(appContext, MainActivity::class.java)
+    ): Intent = Intent(appContext, RecognitionReviewLaunchActivity::class.java)
         .setData(Uri.parse(data))
         .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         .also { intent ->

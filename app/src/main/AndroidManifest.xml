@@ -12,12 +12,20 @@
         android:theme="@style/Theme.AutoBookkeeping">
         <activity
             android:name=".MainActivity"
+            android:exported="false" />
+        <activity
+            android:name=".LauncherActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".RecognitionReviewLaunchActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true" />
         <activity
             android:name=".recognition.tile.ScreenshotCaptureActivity"
             android:excludeFromRecents="true"

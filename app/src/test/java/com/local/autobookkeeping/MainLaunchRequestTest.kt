@@ -2,6 +2,7 @@ package com.local.autobookkeeping
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Bundle
 import com.local.autobookkeeping.domain.model.CaptureChannel
 import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.domain.model.PaymentPlatform
@@ -73,6 +74,24 @@ class MainLaunchRequestTest {
 
         assertEquals(MainLaunchRequest.Saved, consumeMainLaunchRequest(intent, codec))
         assertNull(consumeMainLaunchRequest(intent, codec))
+    }
+
+    @Test
+    fun `activity recreation does not replay its original launch intent`() {
+        val freshIntent = Intent()
+            .setData(Uri.parse(PendingConfirmationNotifier.pendingIntentData(73)))
+            .putExtra(EXTRA_PENDING_TRANSACTION_ID, 73L)
+        val recreatedIntent = Intent()
+            .setData(Uri.parse(PendingConfirmationNotifier.pendingIntentData(74)))
+            .putExtra(EXTRA_PENDING_TRANSACTION_ID, 74L)
+
+        assertEquals(
+            MainLaunchRequest.Pending(73),
+            consumeInitialMainLaunchRequest(freshIntent, savedInstanceState = null, codec),
+        )
+        assertNull(
+            consumeInitialMainLaunchRequest(recreatedIntent, Bundle(), codec),
+        )
     }
 
     @Test
