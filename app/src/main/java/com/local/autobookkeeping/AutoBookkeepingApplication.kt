@@ -52,7 +52,7 @@ class ApplicationGraph(
         NotificationRouter(settingsRepository, diagnostics = notificationDiagnostics)
     }
     val recognitionDiagnostics = InMemoryRecognitionDiagnostics()
-    private val recognitionStore by lazy { RoomRecognitionStore(database) }
+    val recognitionStore by lazy { RoomRecognitionStore(database) }
     val recognitionCoordinator by lazy {
         RecognitionCoordinator(
             store = recognitionStore,

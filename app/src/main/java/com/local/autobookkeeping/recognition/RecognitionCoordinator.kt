@@ -185,7 +185,9 @@ class RecognitionCoordinator(
     ): RecognitionOutcome.NeedsSelection {
         diagnostics.record(RecognitionDiagnostic.MULTIPLE_CANDIDATES)
         return RecognitionOutcome.NeedsSelection(
-            matches.map { RecognitionChoice(candidate, matchTransactionId = it.id) },
+            matches.take(MAX_REVIEW_OPTIONS).map {
+                RecognitionChoice(candidate, matchTransactionId = it.id)
+            },
         )
     }
 

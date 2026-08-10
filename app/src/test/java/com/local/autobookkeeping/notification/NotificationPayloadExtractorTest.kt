@@ -105,6 +105,7 @@ class NotificationPayloadExtractorTest {
                 order += "notify"
                 error("posting unavailable")
             },
+            notifyReview = { error("review notification must not be used") },
             notifySaved = { error("success notification must not be used") },
         )
 
@@ -115,6 +116,7 @@ class NotificationPayloadExtractorTest {
     @Test
     fun `notification outcome posts only the matching private local reminder`() = runTest {
         val pending = mutableListOf<String>()
+        val reviews = mutableListOf<String>()
         val saved = mutableListOf<String>()
         val candidate = buildCandidate(
             notification = NotificationText(
@@ -142,11 +144,13 @@ class NotificationPayloadExtractorTest {
                 candidate = candidate,
                 recognize = { expected },
                 notifyPending = { pending += expected.toString() },
+                notifyReview = { reviews += expected.toString() },
                 notifySaved = { saved += expected.toString() },
             )
         }
 
-        assertEquals(outcomes.take(2).map(Any::toString), pending)
+        assertEquals(listOf(outcomes[0].toString()), pending)
+        assertEquals(listOf(outcomes[1].toString()), reviews)
         assertEquals(listOf(outcomes[2].toString()), saved)
     }
 }

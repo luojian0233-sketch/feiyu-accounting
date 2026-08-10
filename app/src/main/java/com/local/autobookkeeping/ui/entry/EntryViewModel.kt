@@ -3,6 +3,7 @@ package com.local.autobookkeeping.ui.entry
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.local.autobookkeeping.data.LedgerRepository
+import com.local.autobookkeeping.data.RecognitionConfirmationOperations
 import com.local.autobookkeeping.data.SettingsOperations
 import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.domain.model.PaymentPlatform
@@ -120,6 +121,7 @@ data class EntryChoice(
 class EntryViewModel(
     private val repository: LedgerRepository,
     settings: SettingsOperations? = null,
+    private val recognitionConfirmation: RecognitionConfirmationOperations? = null,
 ) : ViewModel() {
     private val managesConfiguration = settings != null
     private val mutableState = MutableStateFlow(
@@ -202,7 +204,16 @@ class EntryViewModel(
         if (!operationMutex.tryLock()) return Result.failure(EntryOperationInProgressException())
         mutableState.value = mutableState.value.copy(saving = true, error = null)
         return try {
-            val id = repository.save(transaction)
+            val useAtomicRecognitionConfirmation =
+                recognitionConfirmation != null &&
+                    confirmPending &&
+                    current.draft.pendingConfirmation &&
+                    current.draft.source != Source.MANUAL
+            val id = if (useAtomicRecognitionConfirmation) {
+                checkNotNull(recognitionConfirmation).confirmAndRemember(transaction)
+            } else {
+                repository.save(transaction)
+            }
             mutableState.value = mutableState.value.copy(saving = false)
             Result.success(id)
         } catch (failure: CancellationException) {
@@ -211,7 +222,7 @@ class EntryViewModel(
         } catch (failure: Throwable) {
             mutableState.value = mutableState.value.copy(
                 saving = false,
-                error = failure.message ?: "保存失败，请稍后重试",
+                error = "保存失败，请稍后重试",
             )
             Result.failure(failure)
         } finally {

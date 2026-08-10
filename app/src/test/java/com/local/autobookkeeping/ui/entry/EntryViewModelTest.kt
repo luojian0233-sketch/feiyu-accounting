@@ -1,12 +1,16 @@
 package com.local.autobookkeeping.ui.entry
 
 import com.local.autobookkeeping.data.LedgerRepository
+import com.local.autobookkeeping.data.RecognitionConfirmationOperations
 import com.local.autobookkeeping.data.AccountSetting
 import com.local.autobookkeeping.data.CategorySetting
 import com.local.autobookkeeping.data.SettingsOperations
 import com.local.autobookkeeping.ui.theme.ThemeStyle
 import com.local.autobookkeeping.domain.model.Direction
+import com.local.autobookkeeping.domain.model.PaymentPlatform
+import com.local.autobookkeeping.domain.model.Source
 import com.local.autobookkeeping.domain.model.Transaction
+import com.local.autobookkeeping.domain.model.TransactionEventKind
 import java.time.Instant
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -122,6 +126,62 @@ class EntryViewModelTest {
         assertEquals(1, repository.saveCalls)
     }
 
+    @Test
+    fun `confirming recognized merchant remembers selected category atomically`() = runTest(dispatcher) {
+        val repository = DelayedRepository(releaseImmediately = true)
+        val confirmation = FakeRecognitionConfirmation()
+        val viewModel = EntryViewModel(
+            repository = repository,
+            recognitionConfirmation = confirmation,
+        )
+        viewModel.edit(pendingTelecomTransaction())
+        viewModel.update { it.copy(category = "通讯") }
+
+        val result = viewModel.confirmPending()
+
+        assertTrue(result.isSuccess)
+        assertEquals(0, repository.saveCalls)
+        assertEquals("通讯", confirmation.saved.single().category)
+        assertEquals("中国电信", confirmation.saved.single().merchant)
+        assertEquals(false, confirmation.saved.single().pendingConfirmation)
+    }
+
+    @Test
+    fun `manual or nonpending edits continue through ledger repository`() = runTest(dispatcher) {
+        val repository = DelayedRepository(releaseImmediately = true)
+        val confirmation = FakeRecognitionConfirmation()
+        val viewModel = EntryViewModel(
+            repository = repository,
+            recognitionConfirmation = confirmation,
+        )
+
+        viewModel.edit(pendingTelecomTransaction().copy(source = Source.MANUAL))
+        assertTrue(viewModel.confirmPending().isSuccess)
+        viewModel.edit(pendingTelecomTransaction().copy(pendingConfirmation = false))
+        assertTrue(viewModel.save().isSuccess)
+
+        assertEquals(2, repository.saveCalls)
+        assertTrue(confirmation.saved.isEmpty())
+    }
+
+    @Test
+    fun `atomic confirmation failure does not expose exception details`() = runTest(dispatcher) {
+        val repository = DelayedRepository(releaseImmediately = true)
+        val confirmation = FakeRecognitionConfirmation(
+            failure = IllegalStateException("C:\\private\\ledger.db"),
+        )
+        val viewModel = EntryViewModel(
+            repository = repository,
+            recognitionConfirmation = confirmation,
+        )
+        viewModel.edit(pendingTelecomTransaction())
+
+        val result = viewModel.confirmPending()
+
+        assertTrue(result.isFailure)
+        assertEquals("保存失败，请稍后重试", viewModel.state.value.error)
+    }
+
     private fun transaction(id: Long) = Transaction(
         id = id,
         amountMinor = 100,
@@ -130,12 +190,24 @@ class EntryViewModelTest {
         occurredAt = Instant.parse("2026-07-22T04:00:00Z"),
     )
 
+    private fun pendingTelecomTransaction() = transaction(id = 73).copy(
+        category = "待确认",
+        merchant = "中国电信",
+        account = "招商银行",
+        source = Source.SCREENSHOT,
+        pendingConfirmation = true,
+        platform = PaymentPlatform.WECHAT,
+        eventKind = TransactionEventKind.PAYMENT,
+        recognitionConfidence = 87,
+    )
+
     private class DelayedRepository(
         releaseImmediately: Boolean = false,
     ) : LedgerRepository {
         val release = CompletableDeferred<Unit>()
         var saveCalls = 0
         var deleteCalls = 0
+        val saved = mutableListOf<Transaction>()
         private val rows = MutableStateFlow<List<Transaction>>(emptyList())
 
         init {
@@ -145,6 +217,7 @@ class EntryViewModelTest {
         override fun observeTransactions(): Flow<List<Transaction>> = rows
         override suspend fun save(transaction: Transaction): Long {
             saveCalls += 1
+            saved += transaction
             release.await()
             return 41
         }
@@ -156,6 +229,18 @@ class EntryViewModelTest {
 
         override suspend fun findByDedupeKey(key: String): Transaction? = null
         override suspend fun replaceAllInTransaction(transactions: List<Transaction>) = Unit
+    }
+
+    private class FakeRecognitionConfirmation(
+        private val failure: Throwable? = null,
+    ) : RecognitionConfirmationOperations {
+        val saved = mutableListOf<Transaction>()
+
+        override suspend fun confirmAndRemember(transaction: Transaction): Long {
+            failure?.let { throw it }
+            saved += transaction
+            return transaction.id
+        }
     }
 
     private class FakeSettingsOperations : SettingsOperations {

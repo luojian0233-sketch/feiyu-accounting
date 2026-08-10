@@ -1,5 +1,6 @@
 package com.local.autobookkeeping
 
+import android.content.Intent
 import android.os.Bundle
 import android.net.Uri
 import androidx.activity.compose.BackHandler
@@ -15,6 +16,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -40,6 +43,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.local.autobookkeeping.data.LedgerRepository
+import com.local.autobookkeeping.data.RecognitionConfirmationOperations
 import com.local.autobookkeeping.data.SettingsOperations
 import com.local.autobookkeeping.backup.BackupOperations
 import com.local.autobookkeeping.ui.entry.EntryScreen
@@ -53,6 +57,7 @@ import com.local.autobookkeeping.ui.ledger.statisticsDrilldownFilter
 import com.local.autobookkeeping.ui.ledger.toFilterState
 import com.local.autobookkeeping.ui.navigation.AppDestination
 import com.local.autobookkeeping.ui.navigation.AppNavigator
+import com.local.autobookkeeping.ui.recognition.RecognitionReviewScreen
 import com.local.autobookkeeping.ui.statistics.StatisticsScreen
 import com.local.autobookkeeping.ui.statistics.StatisticsSelection
 import com.local.autobookkeeping.ui.statistics.StatisticsViewModel
@@ -62,11 +67,22 @@ import com.local.autobookkeeping.ui.settings.SettingsViewModel
 import com.local.autobookkeeping.ui.theme.AutoBookkeepingTheme
 import com.local.autobookkeeping.ui.theme.ThemeStyle
 import com.local.autobookkeeping.recognition.tile.TileAddResult
+import com.local.autobookkeeping.domain.model.RecognitionChoice
+import com.local.autobookkeeping.domain.model.RecognitionOutcome
+import com.local.autobookkeeping.notification.PendingConfirmationNotifier
+import com.local.autobookkeeping.recognition.RecognitionCoordinator
+import com.local.autobookkeeping.recognition.ReviewRequest
+import com.local.autobookkeeping.recognition.ReviewRequestCodec
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+    private val reviewCodec = ReviewRequestCodec()
+    private var launchRequest by mutableStateOf<MainLaunchRequest?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        launchRequest = consumeMainLaunchRequest(intent, reviewCodec)
         val graph = (application as AutoBookkeepingApplication).applicationGraph
         setContent {
             AutoBookkeepingRoot(
@@ -74,9 +90,89 @@ class MainActivity : ComponentActivity() {
                 notificationPermission = graph.notificationPermissionProvider,
                 settingsRepository = graph.settingsRepository,
                 backupOperations = graph.backupManager,
+                recognitionConfirmation = graph.recognitionStore,
+                recognitionCoordinator = graph.recognitionCoordinator,
+                launchRequest = launchRequest,
+                onLaunchRequestConsumed = { launchRequest = null },
             )
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        launchRequest = consumeMainLaunchRequest(intent, reviewCodec)
+    }
+}
+
+internal const val EXTRA_PENDING_TRANSACTION_ID = "pending_transaction_id"
+internal const val EXTRA_REVIEW_REQUEST = "recognition_review_request"
+internal const val SAVED_INTENT_DATA = "autobookkeeping://recognition/saved"
+
+sealed interface MainLaunchRequest {
+    data class Pending(val transactionId: Long) : MainLaunchRequest
+    data class Review(val request: ReviewRequest) : MainLaunchRequest
+    data object Saved : MainLaunchRequest
+}
+
+internal fun consumeMainLaunchRequest(
+    intent: Intent?,
+    codec: ReviewRequestCodec = ReviewRequestCodec(),
+): MainLaunchRequest? {
+    if (intent == null) return null
+    val request = try {
+        val data = intent.data?.toString()
+        val review = intent.getStringExtra(EXTRA_REVIEW_REQUEST)
+            ?.let(codec::decode)
+            ?.takeIf { decoded ->
+                data == PendingConfirmationNotifier.reviewIntentData(
+                    decoded.options.first().candidate.evidenceDigest,
+                )
+            }
+        if (review != null) {
+            MainLaunchRequest.Review(review)
+        } else {
+            val pendingId = intent
+                .takeIf { it.hasExtra(EXTRA_PENDING_TRANSACTION_ID) }
+                ?.getLongExtra(EXTRA_PENDING_TRANSACTION_ID, -1)
+            when {
+                pendingId != null &&
+                    pendingId > 0 &&
+                    data == PendingConfirmationNotifier.pendingIntentData(pendingId) ->
+                    MainLaunchRequest.Pending(pendingId)
+                data == SAVED_INTENT_DATA -> MainLaunchRequest.Saved
+                else -> null
+            }
+        }
+    } catch (_: RuntimeException) {
+        null
+    }
+    intent.removeExtra(EXTRA_REVIEW_REQUEST)
+    intent.removeExtra(EXTRA_PENDING_TRANSACTION_ID)
+    intent.data = null
+    return request
+}
+
+internal sealed interface ReviewResolution {
+    data class OpenPending(val transactionId: Long) : ReviewResolution
+    data object OpenLedger : ReviewResolution
+    data class SelectAgain(val request: ReviewRequest) : ReviewResolution
+    data class Message(val text: String) : ReviewResolution
+}
+
+internal fun RecognitionOutcome.toReviewResolution(): ReviewResolution = when (this) {
+    is RecognitionOutcome.Saved -> if (pending) {
+        ReviewResolution.OpenPending(transactionId)
+    } else {
+        ReviewResolution.OpenLedger
+    }
+    is RecognitionOutcome.NeedsSelection -> try {
+        ReviewResolution.SelectAgain(ReviewRequest(options))
+    } catch (_: IllegalArgumentException) {
+        ReviewResolution.Message("无法完成识别")
+    }
+    RecognitionOutcome.Duplicate -> ReviewResolution.Message("该记录已处理")
+    is RecognitionOutcome.Rejected -> ReviewResolution.Message("无法完成识别")
 }
 
 @Composable
@@ -85,6 +181,10 @@ fun AutoBookkeepingRoot(
     notificationPermission: NotificationPermissionProvider,
     settingsRepository: SettingsOperations? = null,
     backupOperations: BackupOperations? = null,
+    recognitionConfirmation: RecognitionConfirmationOperations? = null,
+    recognitionCoordinator: RecognitionCoordinator? = null,
+    launchRequest: MainLaunchRequest? = null,
+    onLaunchRequestConsumed: () -> Unit = {},
 ) {
     val navigator = rememberSaveable(saver = AppNavigator.Saver) { AppNavigator() }
     val current = navigator.current
@@ -120,7 +220,9 @@ fun AutoBookkeepingRoot(
                 ?: com.local.autobookkeeping.ui.ledger.LedgerFilterState(),
         )
     }
-    val entryViewModel = viewModel { EntryViewModel(repository, settingsRepository) }
+    val entryViewModel = viewModel {
+        EntryViewModel(repository, settingsRepository, recognitionConfirmation)
+    }
     val statisticsViewModel = viewModel {
         StatisticsViewModel(
             repository = repository,
@@ -137,6 +239,9 @@ fun AutoBookkeepingRoot(
             )
         }
     }
+    var activeReview by remember { mutableStateOf<ReviewRequest?>(null) }
+    var reviewProcessing by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
     var pendingRestoreUri by rememberSaveable { mutableStateOf<String?>(null) }
     val exportBackupLauncher = rememberLauncherForActivityResult(
         contract = backupCreateDocumentContract(),
@@ -179,6 +284,38 @@ fun AutoBookkeepingRoot(
         ?.collectAsStateWithLifecycle(initialValue = ThemeStyle.CLEAR_MINT)
         ?.value
         ?: ThemeStyle.CLEAR_MINT
+    LaunchedEffect(launchRequest) {
+        val requested = launchRequest ?: return@LaunchedEffect
+        onLaunchRequestConsumed()
+        when (requested) {
+            is MainLaunchRequest.Pending -> {
+                activeReview = null
+                reviewProcessing = false
+                val transaction = try {
+                    repository.findById(requested.transactionId)
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (_: Throwable) {
+                    null
+                }
+                if (transaction == null) {
+                    snackbarHostState.showSnackbar("无法打开待核对记录")
+                } else {
+                    entryViewModel.edit(transaction)
+                    navigator.openEntry()
+                }
+            }
+            is MainLaunchRequest.Review -> {
+                activeReview = requested.request
+                reviewProcessing = false
+            }
+            MainLaunchRequest.Saved -> {
+                activeReview = null
+                reviewProcessing = false
+                navigator.select(AppDestination.LEDGER)
+            }
+        }
+    }
     LaunchedEffect(
         statisticsState.rangeMode,
         statisticsState.range,
@@ -215,7 +352,7 @@ fun AutoBookkeepingRoot(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    BackHandler(enabled = navigator.canHandleBack) {
+    BackHandler(enabled = activeReview == null && navigator.canHandleBack) {
         if (
             navigator.isStatisticsDrilldownActive &&
             current == AppDestination.LEDGER
@@ -226,9 +363,73 @@ fun AutoBookkeepingRoot(
     }
 
     AutoBookkeepingTheme(themeStyle) {
+        val review = activeReview
+        if (review != null) {
+            RecognitionReviewScreen(
+                request = review,
+                processing = reviewProcessing,
+                onChoiceSelected = { choice ->
+                    if (!reviewProcessing) {
+                        reviewProcessing = true
+                        scope.launch {
+                            val resolution = try {
+                                recognitionCoordinator
+                                    ?.resolve(choice)
+                                    ?.toReviewResolution()
+                                    ?: ReviewResolution.Message("无法完成识别")
+                            } catch (cancellation: CancellationException) {
+                                reviewProcessing = false
+                                throw cancellation
+                            } catch (_: Throwable) {
+                                ReviewResolution.Message("无法完成识别")
+                            }
+                            when (resolution) {
+                                is ReviewResolution.OpenPending -> {
+                                    val transaction = try {
+                                        repository.findById(resolution.transactionId)
+                                    } catch (cancellation: CancellationException) {
+                                        reviewProcessing = false
+                                        throw cancellation
+                                    } catch (_: Throwable) {
+                                        null
+                                    }
+                                    activeReview = null
+                                    reviewProcessing = false
+                                    if (transaction == null) {
+                                        snackbarHostState.showSnackbar("无法打开待核对记录")
+                                    } else {
+                                        entryViewModel.edit(transaction)
+                                        navigator.openEntry()
+                                    }
+                                }
+                                ReviewResolution.OpenLedger -> {
+                                    activeReview = null
+                                    reviewProcessing = false
+                                    navigator.select(AppDestination.LEDGER)
+                                }
+                                is ReviewResolution.SelectAgain -> {
+                                    activeReview = resolution.request
+                                    reviewProcessing = false
+                                }
+                                is ReviewResolution.Message -> {
+                                    activeReview = null
+                                    reviewProcessing = false
+                                    snackbarHostState.showSnackbar(resolution.text)
+                                }
+                            }
+                        }
+                    }
+                },
+                onBack = {
+                    if (!reviewProcessing) activeReview = null
+                },
+            )
+            return@AutoBookkeepingTheme
+        }
         Scaffold(
             modifier = Modifier.testTag("active-theme-${themeStyle.name}"),
             containerColor = MaterialTheme.colorScheme.background,
+            snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
                 NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                     AppDestination.entries.forEach { destination ->

@@ -43,6 +43,7 @@ class PaymentNotificationService : NotificationListenerService() {
                         candidate = candidate.toRecognitionCandidate(),
                         recognize = graph.recognitionCoordinator::process,
                         notifyPending = graph.pendingConfirmationNotifier::notifyPending,
+                        notifyReview = graph.pendingConfirmationNotifier::notifyReview,
                         notifySaved = graph.pendingConfirmationNotifier::notifySaved,
                     )
                 }

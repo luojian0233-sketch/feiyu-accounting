@@ -149,6 +149,24 @@ class RecognitionCoordinatorTest {
     }
 
     @Test
+    fun `selection request exposes at most five candidates`() = runTest {
+        store.seed(
+            *List(6) { index ->
+                transaction(
+                    id = index.toLong() + 1,
+                    occurredAt = NOW.minusSeconds(index.toLong()),
+                    pending = true,
+                )
+            }.toTypedArray(),
+        )
+
+        val result = coordinator.process(pageCandidate(merchant = null))
+
+        val selection = result as RecognitionOutcome.NeedsSelection
+        assertEquals(listOf(1L, 2L, 3L, 4L, 5L), selection.options.map { it.matchTransactionId })
+    }
+
+    @Test
     fun `confirmed match in two minutes attaches cross channel receipt`() = runTest {
         store.seed(transaction(id = 21, pending = false, merchant = " 中国电信 "))
 
