@@ -151,6 +151,10 @@ class AutoPageRecognitionController internal constructor(
     private val candidateProcessor: RecognitionCandidateProcessor,
     private val diagnostics: RecognitionDiagnostics,
     private val debouncer: RecognitionDebouncer,
+    private val opaquePageDebouncer: RecognitionDebouncer = RecognitionDebouncer(
+        windowMillis = OPAQUE_PAGE_WINDOW_MILLIS,
+        maxEntries = OPAQUE_PAGE_MAX_ENTRIES,
+    ),
     private val elapsedRealtimeMillis: () -> Long,
 ) {
     constructor(
@@ -179,6 +183,9 @@ class AutoPageRecognitionController internal constructor(
             parsed is ExtractionOutcome.Rejected &&
             parsed.reason == RecognitionRejectReason.NOT_PAYMENT_PAGE
         ) {
+            if (snapshot.elements.isEmpty()) {
+                processOpaquePageFallback(snapshot, parser)
+            }
             return
         }
         val reservation = debouncer.reserve(snapshot, elapsedRealtimeMillis()) ?: return
@@ -190,6 +197,27 @@ class AutoPageRecognitionController internal constructor(
                 debouncer.commit(reservation, elapsedRealtimeMillis())
             } else {
                 debouncer.release(reservation)
+            }
+        }
+    }
+
+    private suspend fun processOpaquePageFallback(
+        snapshot: PageSnapshot,
+        parser: PaymentPageParser,
+    ) {
+        val reservation = opaquePageDebouncer.reserve(
+            snapshot,
+            elapsedRealtimeMillis(),
+        ) ?: return
+        var completed = false
+        try {
+            processSingleOcrFallback(snapshot, parser)
+            completed = true
+        } finally {
+            if (completed) {
+                opaquePageDebouncer.commit(reservation, elapsedRealtimeMillis())
+            } else {
+                opaquePageDebouncer.release(reservation)
             }
         }
     }
@@ -296,5 +324,7 @@ class AutoPageRecognitionController internal constructor(
     companion object {
         const val WECHAT_PACKAGE = "com.tencent.mm"
         const val ALIPAY_PACKAGE = "com.eg.android.AlipayGphone"
+        private const val OPAQUE_PAGE_WINDOW_MILLIS = 2_000L
+        private const val OPAQUE_PAGE_MAX_ENTRIES = 64
     }
 }

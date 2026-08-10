@@ -75,6 +75,41 @@ class AutoPageRecognitionControllerTest {
     }
 
     @Test
+    fun `empty WeChat WebView uses one in-memory OCR fallback`() = runTest {
+        var screenshotCalls = 0
+        val bitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888)
+        gateway.attach {
+            screenshotCalls += 1
+            CaptureResult.Success(bitmap, WECHAT_PACKAGE)
+        }
+
+        controller.onWindowChanged(page(WECHAT_PACKAGE))
+
+        assertEquals(1, screenshotCalls)
+        assertEquals(1, ocrCalls)
+        assertEquals(1, processor.calls)
+        assertTrue(bitmap.isRecycled)
+    }
+
+    @Test
+    fun `empty Alipay WebView uses the Alipay parser after OCR`() = runTest {
+        val bitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888)
+        gateway.attach { CaptureResult.Success(bitmap, ALIPAY_PACKAGE) }
+        val alipayRecognizer = LocalTextRecognizer {
+            listOf(
+                element("支付宝", 0),
+                element("支付成功", 40),
+                element("¥1.00", 80),
+            )
+        }
+
+        controller(alipayRecognizer).onWindowChanged(page(ALIPAY_PACKAGE))
+
+        assertEquals(1, processor.calls)
+        assertTrue(bitmap.isRecycled)
+    }
+
+    @Test
     fun `same normalized page inside debounce window is processed once`() = runTest {
         repeat(3) { controller.onWindowChanged(completeWechatPage()) }
 
@@ -170,6 +205,35 @@ class AutoPageRecognitionControllerTest {
     }
 
     @Test
+    fun `empty capture failure retries only after two second cooldown`() = runTest {
+        var now = 10_000L
+        var screenshotCalls = 0
+        gateway.attach {
+            screenshotCalls += 1
+            CaptureResult.Failure(CaptureFailure.INTERNAL)
+        }
+        val opaqueController = controller(
+            recognizer = recognizer,
+            elapsedRealtimeMillis = { now },
+        )
+
+        opaqueController.onWindowChanged(page(WECHAT_PACKAGE))
+        opaqueController.onWindowChanged(page(WECHAT_PACKAGE))
+        assertEquals(1, screenshotCalls)
+        assertEquals(0, processor.calls)
+
+        now += 2_000
+        opaqueController.onWindowChanged(page(WECHAT_PACKAGE))
+
+        assertEquals(2, screenshotCalls)
+        assertEquals(0, processor.calls)
+        assertEquals(
+            com.local.autobookkeeping.recognition.RecognitionDiagnostic.CAPTURE_FAILED,
+            diagnostics.state.value,
+        )
+    }
+
+    @Test
     fun `complete Alipay page is processed without screenshot`() = runTest {
         var screenshotCalls = 0
         gateway.attach {
@@ -194,6 +258,23 @@ class AutoPageRecognitionControllerTest {
         controller.onWindowChanged(page(WECHAT_PACKAGE, "发现", "朋友圈"))
 
         assertEquals(0, screenshotCalls)
+        assertEquals(0, processor.calls)
+    }
+
+    @Test
+    fun `disabled empty platform stays outside capture and OCR`() = runTest {
+        enabled = false
+        var screenshotCalls = 0
+        gateway.attach {
+            screenshotCalls += 1
+            error("disabled empty page must not be captured")
+        }
+
+        controller.onWindowChanged(page(WECHAT_PACKAGE))
+
+        assertEquals(1, settingsCalls)
+        assertEquals(0, screenshotCalls)
+        assertEquals(0, ocrCalls)
         assertEquals(0, processor.calls)
     }
 
@@ -311,6 +392,73 @@ class AutoPageRecognitionControllerTest {
     }
 
     @Test
+    fun `empty nonpayment WebView is captured once per two second cooldown`() = runTest {
+        var now = 10_000L
+        var screenshotCalls = 0
+        val bitmaps = mutableListOf<Bitmap>()
+        gateway.attach {
+            screenshotCalls += 1
+            Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888).let { bitmap ->
+                bitmaps += bitmap
+                CaptureResult.Success(bitmap, WECHAT_PACKAGE)
+            }
+        }
+        val nonpaymentRecognizer = LocalTextRecognizer {
+            listOf(element("普通网页", 0))
+        }
+        val opaqueController = controller(
+            recognizer = nonpaymentRecognizer,
+            elapsedRealtimeMillis = { now },
+        )
+
+        opaqueController.onWindowChanged(page(WECHAT_PACKAGE))
+        opaqueController.onWindowChanged(page(WECHAT_PACKAGE))
+        assertEquals(1, screenshotCalls)
+        assertEquals(0, processor.calls)
+
+        now += 2_000
+        opaqueController.onWindowChanged(page(WECHAT_PACKAGE))
+
+        assertEquals(2, screenshotCalls)
+        assertEquals(0, processor.calls)
+        assertTrue(bitmaps.all(Bitmap::isRecycled))
+    }
+
+    @Test
+    fun `empty OCR cancellation propagates and releases cooldown reservation`() = runTest {
+        var screenshotCalls = 0
+        val bitmaps = mutableListOf<Bitmap>()
+        gateway.attach {
+            screenshotCalls += 1
+            Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888).let { bitmap ->
+                bitmaps += bitmap
+                CaptureResult.Success(bitmap, WECHAT_PACKAGE)
+            }
+        }
+        var recognizeCalls = 0
+        val cancellingRecognizer = LocalTextRecognizer {
+            recognizeCalls += 1
+            if (recognizeCalls == 1) throw CancellationException("cancel")
+            completeWechatElements()
+        }
+        val opaqueController = controller(cancellingRecognizer)
+
+        val thrown = try {
+            opaqueController.onWindowChanged(page(WECHAT_PACKAGE))
+            null
+        } catch (failure: Throwable) {
+            failure
+        }
+        opaqueController.onWindowChanged(page(WECHAT_PACKAGE))
+
+        assertTrue(thrown is CancellationException)
+        assertEquals(2, screenshotCalls)
+        assertEquals(2, recognizeCalls)
+        assertEquals(1, processor.calls)
+        assertTrue(bitmaps.all(Bitmap::isRecycled))
+    }
+
+    @Test
     fun `OCR conflicting direction is a deterministic debounce terminal`() = runTest {
         var screenshotCalls = 0
         gateway.attach {
@@ -344,6 +492,7 @@ class AutoPageRecognitionControllerTest {
         },
         candidateProcessor: RecognitionCandidateProcessor = processor,
         debouncer: RecognitionDebouncer = RecognitionDebouncer(windowMillis = 1_000),
+        elapsedRealtimeMillis: () -> Long = { 10_000L },
     ) = AutoPageRecognitionController(
         settings = settings,
         captureGateway = gateway,
@@ -351,7 +500,7 @@ class AutoPageRecognitionControllerTest {
         candidateProcessor = candidateProcessor,
         diagnostics = diagnostics,
         debouncer = debouncer,
-        elapsedRealtimeMillis = { 10_000L },
+        elapsedRealtimeMillis = elapsedRealtimeMillis,
     )
 
     private class RecordingProcessor : RecognitionCandidateProcessor {
