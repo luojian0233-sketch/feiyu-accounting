@@ -134,6 +134,69 @@ class StatisticsViewModelTest {
     }
 
     @Test
+    fun `fixed Shanghai boundaries make day week month year and direction selections observable`() =
+        runTest(dispatcher) {
+            val repository = FakeLedgerRepository(
+                listOf(
+                    txAt(101, 100, Direction.EXPENSE, EXPENSE_BOUNDARY_CATEGORY, "2026-07-28T16:00:00Z"),
+                    txAt(102, 200, Direction.EXPENSE, EXPENSE_BOUNDARY_CATEGORY, "2026-07-28T15:59:59.999Z"),
+                    txAt(103, 300, Direction.EXPENSE, EXPENSE_BOUNDARY_CATEGORY, "2026-07-29T16:00:00Z"),
+                    txAt(104, 400, Direction.EXPENSE, EXPENSE_BOUNDARY_CATEGORY, "2026-07-26T15:59:59.999Z"),
+                    txAt(105, 500, Direction.EXPENSE, EXPENSE_BOUNDARY_CATEGORY, "2026-08-02T16:00:00Z"),
+                    txAt(106, 600, Direction.EXPENSE, EXPENSE_BOUNDARY_CATEGORY, "2026-06-30T15:59:59.999Z"),
+                    txAt(107, 700, Direction.EXPENSE, EXPENSE_BOUNDARY_CATEGORY, "2026-07-31T16:00:00Z"),
+                    txAt(108, 800, Direction.EXPENSE, EXPENSE_BOUNDARY_CATEGORY, "2025-12-31T15:59:59.999Z"),
+                    txAt(109, 900, Direction.EXPENSE, EXPENSE_BOUNDARY_CATEGORY, "2026-12-31T16:00:00Z"),
+                    txAt(201, 110, Direction.INCOME, INCOME_BOUNDARY_CATEGORY, "2026-07-28T16:00:00Z"),
+                    txAt(202, 220, Direction.INCOME, INCOME_BOUNDARY_CATEGORY, "2026-07-28T15:59:59.999Z"),
+                    txAt(203, 330, Direction.INCOME, INCOME_BOUNDARY_CATEGORY, "2026-07-29T16:00:00Z"),
+                    txAt(204, 440, Direction.INCOME, INCOME_BOUNDARY_CATEGORY, "2026-07-26T15:59:59.999Z"),
+                    txAt(205, 550, Direction.INCOME, INCOME_BOUNDARY_CATEGORY, "2026-08-02T16:00:00Z"),
+                    txAt(206, 660, Direction.INCOME, INCOME_BOUNDARY_CATEGORY, "2026-06-30T15:59:59.999Z"),
+                    txAt(207, 770, Direction.INCOME, INCOME_BOUNDARY_CATEGORY, "2026-07-31T16:00:00Z"),
+                    txAt(208, 880, Direction.INCOME, INCOME_BOUNDARY_CATEGORY, "2025-12-31T15:59:59.999Z"),
+                    txAt(209, 990, Direction.INCOME, INCOME_BOUNDARY_CATEGORY, "2026-12-31T16:00:00Z"),
+                ),
+            )
+            val boundaryClock = Clock.fixed(Instant.parse("2026-07-29T04:00:00Z"), zone)
+            val viewModel = StatisticsViewModel(repository, boundaryClock, zone)
+            advanceUntilIdle()
+
+            assertBoundarySelection(
+                viewModel = viewModel,
+                mode = RangeMode.DAY,
+                expectedStart = "2026-07-29",
+                expectedEnd = "2026-07-29",
+                expectedExpense = 100,
+                expectedIncome = 110,
+            )
+            assertBoundarySelection(
+                viewModel = viewModel,
+                mode = RangeMode.WEEK,
+                expectedStart = "2026-07-27",
+                expectedEnd = "2026-08-02",
+                expectedExpense = 1_300,
+                expectedIncome = 1_430,
+            )
+            assertBoundarySelection(
+                viewModel = viewModel,
+                mode = RangeMode.MONTH,
+                expectedStart = "2026-07-01",
+                expectedEnd = "2026-07-31",
+                expectedExpense = 1_000,
+                expectedIncome = 1_100,
+            )
+            assertBoundarySelection(
+                viewModel = viewModel,
+                mode = RangeMode.YEAR,
+                expectedStart = "2026-01-01",
+                expectedEnd = "2026-12-31",
+                expectedExpense = 2_800,
+                expectedIncome = 3_080,
+            )
+        }
+
+    @Test
     fun `empty summary and very large long pie sweeps stay finite and exactly close`() = runTest(dispatcher) {
         val viewModel = StatisticsViewModel(FakeLedgerRepository(), clock, zone)
         advanceUntilIdle()
@@ -263,6 +326,34 @@ class StatisticsViewModelTest {
         assertEquals(LocalDate.parse(end), viewModel.state.value.range.endInclusive)
     }
 
+    private fun assertBoundarySelection(
+        viewModel: StatisticsViewModel,
+        mode: RangeMode,
+        expectedStart: String,
+        expectedEnd: String,
+        expectedExpense: Long,
+        expectedIncome: Long,
+    ) {
+        viewModel.selectMode(mode)
+        assertEquals(mode, viewModel.state.value.rangeMode)
+        assertEquals(LocalDate.parse(expectedStart), viewModel.state.value.range.start)
+        assertEquals(LocalDate.parse(expectedEnd), viewModel.state.value.range.endInclusive)
+
+        viewModel.selectDirection(Direction.EXPENSE)
+        assertEquals(expectedExpense, viewModel.state.value.summary.totalMinor)
+        assertEquals(
+            listOf(EXPENSE_BOUNDARY_CATEGORY),
+            viewModel.state.value.summary.categories.map { it.category },
+        )
+
+        viewModel.selectDirection(Direction.INCOME)
+        assertEquals(expectedIncome, viewModel.state.value.summary.totalMinor)
+        assertEquals(
+            listOf(INCOME_BOUNDARY_CATEGORY),
+            viewModel.state.value.summary.categories.map { it.category },
+        )
+    }
+
     private fun tx(
         id: Long,
         amount: Long,
@@ -281,6 +372,20 @@ class StatisticsViewModelTest {
         pendingConfirmation = pending,
     )
 
+    private fun txAt(
+        id: Long,
+        amount: Long,
+        direction: Direction,
+        category: String,
+        instant: String,
+    ) = Transaction(
+        id = id,
+        amountMinor = amount,
+        direction = direction,
+        category = category,
+        occurredAt = Instant.parse(instant),
+    )
+
     private class FakeLedgerRepository(initial: List<Transaction> = emptyList()) : LedgerRepository {
         val rows = MutableStateFlow(initial)
         fun emit(value: List<Transaction>) {
@@ -294,5 +399,11 @@ class StatisticsViewModelTest {
         override suspend fun replaceAllInTransaction(transactions: List<Transaction>) {
             rows.value = transactions
         }
+    }
+
+
+    private companion object {
+        const val EXPENSE_BOUNDARY_CATEGORY = "边界支出"
+        const val INCOME_BOUNDARY_CATEGORY = "边界收入"
     }
 }

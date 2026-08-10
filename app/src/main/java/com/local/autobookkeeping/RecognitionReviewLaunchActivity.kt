@@ -9,8 +9,6 @@ import com.local.autobookkeeping.notification.PendingConfirmationNotifier
 import com.local.autobookkeeping.recognition.ReviewRequestCodec
 
 class RecognitionReviewLaunchActivity : ComponentActivity() {
-    private val reviewCodec = ReviewRequestCodec()
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         forward(intent)
@@ -23,6 +21,9 @@ class RecognitionReviewLaunchActivity : ComponentActivity() {
     }
 
     private fun forward(intent: Intent?) {
+        val reviewCodec = (application as AutoBookkeepingApplication)
+            .applicationGraph
+            .reviewRequestCodec
         consumeMainLaunchRequest(intent, reviewCodec)
             ?.toMainActivityIntent(this, reviewCodec)
             ?.let(::startActivity)
@@ -32,7 +33,7 @@ class RecognitionReviewLaunchActivity : ComponentActivity() {
 
 internal fun MainLaunchRequest.toMainActivityIntent(
     context: Context,
-    codec: ReviewRequestCodec = ReviewRequestCodec(),
+    codec: ReviewRequestCodec,
 ): Intent = Intent(context, MainActivity::class.java)
     .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
     .also { intent ->

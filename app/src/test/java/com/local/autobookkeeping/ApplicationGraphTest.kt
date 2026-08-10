@@ -1,11 +1,22 @@
 package com.local.autobookkeeping
 
+import android.graphics.Bitmap
 import androidx.room.Room
 import com.local.autobookkeeping.data.db.AppDatabase
+import com.local.autobookkeeping.domain.model.RecognitionOutcome
+import com.local.autobookkeeping.recognition.ObservedTextElement
+import com.local.autobookkeeping.recognition.PageSnapshot
+import com.local.autobookkeeping.recognition.TextBounds
+import com.local.autobookkeeping.recognition.accessibility.AutoPageRecognitionController
+import com.local.autobookkeeping.recognition.capture.CaptureResult
 import com.local.autobookkeeping.recognition.capture.LocalTextRecognizer
 import java.nio.file.Files
 import java.nio.file.Path
-import org.junit.Assert.assertSame
+import java.time.Instant
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -16,36 +27,72 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35])
 class ApplicationGraphTest {
     @Test
-    fun `application graph owns one recognition runtime`() {
+    fun `graph controllers share provider recognizer coordinator store and repository behavior`() = runTest {
         val application = RuntimeEnvironment.getApplication()
+        var databaseProviderCalls = 0
         val database = Room.inMemoryDatabaseBuilder(
             application,
             AppDatabase::class.java,
         ).build()
-        val recognizer = LocalTextRecognizer { emptyList() }
+        var recognizerProviderCalls = 0
+        var recognizeCalls = 0
+        val recognizer = LocalTextRecognizer {
+            recognizeCalls += 1
+            if (recognizeCalls == 1) {
+                recognizedPage("微信支付", "GraphAuto", "¥1.00")
+            } else {
+                recognizedPage("交易详情", "GraphScreenshot", "¥2.00")
+            }
+        }
 
         try {
             val graph = ApplicationGraph(
                 application = application,
-                databaseProvider = { database },
-                localTextRecognizerProvider = { recognizer },
+                databaseProvider = {
+                    databaseProviderCalls += 1
+                    database
+                },
+                localTextRecognizerProvider = {
+                    recognizerProviderCalls += 1
+                    recognizer
+                },
             )
 
-            assertSame(graph.recognitionStore, graph.recognitionStore)
-            assertSame(graph.merchantClassifier, graph.merchantClassifier)
-            assertSame(graph.recognitionCoordinator, graph.recognitionCoordinator)
-            assertSame(recognizer, graph.localTextRecognizer)
-            assertSame(
-                graph.automaticPageRecognitionController,
-                graph.automaticPageRecognitionController,
+            graph.settingsRepository.setAutoBookkeepingEnabled(true)
+            graph.settingsRepository.setWechatEnabled(true)
+            graph.settingsRepository.setAutoSaveHighConfidence(false)
+            val automaticBitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888)
+            graph.accessibilityCaptureGateway.attach {
+                CaptureResult.Success(
+                    bitmap = automaticBitmap,
+                    foregroundPackage = AutoPageRecognitionController.WECHAT_PACKAGE,
+                )
+            }
+            graph.automaticPageRecognitionController.onWindowChanged(
+                PageSnapshot(
+                    packageName = AutoPageRecognitionController.WECHAT_PACKAGE,
+                    elements = listOf(
+                        element("微信支付", 0),
+                        element("账单详情", 40),
+                    ),
+                    observedAt = NOW,
+                ),
             )
-            assertSame(
-                graph.screenshotRecognitionController,
-                graph.screenshotRecognitionController,
+            val screenshotBitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888)
+            val screenshotOutcome = graph.screenshotRecognitionController.process(
+                bitmap = screenshotBitmap,
+                foregroundPackage = null,
+                observedAt = NOW.plusSeconds(3_600),
             )
-            assertSame(graph.automaticBookkeepingAccess, graph.automaticBookkeepingAccess)
-            assertSame(graph.reviewRequestCodec, graph.reviewRequestCodec)
-            assertSame(graph.pendingConfirmationNotifier, graph.pendingConfirmationNotifier)
+
+            assertTrue(screenshotOutcome is RecognitionOutcome.Saved)
+            assertEquals(2, graph.ledgerRepository.observeTransactions().first { it.size == 2 }.size)
+            assertEquals(2, database.transactionDao().allRecognitionReceipts().size)
+            assertEquals(1, databaseProviderCalls)
+            assertEquals(1, recognizerProviderCalls)
+            assertEquals(2, recognizeCalls)
+            assertTrue(automaticBitmap.isRecycled)
+            assertTrue(screenshotBitmap.isRecycled)
         } finally {
             database.close()
         }
@@ -62,6 +109,8 @@ class ApplicationGraphTest {
             "AutoPageRecognitionController(",
             "ScreenshotRecognitionController(",
             "AutomaticBookkeepingAccess(",
+            "ReviewRequestCodec(",
+            "PendingConfirmationNotifier(",
         )
         val offenders = ENTRY_POINTS.flatMap { relative ->
             val path = projectRoot().resolve(relative)
@@ -83,11 +132,26 @@ class ApplicationGraphTest {
     private companion object {
         val ENTRY_POINTS = listOf(
             "app/src/main/java/com/local/autobookkeeping/MainActivity.kt",
+            "app/src/main/java/com/local/autobookkeeping/RecognitionReviewLaunchActivity.kt",
             "app/src/main/java/com/local/autobookkeeping/notification/PaymentNotificationService.kt",
             "app/src/main/java/com/local/autobookkeeping/recognition/accessibility/PaymentPageAccessibilityService.kt",
             "app/src/main/java/com/local/autobookkeeping/recognition/tile/ScreenshotBookkeepingTileService.kt",
             "app/src/main/java/com/local/autobookkeeping/recognition/tile/ScreenshotCaptureActivity.kt",
             "app/src/main/java/com/local/autobookkeeping/recognition/tile/ProjectionCaptureService.kt",
+        )
+
+        val NOW: Instant = Instant.parse("2026-08-10T04:00:00Z")
+
+        fun recognizedPage(signature: String, merchant: String, amount: String) = listOf(
+            element(signature, 0),
+            element("支付成功", 40),
+            element("商户：$merchant", 80),
+            element("支付金额：$amount", 120),
+        )
+
+        fun element(text: String, top: Int) = ObservedTextElement(
+            text = text,
+            bounds = TextBounds(0, top, 300, top + 30),
         )
     }
 }

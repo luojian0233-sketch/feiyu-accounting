@@ -128,7 +128,7 @@ internal const val SAVED_INTENT_DATA = "autobookkeeping://recognition/saved"
 internal fun consumeInitialMainLaunchRequest(
     intent: Intent?,
     savedInstanceState: Bundle?,
-    codec: ReviewRequestCodec = ReviewRequestCodec(),
+    codec: ReviewRequestCodec,
 ): MainLaunchRequest? = if (savedInstanceState == null) {
     consumeMainLaunchRequest(intent, codec)
 } else {
@@ -143,7 +143,7 @@ sealed interface MainLaunchRequest {
 
 internal fun consumeMainLaunchRequest(
     intent: Intent?,
-    codec: ReviewRequestCodec = ReviewRequestCodec(),
+    codec: ReviewRequestCodec,
 ): MainLaunchRequest? {
     if (intent == null) return null
     val request = try {

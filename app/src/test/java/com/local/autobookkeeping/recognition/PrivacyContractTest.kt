@@ -43,9 +43,11 @@ class PrivacyContractTest {
         }.newDocumentBuilder().parse(manifestPath.toFile())
         val permissions = document.getElementsByTagName("uses-permission")
         val requested = (0 until permissions.length).mapNotNull { index ->
-            permissions.item(index).attributes
-                .getNamedItemNS(ANDROID_NAMESPACE, "name")
-                ?.nodeValue
+            permissions.item(index).takeUnless { permission ->
+                permission.attributes
+                    .getNamedItemNS(TOOLS_NAMESPACE, "node")
+                    ?.nodeValue == "remove"
+            }?.attributes?.getNamedItemNS(ANDROID_NAMESPACE, "name")?.nodeValue
         }.toSet()
 
         assertFalse("android.permission.INTERNET" in requested)
@@ -76,5 +78,6 @@ class PrivacyContractTest {
 
     private companion object {
         const val ANDROID_NAMESPACE = "http://schemas.android.com/apk/res/android"
+        const val TOOLS_NAMESPACE = "http://schemas.android.com/tools"
     }
 }

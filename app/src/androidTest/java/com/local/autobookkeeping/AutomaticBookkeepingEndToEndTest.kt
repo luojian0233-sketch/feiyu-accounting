@@ -1,32 +1,32 @@
 package com.local.autobookkeeping
 
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.local.autobookkeeping.data.db.AppDatabase
 import com.local.autobookkeeping.domain.model.CaptureChannel
-import com.local.autobookkeeping.domain.model.DateRange
 import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.domain.model.PaymentPlatform
 import com.local.autobookkeeping.domain.model.RecognitionCandidate
 import com.local.autobookkeeping.domain.model.RecognitionOutcome
-import com.local.autobookkeeping.domain.model.Source
-import com.local.autobookkeeping.domain.model.StatisticsSummary
 import com.local.autobookkeeping.domain.model.TransactionEventKind
-import com.local.autobookkeeping.domain.statistics.StatisticsEngine
 import com.local.autobookkeeping.ui.statistics.RangeMode
 import com.local.autobookkeeping.ui.statistics.STATISTICS_TOTAL_TAG
 import com.local.autobookkeeping.ui.statistics.StatisticsScreen
-import com.local.autobookkeeping.ui.statistics.StatisticsUiState
+import com.local.autobookkeeping.ui.statistics.StatisticsViewModel
+import com.local.autobookkeeping.ui.statistics.statisticsCategoryRowTag
+import com.local.autobookkeeping.ui.statistics.statisticsDirectionTag
+import com.local.autobookkeeping.ui.statistics.statisticsRangeModeTag
 import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
@@ -68,190 +68,233 @@ class AutomaticBookkeepingEndToEndTest {
     }
 
     @Test
-    fun confirmedSanitizedExpenseAndIncomeAppearExactlyOnceInLedgerAndEveryStatistic() =
+    fun confirmedRecognitionDrivesViewModelRangeAndDirectionControlsAtShanghaiBoundaries() {
+        val fixtures = boundaryFixtures()
         runBlocking {
-            val anchor = LocalDate.now(FIXED_CLOCK)
-            assertEquals(LocalDate.of(2026, 7, 29), anchor)
+            fixtures.forEach { fixture ->
+                confirm(graph.recognitionCoordinator.process(fixture.candidate), fixture.category)
+            }
 
-            val expense = candidate(
-                platform = PaymentPlatform.WECHAT,
-                channel = CaptureChannel.NOTIFICATION,
-                direction = Direction.EXPENSE,
-                amountMinor = 1_234,
-                merchant = "Sanitized Cafe",
-                digest = EXPENSE_DIGEST,
+            assertEquals(
+                RecognitionOutcome.Duplicate,
+                graph.recognitionCoordinator.process(fixtures.first().candidate),
             )
-            val income = candidate(
-                platform = PaymentPlatform.ALIPAY,
-                channel = CaptureChannel.SCREENSHOT,
-                direction = Direction.INCOME,
-                amountMinor = 5_678,
-                merchant = "Sanitized Client",
-                digest = INCOME_DIGEST,
-            )
-
-            val pendingExpense = graph.recognitionCoordinator.process(expense).pendingId()
-            val pendingIncome = graph.recognitionCoordinator.process(income).pendingId()
-            confirm(pendingExpense, EXPENSE_CATEGORY)
-            confirm(pendingIncome, INCOME_CATEGORY)
-
-            assertEquals(RecognitionOutcome.Duplicate, graph.recognitionCoordinator.process(expense))
-            assertEquals(RecognitionOutcome.Duplicate, graph.recognitionCoordinator.process(income))
-
             val ledger = graph.ledgerRepository.observeTransactions().first()
-            assertEquals(2, ledger.size)
-            assertEquals(1, ledger.count { it.direction == Direction.EXPENSE })
-            assertEquals(1, ledger.count { it.direction == Direction.INCOME })
-            assertEquals(1, ledger.count { it.source == Source.NOTIFICATION })
-            assertEquals(1, ledger.count { it.source == Source.SCREENSHOT })
+            assertEquals(18, ledger.size)
+            assertEquals(9, ledger.count { it.direction == Direction.EXPENSE })
+            assertEquals(9, ledger.count { it.direction == Direction.INCOME })
             assertTrue(ledger.none { it.pendingConfirmation })
-
-            val ranges = listOf(
-                RangeMode.DAY to DateRange(
-                    LocalDate.of(2026, 7, 29),
-                    LocalDate.of(2026, 7, 29),
-                    ZONE,
-                ),
-                RangeMode.WEEK to DateRange(
-                    LocalDate.of(2026, 7, 27),
-                    LocalDate.of(2026, 8, 2),
-                    ZONE,
-                ),
-                RangeMode.MONTH to DateRange(
-                    LocalDate.of(2026, 7, 1),
-                    LocalDate.of(2026, 7, 31),
-                    ZONE,
-                ),
-                RangeMode.YEAR to DateRange(
-                    LocalDate.of(2026, 1, 1),
-                    LocalDate.of(2026, 12, 31),
-                    ZONE,
-                ),
-            )
-            val summaries = ranges.associate { (mode, range) ->
-                mode to mapOf(
-                    Direction.EXPENSE to StatisticsEngine.summarize(
-                        ledger,
-                        range,
-                        Direction.EXPENSE,
-                    ),
-                    Direction.INCOME to StatisticsEngine.summarize(
-                        ledger,
-                        range,
-                        Direction.INCOME,
-                    ),
-                )
-            }
-            summaries.values.forEach { byDirection ->
-                assertSummary(byDirection.getValue(Direction.EXPENSE), 1_234, EXPENSE_CATEGORY)
-                assertSummary(byDirection.getValue(Direction.INCOME), 5_678, INCOME_CATEGORY)
-            }
-
-            var state by mutableStateOf(
-                stateFor(
-                    mode = RangeMode.DAY,
-                    range = ranges.first().second,
-                    direction = Direction.EXPENSE,
-                    summary = summaries.getValue(RangeMode.DAY).getValue(Direction.EXPENSE),
-                ),
-            )
-            compose.setContent { StatisticsScreen(state = state) }
-            ranges.forEach { (mode, range) ->
-                assertPieDirection(
-                    update = {
-                        state = stateFor(
-                            mode,
-                            range,
-                            Direction.EXPENSE,
-                            summaries.getValue(mode).getValue(Direction.EXPENSE),
-                        )
-                    },
-                    amount = "12.34",
-                    category = EXPENSE_CATEGORY,
-                )
-                assertPieDirection(
-                    update = {
-                        state = stateFor(
-                            mode,
-                            range,
-                            Direction.INCOME,
-                            summaries.getValue(mode).getValue(Direction.INCOME),
-                        )
-                    },
-                    amount = "56.78",
-                    category = INCOME_CATEGORY,
-                )
-            }
         }
 
-    private suspend fun confirm(transactionId: Long, category: String) {
-        val pending = requireNotNull(graph.ledgerRepository.findById(transactionId))
-        assertTrue(pending.pendingConfirmation)
+        val viewModel = StatisticsViewModel(
+            repository = graph.ledgerRepository,
+            clock = FIXED_CLOCK,
+            zone = ZONE,
+        )
+        compose.setContent {
+            val state by viewModel.state.collectAsState()
+            StatisticsScreen(
+                state = state,
+                onModeSelected = viewModel::selectMode,
+                onDirectionSelected = viewModel::selectDirection,
+                onMoveRange = viewModel::moveRange,
+                onDateSelected = viewModel::selectDate,
+                onCustomRangeSelected = { start, end -> viewModel.selectCustom(start, end) },
+            )
+        }
+
+        assertSelection(
+            viewModel,
+            RangeMode.DAY,
+            Direction.EXPENSE,
+            "2026-07-29",
+            "2026-07-29",
+            "1.00",
+            EXPENSE_CATEGORY,
+            INCOME_CATEGORY,
+        )
+        assertSelection(
+            viewModel,
+            RangeMode.DAY,
+            Direction.INCOME,
+            "2026-07-29",
+            "2026-07-29",
+            "1.10",
+            INCOME_CATEGORY,
+            EXPENSE_CATEGORY,
+        )
+        assertSelection(
+            viewModel,
+            RangeMode.WEEK,
+            Direction.EXPENSE,
+            "2026-07-27",
+            "2026-08-02",
+            "13.00",
+            EXPENSE_CATEGORY,
+            INCOME_CATEGORY,
+        )
+        assertSelection(
+            viewModel,
+            RangeMode.WEEK,
+            Direction.INCOME,
+            "2026-07-27",
+            "2026-08-02",
+            "14.30",
+            INCOME_CATEGORY,
+            EXPENSE_CATEGORY,
+        )
+        assertSelection(
+            viewModel,
+            RangeMode.MONTH,
+            Direction.EXPENSE,
+            "2026-07-01",
+            "2026-07-31",
+            "10.00",
+            EXPENSE_CATEGORY,
+            INCOME_CATEGORY,
+        )
+        assertSelection(
+            viewModel,
+            RangeMode.MONTH,
+            Direction.INCOME,
+            "2026-07-01",
+            "2026-07-31",
+            "11.00",
+            INCOME_CATEGORY,
+            EXPENSE_CATEGORY,
+        )
+        assertSelection(
+            viewModel,
+            RangeMode.YEAR,
+            Direction.EXPENSE,
+            "2026-01-01",
+            "2026-12-31",
+            "28.00",
+            EXPENSE_CATEGORY,
+            INCOME_CATEGORY,
+        )
+        assertSelection(
+            viewModel,
+            RangeMode.YEAR,
+            Direction.INCOME,
+            "2026-01-01",
+            "2026-12-31",
+            "30.80",
+            INCOME_CATEGORY,
+            EXPENSE_CATEGORY,
+        )
+    }
+
+    private suspend fun confirm(outcome: RecognitionOutcome, category: String) {
+        assertTrue(outcome is RecognitionOutcome.Saved)
+        val transactionId = (outcome as RecognitionOutcome.Saved).transactionId
+        val row = requireNotNull(graph.ledgerRepository.findById(transactionId))
         graph.recognitionStore.confirmAndRemember(
-            pending.copy(category = category, pendingConfirmation = false),
+            row.copy(category = category, pendingConfirmation = false),
         )
         assertFalse(requireNotNull(graph.ledgerRepository.findById(transactionId)).pendingConfirmation)
     }
 
-    private fun RecognitionOutcome.pendingId(): Long {
-        assertTrue(this is RecognitionOutcome.Saved && pending)
-        return (this as RecognitionOutcome.Saved).transactionId
-    }
+    private fun assertSelection(
+        viewModel: StatisticsViewModel,
+        mode: RangeMode,
+        direction: Direction,
+        start: String,
+        end: String,
+        amount: String,
+        category: String,
+        oppositeCategory: String,
+    ) {
+        compose.onNodeWithTag(statisticsRangeModeTag(mode)).performClick()
+        compose.onNodeWithTag(statisticsDirectionTag(direction)).performClick()
+        compose.waitUntil(timeoutMillis = 5_000) {
+            val state = viewModel.state.value
+            state.rangeMode == mode &&
+                state.direction == direction &&
+                state.range.start == LocalDate.parse(start) &&
+                state.range.endInclusive == LocalDate.parse(end)
+        }
 
-    private fun assertSummary(summary: StatisticsSummary, amount: Long, category: String) {
-        assertEquals(amount, summary.totalMinor)
-        assertEquals(1, summary.categories.size)
-        assertEquals(category, summary.categories.single().category)
-        assertEquals(amount, summary.categories.single().amountMinor)
-    }
-
-    private fun assertPieDirection(update: () -> Unit, amount: String, category: String) {
-        compose.runOnIdle(update)
+        compose.onNodeWithTag(statisticsRangeModeTag(mode)).assertIsSelected()
+        compose.onNodeWithTag(statisticsDirectionTag(direction)).assertIsSelected()
         compose.onNodeWithTag(STATISTICS_TOTAL_TAG).assertTextContains(amount)
         compose.onNode(
             hasTestTag("statistics-pie") and
                 hasContentDescription(category, substring = true),
         ).assertIsDisplayed()
+        compose.onNodeWithTag(statisticsCategoryRowTag(category)).assertIsDisplayed()
+        compose.onNodeWithTag(statisticsCategoryRowTag(oppositeCategory)).assertDoesNotExist()
     }
 
-    private fun stateFor(
-        mode: RangeMode,
-        range: DateRange,
-        direction: Direction,
-        summary: StatisticsSummary,
-    ) = StatisticsUiState(
-        rangeMode = mode,
-        range = range,
-        direction = direction,
-        summary = summary,
-    )
+    private fun boundaryFixtures(): List<Fixture> {
+        val instants = listOf(
+            "2026-07-28T16:00:00Z",
+            "2026-07-28T15:59:59.999Z",
+            "2026-07-29T16:00:00Z",
+            "2026-07-26T15:59:59.999Z",
+            "2026-08-02T16:00:00Z",
+            "2026-06-30T15:59:59.999Z",
+            "2026-07-31T16:00:00Z",
+            "2025-12-31T15:59:59.999Z",
+            "2026-12-31T16:00:00Z",
+        )
+        val expenseAmounts = listOf(100L, 200L, 300L, 400L, 500L, 600L, 700L, 800L, 900L)
+        val incomeAmounts = listOf(110L, 220L, 330L, 440L, 550L, 660L, 770L, 880L, 990L)
+        return instants.flatMapIndexed { index, instant ->
+            listOf(
+                Fixture(
+                    candidate(
+                        index = index * 2,
+                        direction = Direction.EXPENSE,
+                        amountMinor = expenseAmounts[index],
+                        occurredAt = Instant.parse(instant),
+                    ),
+                    EXPENSE_CATEGORY,
+                ),
+                Fixture(
+                    candidate(
+                        index = index * 2 + 1,
+                        direction = Direction.INCOME,
+                        amountMinor = incomeAmounts[index],
+                        occurredAt = Instant.parse(instant),
+                    ),
+                    INCOME_CATEGORY,
+                ),
+            )
+        }
+    }
 
     private fun candidate(
-        platform: PaymentPlatform,
-        channel: CaptureChannel,
+        index: Int,
         direction: Direction,
         amountMinor: Long,
-        merchant: String,
-        digest: String,
+        occurredAt: Instant,
     ) = RecognitionCandidate(
-        platform = platform,
-        channel = channel,
-        eventKind = TransactionEventKind.PAYMENT,
+        platform = if (direction == Direction.EXPENSE) PaymentPlatform.WECHAT else PaymentPlatform.ALIPAY,
+        channel = if (direction == Direction.EXPENSE) CaptureChannel.NOTIFICATION else CaptureChannel.SCREENSHOT,
+        eventKind = if (direction == Direction.EXPENSE) {
+            TransactionEventKind.PAYMENT
+        } else {
+            TransactionEventKind.RECEIPT
+        },
         amountMinor = amountMinor,
         direction = direction,
-        merchant = merchant,
+        merchant = "BoundaryMerchant$index",
         account = null,
-        occurredAt = FIXED_CLOCK.instant(),
+        occurredAt = occurredAt,
         confidence = 91,
-        evidenceDigest = digest,
+        evidenceDigest = "%02x".format(index + 1).repeat(32),
+    )
+
+    private data class Fixture(
+        val candidate: RecognitionCandidate,
+        val category: String,
     )
 
     private companion object {
         val ZONE: ZoneId = ZoneId.of("Asia/Shanghai")
-        val FIXED_CLOCK: Clock = Clock.fixed(Instant.parse("2026-07-29T08:30:00Z"), ZONE)
+        val FIXED_CLOCK: Clock = Clock.fixed(Instant.parse("2026-07-29T04:00:00Z"), ZONE)
         const val EXPENSE_CATEGORY = "Task13 Expense"
         const val INCOME_CATEGORY = "Task13 Income"
-        val EXPENSE_DIGEST = "11".repeat(32)
-        val INCOME_DIGEST = "22".repeat(32)
     }
 }

@@ -39,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -54,6 +55,12 @@ const val STATISTICS_TOTAL_TAG = "statistics-total"
 
 fun statisticsCategoryRowTag(category: String): String =
     "statistics-category-$category"
+
+fun statisticsRangeModeTag(mode: RangeMode): String =
+    "statistics-range-${mode.name.lowercase()}"
+
+fun statisticsDirectionTag(direction: Direction): String =
+    "statistics-direction-${direction.name.lowercase()}"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -91,6 +98,9 @@ fun StatisticsScreen(
                             onModeSelected(mode)
                             if (mode == RangeMode.CUSTOM) pickerOpen = true
                         },
+                        modifier = Modifier
+                            .testTag(statisticsRangeModeTag(mode))
+                            .semantics { selected = state.rangeMode == mode },
                         label = { Text(mode.label, style = MaterialTheme.typography.labelMedium) },
                         colors = AssistChipDefaults.assistChipColors(
                             containerColor = if (state.rangeMode == mode) {
@@ -125,10 +135,10 @@ fun StatisticsScreen(
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                DirectionChip("支出", state.direction == Direction.EXPENSE) {
+                DirectionChip(Direction.EXPENSE, state.direction == Direction.EXPENSE) {
                     onDirectionSelected(Direction.EXPENSE)
                 }
-                DirectionChip("收入", state.direction == Direction.INCOME) {
+                DirectionChip(Direction.INCOME, state.direction == Direction.INCOME) {
                     onDirectionSelected(Direction.INCOME)
                 }
             }
@@ -226,9 +236,13 @@ private fun RangeArrow(text: String, description: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun DirectionChip(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun DirectionChip(direction: Direction, selected: Boolean, onClick: () -> Unit) {
+    val label = if (direction == Direction.EXPENSE) "支出" else "收入"
     AssistChip(
         onClick = onClick,
+        modifier = Modifier
+            .testTag(statisticsDirectionTag(direction))
+            .semantics { this.selected = selected },
         label = { Text(label, style = MaterialTheme.typography.bodyMedium) },
         colors = AssistChipDefaults.assistChipColors(
             containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
