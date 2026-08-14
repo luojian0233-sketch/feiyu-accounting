@@ -9,12 +9,11 @@ internal object TrustedAccessibilityAnchorMerger {
         original: PageSnapshot,
         ocrElements: List<ObservedTextElement>,
     ): List<ObservedTextElement> {
-        if (original.packageName != ALIPAY_PACKAGE) return ocrElements
+        if (!hasTrustedContext(original)) return ocrElements
 
         val trustedAnchors = original.elements.filter { element ->
             element.text.trim() in TRUSTED_DETAIL_ANCHORS
         }
-        if (trustedAnchors.isEmpty()) return ocrElements
 
         val seen = ocrElements.mapTo(mutableSetOf()) { it.anchorKey() }
         return buildList {
@@ -24,6 +23,10 @@ internal object TrustedAccessibilityAnchorMerger {
             }
         }
     }
+
+    internal fun hasTrustedContext(snapshot: PageSnapshot): Boolean =
+        snapshot.packageName == ALIPAY_PACKAGE &&
+            snapshot.elements.any { it.text.trim() in TRUSTED_DETAIL_ANCHORS }
 
     private fun ObservedTextElement.anchorKey() = AnchorKey(
         text = text.trim(),
