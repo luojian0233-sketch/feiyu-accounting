@@ -283,7 +283,8 @@ class AutoPageRecognitionController internal constructor(
                 diagnostics.record(RecognitionDiagnostic.OCR_FAILED)
                 return false
             }
-            val elements = TrustedAccessibilityAnchorMerger.merge(original, ocrElements)
+            val recoveredElements = TrustedAlipayBareAmountRecovery.recover(original, ocrElements)
+            val elements = TrustedAccessibilityAnchorMerger.merge(original, recoveredElements)
             val ocrSnapshot = PageSnapshot(
                 packageName = original.packageName,
                 elements = elements,

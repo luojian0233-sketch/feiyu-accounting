@@ -96,6 +96,28 @@ class AutoPageRecognitionControllerTest {
     }
 
     @Test
+    fun `trusted Alipay detail recovers one OCR bare two-decimal amount`() = runTest {
+        val bitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888)
+        gateway.attach { CaptureResult.Success(bitmap, ALIPAY_PACKAGE) }
+        val bareAmountRecognizer = LocalTextRecognizer {
+            listOf(
+                element("中国电信", 40),
+                element("1.00", 80),
+            )
+        }
+
+        controller(bareAmountRecognizer).onWindowChanged(
+            page(ALIPAY_PACKAGE, "账单详情"),
+        )
+
+        val candidate = processor.candidates.single()
+        assertEquals(PaymentPlatform.ALIPAY, candidate.platform)
+        assertEquals(Direction.EXPENSE, candidate.direction)
+        assertEquals(100L, candidate.amountMinor)
+        assertTrue(bitmap.isRecycled)
+    }
+
+    @Test
     fun `empty WeChat WebView uses one in-memory OCR fallback`() = runTest {
         var screenshotCalls = 0
         val bitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888)
