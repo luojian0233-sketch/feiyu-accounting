@@ -2,6 +2,8 @@ package com.local.autobookkeeping.recognition.accessibility
 
 import android.graphics.Bitmap
 import com.local.autobookkeeping.data.NotificationSourceSettings
+import com.local.autobookkeeping.domain.model.Direction
+import com.local.autobookkeeping.domain.model.PaymentPlatform
 import com.local.autobookkeeping.domain.model.RecognitionCandidate
 import com.local.autobookkeeping.domain.model.RecognitionOutcome
 import com.local.autobookkeeping.recognition.InMemoryRecognitionDiagnostics
@@ -71,6 +73,25 @@ class AutoPageRecognitionControllerTest {
         assertEquals(1, screenshotCalls)
         assertEquals(1, ocrCalls)
         assertEquals(1, processor.calls)
+        assertTrue(bitmap.isRecycled)
+    }
+
+    @Test
+    fun `exact Alipay detail accessibility anchor can anchor OCR-only amount`() = runTest {
+        val bitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888)
+        gateway.attach { CaptureResult.Success(bitmap, ALIPAY_PACKAGE) }
+        val amountOnlyRecognizer = LocalTextRecognizer {
+            listOf(element("¥1.00", 80))
+        }
+
+        controller(amountOnlyRecognizer).onWindowChanged(
+            page(ALIPAY_PACKAGE, "账单详情"),
+        )
+
+        val candidate = processor.candidates.single()
+        assertEquals(PaymentPlatform.ALIPAY, candidate.platform)
+        assertEquals(Direction.EXPENSE, candidate.direction)
+        assertEquals(100L, candidate.amountMinor)
         assertTrue(bitmap.isRecycled)
     }
 
@@ -504,9 +525,11 @@ class AutoPageRecognitionControllerTest {
     )
 
     private class RecordingProcessor : RecognitionCandidateProcessor {
-        var calls = 0
+        val candidates = mutableListOf<RecognitionCandidate>()
+        val calls: Int get() = candidates.size
+
         override suspend fun process(candidate: RecognitionCandidate): RecognitionOutcome {
-            calls += 1
+            candidates += candidate
             return RecognitionOutcome.Duplicate
         }
     }

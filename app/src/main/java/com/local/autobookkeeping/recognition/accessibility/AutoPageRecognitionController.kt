@@ -275,7 +275,7 @@ class AutoPageRecognitionController internal constructor(
                 diagnostics.record(RecognitionDiagnostic.CAPTURE_FAILED)
                 return false
             }
-            val elements = try {
+            val ocrElements = try {
                 textRecognizer.recognize(bitmap)
             } catch (cancellation: CancellationException) {
                 throw cancellation
@@ -283,6 +283,7 @@ class AutoPageRecognitionController internal constructor(
                 diagnostics.record(RecognitionDiagnostic.OCR_FAILED)
                 return false
             }
+            val elements = TrustedAccessibilityAnchorMerger.merge(original, ocrElements)
             val ocrSnapshot = PageSnapshot(
                 packageName = original.packageName,
                 elements = elements,
