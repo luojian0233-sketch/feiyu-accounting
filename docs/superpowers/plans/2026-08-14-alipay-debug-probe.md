@@ -82,11 +82,6 @@ Create tests that instantiate the wished-for `AlipayDebugProbe` and assert these
     assertEquals("DUPLICATE", resultFor(RecognitionOutcome.Duplicate))
 }
 
-@Test fun `debug manifest restricts the explicit receiver to dump permission`() {
-    val manifest = File("src/debug/AndroidManifest.xml").readText(Charsets.UTF_8)
-    assertTrue(manifest.contains(".debug.AlipayDebugProbeReceiver"))
-    assertTrue(manifest.contains("android:permission=\"android.permission.DUMP\""))
-}
 ```
 
 - [ ] **Step 2: Run the focused tests and verify RED**
@@ -139,6 +134,8 @@ gradlew.bat :app:assembleDebug --no-daemon --max-workers=1 --console=plain
 ```
 
 Expected: focused tests pass and `app/build/outputs/apk/debug/app-debug.apk` is produced.
+
+Then inspect `app/build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml` and verify the packaged receiver has exactly `android:exported="true"` and `android:permission="android.permission.DUMP"`. This checks the built artifact rather than grepping the source declaration.
 
 ### Task 2: Device boundary diagnosis and cleanup
 
