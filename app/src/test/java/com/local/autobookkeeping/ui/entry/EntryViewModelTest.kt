@@ -26,6 +26,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class EntryViewModelTest {
@@ -144,6 +145,40 @@ class EntryViewModelTest {
         assertEquals("通讯", confirmation.saved.single().category)
         assertEquals("中国电信", confirmation.saved.single().merchant)
         assertEquals(false, confirmation.saved.single().pendingConfirmation)
+    }
+
+    @Test
+    fun `blank merchant pending record confirms with selected direction and category`() =
+        runTest(dispatcher) {
+            val confirmation = FakeRecognitionConfirmation()
+            val viewModel = EntryViewModel(
+                repository = DelayedRepository(releaseImmediately = true),
+                recognitionConfirmation = confirmation,
+            )
+            viewModel.edit(
+                pendingTelecomTransaction().copy(
+                    merchant = "   ",
+                    direction = Direction.INCOME,
+                ),
+            )
+            viewModel.update { it.copy(category = "其他") }
+
+            val result = viewModel.confirmPending()
+
+            assertTrue(result.isSuccess)
+            assertEquals("", confirmation.saved.single().merchant)
+            assertEquals(Direction.INCOME, confirmation.saved.single().direction)
+            assertEquals("其他", confirmation.saved.single().category)
+            assertEquals(false, confirmation.saved.single().pendingConfirmation)
+        }
+
+    @Test
+    fun `blank merchant does not bypass amount and category validation`() {
+        val blankAmount = EntryDraft(amountText = "", category = "其他", merchant = "")
+        val blankCategory = EntryDraft(amountText = "1.00", category = "", merchant = "")
+
+        assertThrows<EntryValidationException> { blankAmount.toTransaction(confirmPending = true) }
+        assertThrows<EntryValidationException> { blankCategory.toTransaction(confirmPending = true) }
     }
 
     @Test

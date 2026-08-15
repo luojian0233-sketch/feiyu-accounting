@@ -57,9 +57,6 @@ data class EntryDraft(
         }
         if (amountMinor <= 0) throw EntryValidationException(AMOUNT_ERROR)
         if (category.isBlank()) throw EntryValidationException("请选择分类")
-        if (pendingConfirmation && confirmPending && (merchant.isBlank() || category.isBlank())) {
-            throw EntryValidationException("确认待核对记录前，请填写商户并选择分类")
-        }
         return Transaction(
             id = id ?: 0,
             amountMinor = amountMinor,
