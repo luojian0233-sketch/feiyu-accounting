@@ -14,7 +14,9 @@
     <application
         android:name=".AutoBookkeepingApplication"
         android:allowBackup="false"
-        android:label="自记账"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
         android:theme="@style/Theme.AutoBookkeeping">
         <activity
