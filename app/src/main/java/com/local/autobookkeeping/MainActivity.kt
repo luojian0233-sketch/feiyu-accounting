@@ -50,8 +50,10 @@ import com.local.autobookkeeping.data.LedgerRepository
 import com.local.autobookkeeping.data.RecognitionConfirmationOperations
 import com.local.autobookkeeping.data.SettingsOperations
 import com.local.autobookkeeping.backup.BackupOperations
+import com.local.autobookkeeping.ui.entry.CategorySelectorScreen
 import com.local.autobookkeeping.ui.entry.EntryScreen
 import com.local.autobookkeeping.ui.entry.EntryViewModel
+import com.local.autobookkeeping.ui.entry.defaultEntryCategoryChoices
 import com.local.autobookkeeping.ui.home.HomeScreen
 import com.local.autobookkeeping.ui.home.HomeViewModel
 import com.local.autobookkeeping.ui.home.NotificationPermissionProvider
@@ -213,6 +215,8 @@ internal fun AutoBookkeepingRoot(
 ) {
     val navigator = rememberSaveable(saver = AppNavigator.Saver) { AppNavigator() }
     val current = navigator.current
+    var categorySelectorOpen by rememberSaveable { mutableStateOf(false) }
+    val isCategorySelector = current == AppDestination.ENTRY && categorySelectorOpen
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val automaticAccess = automaticBookkeepingAccess
@@ -322,6 +326,7 @@ internal fun AutoBookkeepingRoot(
             is MainLaunchUiState.Pending -> mainLaunchViewModel?.loadPending(launch.token)
             is MainLaunchUiState.Review -> Unit
             is MainLaunchUiState.OpenPending -> {
+                categorySelectorOpen = false
                 entryViewModel.edit(launch.transaction)
                 navigator.openEntry()
                 mainLaunchViewModel?.acknowledge(launch.token)
@@ -357,6 +362,11 @@ internal fun AutoBookkeepingRoot(
             navigator.updateLedgerFilterSnapshot(ledgerViewModel.ordinaryFilterSnapshot())
         }
     }
+    LaunchedEffect(current) {
+        if (current != AppDestination.ENTRY) {
+            categorySelectorOpen = false
+        }
+    }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, homeViewModel) {
         val observer = LifecycleEventObserver { _, event ->
@@ -373,14 +383,17 @@ internal fun AutoBookkeepingRoot(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     val activeReview = mainLaunchState as? MainLaunchUiState.Review
-    BackHandler(enabled = activeReview == null && navigator.canHandleBack) {
-        if (
-            navigator.isStatisticsDrilldownActive &&
-            current == AppDestination.LEDGER
-        ) {
-            ledgerViewModel.closeStatisticsDrilldown()
+    BackHandler(
+        enabled = activeReview == null && (isCategorySelector || navigator.canHandleBack),
+    ) {
+        when {
+            isCategorySelector -> categorySelectorOpen = false
+            navigator.isStatisticsDrilldownActive && current == AppDestination.LEDGER -> {
+                ledgerViewModel.closeStatisticsDrilldown()
+                navigator.handleBack()
+            }
+            else -> navigator.handleBack()
         }
-        navigator.handleBack()
     }
 
     AutoBookkeepingTheme(themeStyle) {
@@ -404,53 +417,59 @@ internal fun AutoBookkeepingRoot(
             containerColor = MaterialTheme.colorScheme.background,
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
-                NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                    AppDestination.entries.forEach { destination ->
-                        NavigationBarItem(
-                            selected = current == destination,
-                            onClick = {
-                                if (
-                                    navigator.isStatisticsDrilldownActive &&
-                                    destination != AppDestination.ENTRY
-                                ) {
-                                    ledgerViewModel.closeStatisticsDrilldown()
-                                }
-                                if (destination == AppDestination.ENTRY && current != AppDestination.ENTRY) {
-                                    entryViewModel.startNew()
-                                }
-                                navigator.select(destination)
-                            },
-                            modifier = Modifier
-                                .testTag("nav-${destination.name}")
-                                .then(
-                                    if (destination == AppDestination.ENTRY) {
-                                        Modifier.semantics { contentDescription = "记一笔" }
-                                    } else {
-                                        Modifier
-                                }
-                                ),
-                            icon = {
-                                if (destination == AppDestination.ENTRY) {
-                                    FlatAddIcon()
-                                } else {
-                                    Text(
-                                        text = when (destination) {
-                                        AppDestination.HOME -> "⌂"
-                                        AppDestination.LEDGER -> "≡"
-                                        AppDestination.STATISTICS -> "▥"
-                                        AppDestination.SETTINGS -> "⚙"
-                                        AppDestination.ENTRY -> ""
+                if (!isCategorySelector) {
+                    NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                        AppDestination.entries.forEach { destination ->
+                            NavigationBarItem(
+                                selected = current == destination,
+                                onClick = {
+                                    categorySelectorOpen = false
+                                    if (
+                                        navigator.isStatisticsDrilldownActive &&
+                                        destination != AppDestination.ENTRY
+                                    ) {
+                                        ledgerViewModel.closeStatisticsDrilldown()
+                                    }
+                                    if (
+                                        destination == AppDestination.ENTRY &&
+                                        current != AppDestination.ENTRY
+                                    ) {
+                                        entryViewModel.startNew()
+                                    }
+                                    navigator.select(destination)
+                                },
+                                modifier = Modifier
+                                    .testTag("nav-${destination.name}")
+                                    .then(
+                                        if (destination == AppDestination.ENTRY) {
+                                            Modifier.semantics { contentDescription = "记一笔" }
+                                        } else {
+                                            Modifier
                                         },
-                                        fontSize = 17.sp,
-                                    )
-                                }
-                            },
-                            label = {
-                                if (destination != AppDestination.ENTRY) {
-                                    Text(destination.label)
-                                }
-                            },
-                        )
+                                    ),
+                                icon = {
+                                    if (destination == AppDestination.ENTRY) {
+                                        FlatAddIcon()
+                                    } else {
+                                        Text(
+                                            text = when (destination) {
+                                                AppDestination.HOME -> "⌂"
+                                                AppDestination.LEDGER -> "≡"
+                                                AppDestination.STATISTICS -> "▥"
+                                                AppDestination.SETTINGS -> "⚙"
+                                                AppDestination.ENTRY -> ""
+                                            },
+                                            fontSize = 17.sp,
+                                        )
+                                    }
+                                },
+                                label = {
+                                    if (destination != AppDestination.ENTRY) {
+                                        Text(destination.label)
+                                    }
+                                },
+                            )
+                        }
                     }
                 }
             },
@@ -476,6 +495,7 @@ internal fun AutoBookkeepingRoot(
                             }
                         },
                         onEdit = {
+                            categorySelectorOpen = false
                             entryViewModel.edit(it)
                             navigator.openEntry()
                         },
@@ -484,37 +504,64 @@ internal fun AutoBookkeepingRoot(
                         state = ledgerState,
                         onFiltersChanged = ledgerViewModel::updateFilters,
                         onEdit = {
+                            categorySelectorOpen = false
                             entryViewModel.edit(it)
                             navigator.openEntry()
                         },
                     )
-                    AppDestination.ENTRY -> EntryScreen(
-                        state = entryState,
-                        onUpdate = entryViewModel::update,
-                        onSave = { confirm ->
-                            scope.launch {
-                                if (entryViewModel.save(confirmPending = confirm).isSuccess) {
-                                    if (navigator.isStatisticsDrilldownActive) {
-                                        ledgerViewModel.closeStatisticsDrilldown()
+                    AppDestination.ENTRY -> {
+                        if (categorySelectorOpen) {
+                            CategorySelectorScreen(
+                                choices = if (entryState.configurationManaged) {
+                                    entryState.categoryChoices
+                                } else {
+                                    defaultEntryCategoryChoices()
+                                },
+                                selectedCategory = entryState.draft.category,
+                                loading = entryState.configurationManaged &&
+                                    !entryState.categoryChoicesLoaded,
+                                onSelect = { category ->
+                                    entryViewModel.update { it.copy(category = category) }
+                                    categorySelectorOpen = false
+                                },
+                                onBack = { categorySelectorOpen = false },
+                            )
+                        } else {
+                            EntryScreen(
+                                state = entryState,
+                                onUpdate = entryViewModel::update,
+                                onOpenCategorySelector = { categorySelectorOpen = true },
+                                onSave = { confirm ->
+                                    scope.launch {
+                                        if (entryViewModel.save(confirmPending = confirm).isSuccess) {
+                                            categorySelectorOpen = false
+                                            if (navigator.isStatisticsDrilldownActive) {
+                                                ledgerViewModel.closeStatisticsDrilldown()
+                                            }
+                                            navigator.select(AppDestination.LEDGER)
+                                        }
                                     }
-                                    navigator.select(AppDestination.LEDGER)
-                                }
-                            }
-                        },
-                        onRequestDelete = entryViewModel::requestDelete,
-                        onConfirmDelete = {
-                            scope.launch {
-                                if (entryViewModel.delete().isSuccess) {
-                                    if (navigator.isStatisticsDrilldownActive) {
-                                        ledgerViewModel.closeStatisticsDrilldown()
+                                },
+                                onRequestDelete = entryViewModel::requestDelete,
+                                onConfirmDelete = {
+                                    scope.launch {
+                                        if (entryViewModel.delete().isSuccess) {
+                                            categorySelectorOpen = false
+                                            if (navigator.isStatisticsDrilldownActive) {
+                                                ledgerViewModel.closeStatisticsDrilldown()
+                                            }
+                                            navigator.select(AppDestination.LEDGER)
+                                        }
                                     }
-                                    navigator.select(AppDestination.LEDGER)
-                                }
-                            }
-                        },
-                        onDismissDelete = entryViewModel::dismissDelete,
-                        onBack = { navigator.handleBack() },
-                    )
+                                },
+                                onDismissDelete = entryViewModel::dismissDelete,
+                                onBack = {
+                                    categorySelectorOpen = false
+                                    navigator.handleBack()
+                                },
+                            )
+                        }
+                    }
                     AppDestination.STATISTICS -> StatisticsScreen(
                         state = statisticsState,
                         onModeSelected = statisticsViewModel::selectMode,

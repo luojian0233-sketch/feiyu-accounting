@@ -3,7 +3,9 @@ package com.local.autobookkeeping
 import android.view.View
 import android.widget.DatePicker
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -79,6 +81,7 @@ class EndToEndTest {
 
         createManualTransaction(amount = "28.00", date = journeyDate, income = false)
         createManualTransaction(amount = "100.00", date = journeyDate, income = true)
+        assertLedgerAmount("+¥100.00")
         createManualTransaction(
             amount = "500.00",
             date = journeyDate,
@@ -116,9 +119,11 @@ class EndToEndTest {
         }
         compose.onNodeWithTag("amount").performTextInput(amount)
         setEntryDate(date)
-        compose.onNodeWithTag("entry-category-list")
-            .performScrollToNode(hasText("红包"))
-        compose.onNodeWithText("红包").performClick()
+        compose.onNodeWithTag("entry-category-field").performScrollTo().performClick()
+        compose.onNodeWithTag("category-grid").assertIsDisplayed()
+        compose.onAllNodesWithTag("nav-HOME").assertCountEquals(0)
+        compose.onNodeWithTag("category-choice-红包").performClick()
+        compose.onNodeWithTag("entry-category-field").assertTextContains("红包")
         if (internalTransfer) {
             val transferLabel = compose.onNodeWithText("内部转账")
             transferLabel.performScrollTo()

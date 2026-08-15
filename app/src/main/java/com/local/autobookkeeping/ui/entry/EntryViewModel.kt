@@ -108,6 +108,7 @@ data class EntryUiState(
     val categoryChoices: List<EntryChoice> = emptyList(),
     val accountChoices: List<EntryChoice> = emptyList(),
     val configurationManaged: Boolean = false,
+    val categoryChoicesLoaded: Boolean = !configurationManaged,
 )
 
 data class EntryChoice(
@@ -132,6 +133,7 @@ class EntryViewModel(
     init {
         settings?.visibleCategories?.onEach { rows ->
             visibleCategoryNames = rows.map { it.name }
+            mutableState.value = mutableState.value.copy(categoryChoicesLoaded = true)
             refreshManagedChoices()
         }?.launchIn(viewModelScope)
         settings?.visibleAccounts?.onEach { rows ->
@@ -146,6 +148,7 @@ class EntryViewModel(
             categoryChoices = visibleCategoryNames.map { EntryChoice(it, historicalOnly = false) },
             accountChoices = visibleAccountNames.map { EntryChoice(it, historicalOnly = false) },
             configurationManaged = mutableState.value.configurationManaged,
+            categoryChoicesLoaded = mutableState.value.categoryChoicesLoaded,
         )
     }
 
@@ -155,6 +158,7 @@ class EntryViewModel(
             categoryChoices = mutableState.value.categoryChoices,
             accountChoices = mutableState.value.accountChoices,
             configurationManaged = mutableState.value.configurationManaged,
+            categoryChoicesLoaded = mutableState.value.categoryChoicesLoaded,
         )
         refreshManagedChoices()
     }

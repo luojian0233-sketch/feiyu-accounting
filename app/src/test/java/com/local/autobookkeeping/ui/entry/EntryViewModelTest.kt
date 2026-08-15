@@ -128,6 +128,21 @@ class EntryViewModelTest {
     }
 
     @Test
+    fun `managed empty category flow finishes loading with no choices`() = runTest(dispatcher) {
+        val viewModel = EntryViewModel(
+            repository = DelayedRepository(),
+            settings = FakeSettingsOperations(categorySettings = emptyList()),
+        )
+
+        assertEquals(false, viewModel.state.value.categoryChoicesLoaded)
+
+        testScheduler.runCurrent()
+
+        assertTrue(viewModel.state.value.categoryChoicesLoaded)
+        assertEquals(emptyList<EntryChoice>(), viewModel.state.value.categoryChoices)
+    }
+
+    @Test
     fun `confirming recognized merchant remembers selected category atomically`() = runTest(dispatcher) {
         val repository = DelayedRepository(releaseImmediately = true)
         val confirmation = FakeRecognitionConfirmation()
@@ -278,19 +293,19 @@ class EntryViewModelTest {
         }
     }
 
-    private class FakeSettingsOperations : SettingsOperations {
+    private class FakeSettingsOperations(
+        categorySettings: List<CategorySetting> = listOf(
+            CategorySetting(1, "餐饮", 0, hidden = false),
+            CategorySetting(2, "旧分类", 1, hidden = true),
+        ),
+    ) : SettingsOperations {
         override val theme = MutableStateFlow(ThemeStyle.CLEAR_MINT)
         override val autoBookkeepingEnabled = MutableStateFlow(false)
         override val autoSaveHighConfidence = MutableStateFlow(true)
         override val wechatEnabled = MutableStateFlow(false)
         override val alipayEnabled = MutableStateFlow(false)
         override val enabledBankPackages = MutableStateFlow<Set<String>>(emptySet())
-        override val categories = MutableStateFlow(
-            listOf(
-                CategorySetting(1, "餐饮", 0, hidden = false),
-                CategorySetting(2, "旧分类", 1, hidden = true),
-            ),
-        )
+        override val categories = MutableStateFlow(categorySettings)
         override val visibleCategories = MutableStateFlow(categories.value.filterNot { it.hidden })
         override val accounts = MutableStateFlow(
             listOf(

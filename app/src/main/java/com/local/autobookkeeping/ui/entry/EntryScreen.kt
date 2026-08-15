@@ -21,6 +21,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -39,17 +40,11 @@ import java.time.format.DateTimeFormatter
 
 const val ENTRY_DATE_TAG = "entry-date"
 
-private val defaultCategories = listOf(
-    "餐饮", "交通", "日用", "购物", "零食", "饮品", "蔬菜", "水果",
-    "服饰", "娱乐", "美容", "通讯", "医疗", "学习", "游戏", "红包",
-    "住房", "礼品", "宠物", "汽车", "数码", "办公", "运动", "礼金",
-    "捐赠", "彩票", "转账", "其它",
-)
-
 @Composable
 fun EntryScreen(
     state: EntryUiState,
     onUpdate: ((EntryDraft) -> EntryDraft) -> Unit,
+    onOpenCategorySelector: () -> Unit,
     onSave: (Boolean) -> Unit,
     onRequestDelete: () -> Unit,
     onConfirmDelete: () -> Unit,
@@ -58,11 +53,6 @@ fun EntryScreen(
     modifier: Modifier = Modifier,
 ) {
     val draft = state.draft
-    val categoryChoices = if (state.configurationManaged) {
-        state.categoryChoices
-    } else {
-        defaultCategories.map { EntryChoice(it, historicalOnly = false) }
-    }
     val context = LocalContext.current
     val zone = BOOKKEEPING_ZONE
     val dateTime = draft.occurredAt.atZone(zone)
@@ -129,26 +119,22 @@ fun EntryScreen(
             )
         }
         item {
-            Text("分类", style = MaterialTheme.typography.labelLarge)
-            LazyRow(
-                modifier = Modifier.testTag("entry-category-list"),
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            Surface(
+                onClick = onOpenCategorySelector,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("entry-category-field"),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
             ) {
-                items(categoryChoices, key = { "${it.name}-${it.historicalOnly}" }) { category ->
-                    FilterChip(
-                        selected = draft.category == category.name,
-                        onClick = { onUpdate { it.copy(category = category.name) } },
-                        label = {
-                            Text(
-                                if (category.historicalOnly) {
-                                    "${category.name}（已隐藏/历史）"
-                                } else {
-                                    category.name
-                                },
-                                style = MaterialTheme.typography.labelMedium,
-                            )
-                        },
-                    )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("分类")
+                    Text("${draft.category.ifBlank { "请选择分类" }}  ›")
                 }
             }
         }
