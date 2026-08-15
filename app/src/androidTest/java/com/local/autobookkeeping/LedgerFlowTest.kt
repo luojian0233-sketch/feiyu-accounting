@@ -2,10 +2,13 @@ package com.local.autobookkeeping
 
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -17,8 +20,11 @@ import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.test.espresso.Espresso.pressBack
 import com.local.autobookkeeping.data.LedgerRepository
+import com.local.autobookkeeping.domain.model.Direction
+import com.local.autobookkeeping.domain.model.Source
 import com.local.autobookkeeping.domain.model.Transaction
 import com.local.autobookkeeping.ui.home.NotificationPermissionProvider
+import java.time.Instant
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -76,37 +82,82 @@ class LedgerFlowTest {
     }
 
     @Test
-    fun categoryPickerBackPreservesCategoryAndDraftFields() {
+    fun categoryPickerTopAndSystemBackPreserveCompleteDraft() {
+        val repository = InMemoryLedgerRepository(
+            initialRows = listOf(
+                Transaction(
+                    id = 7L,
+                    amountMinor = 2_800,
+                    direction = Direction.INCOME,
+                    category = "工资",
+                    occurredAt = Instant.parse("2026-08-15T06:35:00Z"),
+                    merchant = "商户草稿值",
+                    account = "账户草稿值",
+                    note = "备注草稿值",
+                    internalTransfer = true,
+                    source = Source.PAGE_RECOGNITION,
+                    pendingConfirmation = true,
+                ),
+            ),
+        )
         compose.setContent {
             AutoBookkeepingRoot(
-                repository = InMemoryLedgerRepository(),
+                repository = repository,
                 notificationPermission = NotificationPermissionProvider { false },
             )
         }
-        compose.onNodeWithContentDescription("记一笔").performClick()
-        compose.onNodeWithText("收入").performClick()
-        compose.onNodeWithTag("amount").performTextInput("28.00")
-        compose.onNodeWithTag("entry-category-field").performClick()
-        compose.onNodeWithTag("category-grid")
-            .performScrollToNode(hasTestTag("category-choice-工资"))
-        compose.onNodeWithTag("category-choice-工资").performClick()
 
-        compose.onNodeWithTag("entry-category-field").performClick()
+        fun openCategoryPicker() {
+            compose.onNodeWithTag("entry-list")
+                .performScrollToNode(hasTestTag("entry-category-field"))
+            compose.onNodeWithTag("entry-category-field").performClick()
+            compose.onNodeWithTag("category-grid").assertIsDisplayed()
+        }
+
+        fun assertCompleteDraft() {
+            val entryList = compose.onNodeWithTag("entry-list")
+            entryList.performScrollToNode(hasText("收入"))
+            compose.onNodeWithText("收入").assertIsSelected()
+            entryList.performScrollToNode(hasTestTag("amount"))
+            compose.onNodeWithTag("amount").assertTextContains("28.00")
+            entryList.performScrollToNode(hasTestTag("entry-category-field"))
+            compose.onNodeWithTag("entry-category-field").assertTextContains("工资")
+
+            listOf("商户草稿值", "账户草稿值", "备注草稿值").forEach { value ->
+                val textField = hasSetTextAction() and hasText(value)
+                entryList.performScrollToNode(textField)
+                compose.onNode(textField).assertIsDisplayed()
+            }
+
+            entryList.performScrollToNode(hasText("2026年8月15日"))
+            compose.onNodeWithText("2026年8月15日").assertIsDisplayed()
+            compose.onNodeWithText("14:35").assertIsDisplayed()
+            entryList.performScrollToNode(hasText("内部转账"))
+            compose.onNode(isToggleable()).assertIsOn()
+            entryList.performScrollToNode(
+                hasText("这是一笔自动识别记录，请核对方向、分类和商户后再确认。"),
+            )
+            compose.onNodeWithText("这是一笔自动识别记录，请核对方向、分类和商户后再确认。")
+                .assertIsDisplayed()
+        }
+
+        compose.onNodeWithTag("nav-LEDGER").performClick()
+        compose.onNodeWithText("商户草稿值").performClick()
+
+        openCategoryPicker()
         compose.onNodeWithContentDescription("返回编辑记录").performClick()
-        compose.onNodeWithTag("entry-category-field").assertTextContains("工资")
-        compose.onNodeWithTag("amount").assertTextContains("28.00")
-        compose.onNodeWithText("收入").assertIsSelected()
+        assertCompleteDraft()
 
-        compose.onNodeWithTag("entry-category-field").performClick()
+        openCategoryPicker()
         pressBack()
-        compose.onNodeWithTag("entry-category-field").assertTextContains("工资")
-        compose.onNodeWithTag("amount").assertTextContains("28.00")
-        compose.onNodeWithText("收入").assertIsSelected()
+        assertCompleteDraft()
     }
 
-    private class InMemoryLedgerRepository : LedgerRepository {
-        private val mutableRows = MutableStateFlow<List<Transaction>>(emptyList())
-        private var nextId = 1L
+    private class InMemoryLedgerRepository(
+        initialRows: List<Transaction> = emptyList(),
+    ) : LedgerRepository {
+        private val mutableRows = MutableStateFlow(initialRows)
+        private var nextId = (initialRows.maxOfOrNull { it.id } ?: 0L) + 1
 
         override fun observeTransactions(): Flow<List<Transaction>> = mutableRows.asStateFlow()
 
