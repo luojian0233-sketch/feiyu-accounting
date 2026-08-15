@@ -122,6 +122,8 @@ class EndToEndTest {
         compose.onNodeWithTag("entry-category-field").performScrollTo().performClick()
         compose.onNodeWithTag("category-grid").assertIsDisplayed()
         compose.onAllNodesWithTag("nav-HOME").assertCountEquals(0)
+        compose.onNodeWithTag("category-grid")
+            .performScrollToNode(hasTestTag("category-choice-红包"))
         compose.onNodeWithTag("category-choice-红包").performClick()
         compose.onNodeWithTag("entry-category-field").assertTextContains("红包")
         if (internalTransfer) {

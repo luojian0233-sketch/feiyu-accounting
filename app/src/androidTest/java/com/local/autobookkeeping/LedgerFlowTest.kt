@@ -2,6 +2,9 @@ package com.local.autobookkeeping
 
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -12,6 +15,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
+import androidx.test.espresso.Espresso.pressBack
 import com.local.autobookkeeping.data.LedgerRepository
 import com.local.autobookkeeping.domain.model.Transaction
 import com.local.autobookkeeping.ui.home.NotificationPermissionProvider
@@ -37,7 +41,8 @@ class LedgerFlowTest {
 
         compose.onNodeWithContentDescription("记一笔").performClick()
         compose.onNodeWithTag("amount").performTextInput("28.00")
-        compose.onNodeWithText("餐饮").performClick()
+        compose.onNodeWithTag("entry-category-field").performClick()
+        compose.onNodeWithTag("category-choice-餐饮").performClick()
         compose.onNodeWithTag("merchant").performTextInput("任务六测试面馆")
         compose.onNodeWithText("保存记录").performClick()
 
@@ -68,6 +73,35 @@ class LedgerFlowTest {
         compose.onNodeWithTag("entry-back").performClick()
 
         compose.onNodeWithTag("screen-账单").assertIsDisplayed()
+    }
+
+    @Test
+    fun categoryPickerBackPreservesCategoryAndDraftFields() {
+        compose.setContent {
+            AutoBookkeepingRoot(
+                repository = InMemoryLedgerRepository(),
+                notificationPermission = NotificationPermissionProvider { false },
+            )
+        }
+        compose.onNodeWithContentDescription("记一笔").performClick()
+        compose.onNodeWithText("收入").performClick()
+        compose.onNodeWithTag("amount").performTextInput("28.00")
+        compose.onNodeWithTag("entry-category-field").performClick()
+        compose.onNodeWithTag("category-grid")
+            .performScrollToNode(hasTestTag("category-choice-工资"))
+        compose.onNodeWithTag("category-choice-工资").performClick()
+
+        compose.onNodeWithTag("entry-category-field").performClick()
+        compose.onNodeWithContentDescription("返回编辑记录").performClick()
+        compose.onNodeWithTag("entry-category-field").assertTextContains("工资")
+        compose.onNodeWithTag("amount").assertTextContains("28.00")
+        compose.onNodeWithText("收入").assertIsSelected()
+
+        compose.onNodeWithTag("entry-category-field").performClick()
+        pressBack()
+        compose.onNodeWithTag("entry-category-field").assertTextContains("工资")
+        compose.onNodeWithTag("amount").assertTextContains("28.00")
+        compose.onNodeWithText("收入").assertIsSelected()
     }
 
     private class InMemoryLedgerRepository : LedgerRepository {

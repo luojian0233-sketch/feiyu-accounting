@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.local.autobookkeeping.domain.model.BUILT_IN_CATEGORY_NAMES
 
 private val DEFAULT_CATEGORY_ICONS = mapOf(
     "餐饮" to "🍜", "交通" to "🚕", "日用" to "🧴", "购物" to "🛍",
@@ -47,7 +48,9 @@ private val DEFAULT_CATEGORY_ICONS = mapOf(
     "医疗" to "💊", "学习" to "🎓", "游戏" to "🎮", "红包" to "🧧",
     "住房" to "🏠", "礼品" to "🎁", "宠物" to "🐾", "汽车" to "🚗",
     "数码" to "📷", "办公" to "💼", "运动" to "🏓", "礼金" to "✉",
-    "捐赠" to "❤", "彩票" to "🎫", "转账" to "⇄", "其它" to "•••",
+    "捐赠" to "❤", "彩票" to "🎫", "转账" to "⇄", "其他" to "•••",
+    "工资" to "💰", "奖金" to "🏆", "理财" to "📈", "分红" to "💹",
+    "退款" to "↩",
 )
 
 internal fun categoryIconLabel(name: String): String =
@@ -68,8 +71,24 @@ internal fun filterCategoryChoices(
     }
 }
 
+internal data class CategoryChoiceSections(
+    val historicalChoice: EntryChoice?,
+    val availableChoices: List<EntryChoice>,
+)
+
+internal fun categoryChoiceSections(
+    choices: List<EntryChoice>,
+    query: String,
+): CategoryChoiceSections {
+    val filtered = filterCategoryChoices(choices, query)
+    return CategoryChoiceSections(
+        historicalChoice = filtered.firstOrNull { it.historicalOnly },
+        availableChoices = filtered.filterNot { it.historicalOnly },
+    )
+}
+
 internal fun defaultEntryCategoryChoices(): List<EntryChoice> =
-    DEFAULT_CATEGORY_ICONS.keys.map { EntryChoice(it, historicalOnly = false) }
+    BUILT_IN_CATEGORY_NAMES.map { EntryChoice(it, historicalOnly = false) }
 
 @Composable
 fun CategorySelectorScreen(
@@ -81,7 +100,7 @@ fun CategorySelectorScreen(
     modifier: Modifier = Modifier,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
-    val filtered = remember(choices, query) { filterCategoryChoices(choices, query) }
+    val sections = remember(choices, query) { categoryChoiceSections(choices, query) }
 
     BackHandler(onBack = onBack)
 
@@ -125,31 +144,56 @@ fun CategorySelectorScreen(
                     .testTag("category-loading"),
             )
 
-            filtered.isEmpty() -> Text(
+            sections.historicalChoice == null && sections.availableChoices.isEmpty() -> Text(
                 text = if (query.isBlank()) "暂无可用分类" else "没有匹配的分类",
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.padding(top = 24.dp),
             )
 
-            else -> LazyVerticalGrid(
-                columns = GridCells.Fixed(4),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .padding(top = 12.dp)
-                    .testTag("category-grid"),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(filtered, key = { "${it.name}-${it.historicalOnly}" }) { choice ->
+            else -> {
+                sections.historicalChoice?.let { choice ->
                     CategoryChoiceCell(
                         choice = choice,
                         selected = choice.name == selectedCategory,
                         onClick = { onSelect(choice.name) },
                         modifier = Modifier
-                            .testTag("category-choice-${choice.name}")
+                            .testTag("category-historical-choice-${choice.name}")
                             .semantics { this.selected = choice.name == selectedCategory },
                     )
+                }
+                if (
+                    sections.historicalChoice != null &&
+                    sections.availableChoices.isNotEmpty()
+                ) {
+                    Spacer(Modifier.height(12.dp))
+                }
+                if (sections.availableChoices.isNotEmpty()) {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(4),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .padding(top = 12.dp)
+                            .testTag("category-grid"),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(
+                            sections.availableChoices,
+                            key = { "${it.name}-${it.historicalOnly}" },
+                        ) { choice ->
+                            CategoryChoiceCell(
+                                choice = choice,
+                                selected = choice.name == selectedCategory,
+                                onClick = { onSelect(choice.name) },
+                                modifier = Modifier
+                                    .testTag("category-choice-${choice.name}")
+                                    .semantics {
+                                        this.selected = choice.name == selectedCategory
+                                    },
+                            )
+                        }
+                    }
                 }
             }
         }
