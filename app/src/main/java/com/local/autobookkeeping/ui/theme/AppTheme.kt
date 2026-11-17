@@ -29,6 +29,7 @@ enum class ThemeStyle {
     CLEAR_MINT,
     RECEIPT_LEDGER,
     PAPER_MINIMAL,
+    FATTY_FISH,
 }
 
 @Immutable
@@ -38,6 +39,7 @@ data class AppVisualTokens(
     val cardColor: Color,
     val separatorColor: Color,
     val dashedSeparators: Boolean,
+    val showFishMascot: Boolean = false,
 )
 
 private val LocalAppVisualTokens = staticCompositionLocalOf {
@@ -86,6 +88,17 @@ private val paperMinimalColors = lightColorScheme(
     surfaceVariant = Color(0xFFE8E2D4),
 )
 
+private val fattyFishColors = lightColorScheme(
+    primary = Color(0xFF1F7A8C),
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFD9F0F5),
+    onPrimaryContainer = Color(0xFF0C3F49),
+    background = Color(0xFFF5FBFC),
+    onBackground = Color(0xFF12242A),
+    surface = Color.White,
+    surfaceVariant = Color(0xFFE6F3F6),
+)
+
 private val AppTypography = Typography(
     displayLarge = Typography().displayLarge.copy(fontSize = 40.sp),
     headlineLarge = Typography().headlineLarge.copy(fontSize = 26.sp),
@@ -108,6 +121,7 @@ fun AutoBookkeepingTheme(
         ThemeStyle.CLEAR_MINT -> clearMintColors
         ThemeStyle.RECEIPT_LEDGER -> receiptColors
         ThemeStyle.PAPER_MINIMAL -> paperMinimalColors
+        ThemeStyle.FATTY_FISH -> fattyFishColors
     }
     val shapes = when (style) {
         ThemeStyle.CLEAR_MINT -> Shapes(
@@ -127,6 +141,12 @@ fun AutoBookkeepingTheme(
             small = RoundedCornerShape(6.dp),
             medium = RoundedCornerShape(8.dp),
             large = RoundedCornerShape(10.dp),
+        )
+        ThemeStyle.FATTY_FISH -> Shapes(
+            extraSmall = RoundedCornerShape(10.dp),
+            small = RoundedCornerShape(16.dp),
+            medium = RoundedCornerShape(20.dp),
+            large = RoundedCornerShape(26.dp),
         )
     }
     val visualTokens = when (style) {
@@ -150,6 +170,14 @@ fun AutoBookkeepingTheme(
             cardColor = Color(0xFFF8F4E9),
             separatorColor = Color(0xFF9AA89D),
             dashedSeparators = false,
+        )
+        ThemeStyle.FATTY_FISH -> AppVisualTokens(
+            cardShape = RoundedCornerShape(22.dp),
+            cardElevation = 0.dp,
+            cardColor = Color.White,
+            separatorColor = Color(0xFFDCEDF0),
+            dashedSeparators = false,
+            showFishMascot = true,
         )
     }
     CompositionLocalProvider(LocalAppVisualTokens provides visualTokens) {
