@@ -10,7 +10,7 @@ import org.junit.Test
 
 class BrandIdentityContractTest {
     @Test
-    fun `launcher uses the approved Shizhang name and receipt mark`() {
+    fun `launcher uses the approved Feiyu name and fish mark`() {
         val manifest = parseXml(projectRoot().resolve("app/src/main/AndroidManifest.xml"))
         val strings = parseXml(projectRoot().resolve("app/src/main/res/values/strings.xml"))
         val application = manifest.getElementsByTagName("application").item(0).attributes
@@ -18,17 +18,22 @@ class BrandIdentityContractTest {
         assertEquals("@string/app_name", application.getNamedItemNS(ANDROID_NAMESPACE, "label")?.nodeValue)
         assertEquals("@mipmap/ic_launcher", application.getNamedItemNS(ANDROID_NAMESPACE, "icon")?.nodeValue)
         assertEquals("@mipmap/ic_launcher", application.getNamedItemNS(ANDROID_NAMESPACE, "roundIcon")?.nodeValue)
-        assertEquals("拾账", stringValue(strings, "app_name"))
+        assertEquals("肥鱼记账", stringValue(strings, "app_name"))
         assertTrue(Files.exists(projectRoot().resolve("app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml")))
         assertTrue(Files.exists(projectRoot().resolve("app/src/main/res/mipmap-anydpi/ic_launcher.xml")))
 
-        val foreground = Files.readString(
+        val foregroundSource = Files.readString(
             projectRoot().resolve("app/src/main/res/drawable/ic_launcher_foreground.xml"),
-        ).lowercase()
+        )
+        val foreground = foregroundSource.lowercase()
         assertFalse("foreground must stay a graphic mark", foreground.contains("<text"))
         listOf("¥", "$", "pig", "coin", "calculator", "楼").forEach { forbidden ->
             assertFalse("foreground must not contain $forbidden", foreground.contains(forbidden))
         }
+        assertTrue(
+            "foreground must be a multi-part fish silhouette",
+            Regex("<path").findAll(foregroundSource).count() >= 5,
+        )
     }
 
     private fun parseXml(path: Path) = DocumentBuilderFactory.newInstance().apply {
