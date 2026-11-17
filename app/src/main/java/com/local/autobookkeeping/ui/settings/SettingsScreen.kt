@@ -483,5 +483,5 @@ private val ThemeStyle.label: String
         ThemeStyle.CLEAR_MINT -> "清透薄荷"
         ThemeStyle.RECEIPT_LEDGER -> "小票账本"
         ThemeStyle.PAPER_MINIMAL -> "纸感极简"
-        ThemeStyle.FATTY_FISH -> "肥鱼简约"
+        ThemeStyle.FATTY_FISH -> "蓝色肥鱼"
     }

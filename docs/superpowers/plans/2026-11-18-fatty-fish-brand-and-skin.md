@@ -72,7 +72,7 @@ git add app/src/main/AndroidManifest.xml app/src/main/res app/src/test/java/com/
 git commit -m "feat: rebrand to feiyu bookkeeping with fish launcher icon"
 ```
 
-### Task 2: 肥鱼简约皮肤
+### Task 2: 蓝色肥鱼皮肤
 
 **Files:**
 - Modify: `app/src/main/java/com/local/autobookkeeping/ui/theme/AppTheme.kt`
@@ -104,7 +104,7 @@ git commit -m "feat: rebrand to feiyu bookkeeping with fish launcher icon"
    给 `AppVisualTokens` 增加 `showFishMascot: Boolean = false` 字段，并更新所有既有分支（显式 `false`）。
 3. `FishMascot.kt`：Canvas 画椭圆身体 + 扇形尾 + 背鳍/腹鳍 + 眼睛 + 腮红，颜色取 `colorScheme.primary`
    与固定奶白/珊瑚，尺寸由 modifier 决定（首页用 26dp）。
-4. `SettingsScreen.kt`：`ThemeStyle.label` 增加 `FATTY_FISH -> "肥鱼简约"`。
+4. `SettingsScreen.kt`：`ThemeStyle.label` 增加 `FATTY_FISH -> "蓝色肥鱼"`。
 5. `HomeScreen.kt`：标题行由单纯 `Text("今天")` 改为 `Row`，右端在 `appVisualTokens.showFishMascot` 为真时
    显示 `FishMascot`，其余皮肤不产生额外节点。
 
