@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,7 +25,10 @@ import androidx.compose.ui.unit.dp
 import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.domain.model.Transaction
 import com.local.autobookkeeping.ui.theme.AppCardSurface
-import com.local.autobookkeeping.ui.theme.FishMascot
+import com.local.autobookkeeping.ui.theme.WhaleEmptyHint
+import com.local.autobookkeeping.ui.theme.WhaleMascot
+import com.local.autobookkeeping.ui.theme.WhaleTailMark
+import com.local.autobookkeeping.ui.theme.WhaleWaveHeader
 import com.local.autobookkeeping.ui.theme.appVisualTokens
 import com.local.autobookkeeping.ui.ledger.formatMoney
 
@@ -43,20 +47,44 @@ fun HomeScreen(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 18.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(
-                    "今天",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                if (appVisualTokens.showFishMascot) {
-                    FishMascot()
+            if (appVisualTokens.showFishMascot) {
+                WhaleWaveHeader(Modifier.padding(top = 18.dp)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 20.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column {
+                            Text(
+                                "今天",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                            )
+                            Text(
+                                "吃好每一顿，记好每一笔",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.72f),
+                            )
+                        }
+                        WhaleMascot(size = 52.dp)
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 18.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        "今天",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                    )
                 }
             }
         }
@@ -120,16 +148,26 @@ fun HomeScreen(
         }
         item {
             Spacer(Modifier.height(2.dp))
-            Text("最近记录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (appVisualTokens.showFishMascot) {
+                    WhaleTailMark(size = 15.dp)
+                    Spacer(Modifier.width(6.dp))
+                }
+                Text("最近记录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            }
         }
         if (state.summary.recent.isEmpty()) {
             item {
-                Text(
-                    "还没有记录，点下方“记一笔”开始。",
-                    color = Color.Gray,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(vertical = 22.dp),
-                )
+                if (appVisualTokens.showFishMascot) {
+                    WhaleEmptyHint("还没有记录，点下方“记一笔”开始。")
+                } else {
+                    Text(
+                        "还没有记录，点下方“记一笔”开始。",
+                        color = Color.Gray,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(vertical = 22.dp),
+                    )
+                }
             }
         } else {
             items(state.summary.recent, key = { it.id }) { transaction ->

@@ -88,15 +88,25 @@ private val paperMinimalColors = lightColorScheme(
     surfaceVariant = Color(0xFFE8E2D4),
 )
 
+// 取自鲸鱼娘的立绘：海军蓝头发、湖蓝渐层、金色小星星、白围裙。
 private val fattyFishColors = lightColorScheme(
-    primary = Color(0xFF1F7A8C),
+    primary = Color(0xFF2E5FAE),
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFD9F0F5),
-    onPrimaryContainer = Color(0xFF0C3F49),
-    background = Color(0xFFF5FBFC),
-    onBackground = Color(0xFF12242A),
+    primaryContainer = Color(0xFFDCE8FB),
+    onPrimaryContainer = Color(0xFF12305E),
+    secondary = Color(0xFF4E8FD6),
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFE4F0FD),
+    onSecondaryContainer = Color(0xFF16355C),
+    tertiary = Color(0xFFE8A93C),
+    onTertiary = Color(0xFF3A2500),
+    background = Color(0xFFF6FAFF),
+    onBackground = Color(0xFF0E1F33),
     surface = Color.White,
-    surfaceVariant = Color(0xFFE6F3F6),
+    onSurface = Color(0xFF0E1F33),
+    surfaceVariant = Color(0xFFE6EFFA),
+    onSurfaceVariant = Color(0xFF40566F),
+    outline = Color(0xFFC3D6EC),
 )
 
 private val AppTypography = Typography(
@@ -143,10 +153,10 @@ fun AutoBookkeepingTheme(
             large = RoundedCornerShape(10.dp),
         )
         ThemeStyle.FATTY_FISH -> Shapes(
-            extraSmall = RoundedCornerShape(10.dp),
-            small = RoundedCornerShape(16.dp),
-            medium = RoundedCornerShape(20.dp),
-            large = RoundedCornerShape(26.dp),
+            extraSmall = RoundedCornerShape(12.dp),
+            small = RoundedCornerShape(18.dp),
+            medium = RoundedCornerShape(22.dp),
+            large = RoundedCornerShape(28.dp),
         )
     }
     val visualTokens = when (style) {
@@ -175,7 +185,7 @@ fun AutoBookkeepingTheme(
             cardShape = RoundedCornerShape(22.dp),
             cardElevation = 0.dp,
             cardColor = Color.White,
-            separatorColor = Color(0xFFDCEDF0),
+            separatorColor = Color(0xFFDCE8F6),
             dashedSeparators = false,
             showFishMascot = true,
         )
