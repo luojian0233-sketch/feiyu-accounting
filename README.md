@@ -72,13 +72,13 @@ APK 是可重复生成的忽略构建产物，不提交到 Git。本次同时验
 ## 肥鱼记账品牌构建（2026-11-18）
 
 - **名称**：“肥鱼记账”，只通过 `@string/app_name` 暴露。
-- **图标**：鲸鱼娘立绘（深蓝长发、白色女仆发带、鱼鳍耳、抱着饭碗），暖沙渐变底。`mipmap-anydpi-v26/ic_launcher.xml` 为自适应图标，前景是五档密度的位图（108dp 画布，角色贴在 36dp 安全圆内），另附 48dp 传统图标。素材处理链记录在 `docs/superpowers/specs/2026-11-18-whale-girl-icon-and-skin-design.md`。
-- **皮肤**：“肥鱼简约”取立绘的海军蓝 / 湖蓝 / 金三色，界面装饰全部由 Canvas 绘制（`ui/theme/WhaleElements.kt`：深海海浪横幅、鲸尾标记、四角星、头像、空状态插画），不铺贴图。
+- **图标**：鲸鱼娘立绘（深蓝长发、白色女仆发带、鱼鳍耳、抱着饭碗），暖沙渐变底。`mipmap-anydpi-v26/ic_launcher.xml` 为自适应图标，前景是五档密度的位图（108dp 画布，半身像底部出血贴边，避免裁切线），另附五档 48dp 传统图标。素材处理链记录在 `docs/superpowers/specs/2026-11-18-whale-girl-icon-and-skin-design.md`。
+- **皮肤**：“肥鱼简约”取立绘的海军蓝 / 湖蓝 / 金三色，界面装饰全部由 Canvas 绘制（`ui/theme/WhaleElements.kt`：深海海浪横幅、水波标记、四角星、头像、空状态插画），不铺贴图。
 
-本次干净构建：`app-debug.apk` 为 `59,684,670` 字节，SHA-256：
+本次干净构建：`app-debug.apk` 为 `60,029,793` 字节，SHA-256：
 
 ```text
-8D1B5C0999F6344B99E0CE302A891162D7E6EF559FA03BA83F98C7BDC742EE21
+EBCBF81BD797211D50B3F26537F232D918F17FB9CC93853D6B0740EDE0BE51D5
 ```
 
 - JVM：49 个 suite、452 个测试，0 失败、0 错误、0 忽略（含 `BrandIdentityContractTest` 的图标契约与 `ThemeCatalogContractTest`）。
