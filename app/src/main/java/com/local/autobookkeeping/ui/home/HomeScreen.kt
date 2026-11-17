@@ -27,7 +27,7 @@ import com.local.autobookkeeping.domain.model.Transaction
 import com.local.autobookkeeping.ui.theme.AppCardSurface
 import com.local.autobookkeeping.ui.theme.WhaleEmptyHint
 import com.local.autobookkeeping.ui.theme.WhaleMascot
-import com.local.autobookkeeping.ui.theme.WhaleTailMark
+import com.local.autobookkeeping.ui.theme.WaveMark
 import com.local.autobookkeeping.ui.theme.WhaleWaveHeader
 import com.local.autobookkeeping.ui.theme.appVisualTokens
 import com.local.autobookkeeping.ui.ledger.formatMoney
@@ -150,8 +150,8 @@ fun HomeScreen(
             Spacer(Modifier.height(2.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (appVisualTokens.showFishMascot) {
-                    WhaleTailMark(size = 15.dp)
-                    Spacer(Modifier.width(6.dp))
+                    WaveMark(width = 20.dp)
+                    Spacer(Modifier.width(7.dp))
                 }
                 Text("最近记录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             }

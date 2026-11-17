@@ -22,10 +22,14 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import kotlin.math.sin
 import androidx.compose.ui.unit.dp
 import com.local.autobookkeeping.R
 
@@ -76,33 +80,36 @@ fun WhaleWaveHeader(
             drawCircle(WhaleFoam.copy(alpha = 0.09f), h * 0.022f, Offset(w * 0.62f, h * 0.44f))
 
             sparkle(Offset(w * 0.18f, h * 0.24f), h * 0.080f, WhaleGold.copy(alpha = 0.92f))
-            sparkle(Offset(w * 0.30f, h * 0.68f), h * 0.034f, WhaleGold.copy(alpha = 0.55f))
+            sparkle(Offset(w * 0.60f, h * 0.19f), h * 0.034f, WhaleGold.copy(alpha = 0.55f))
         }
         content()
     }
 }
 
-/** 鲸尾标记：两瓣尾鳍 + 中间凹口 + 细尾柄，用作小标题或分隔装饰。 */
+/** 小标题前的水波标记：两道波纹，14dp 下仍能看出是浪而非箭头。 */
 @Composable
-fun WhaleTailMark(
+fun WaveMark(
     modifier: Modifier = Modifier,
-    size: Dp = 16.dp,
+    width: Dp = 22.dp,
     color: Color = MaterialTheme.colorScheme.secondary,
 ) {
-    Canvas(modifier.size(size)) {
+    Canvas(modifier.size(width = width, height = width * 0.52f)) {
         val w = this.size.width
         val h = this.size.height
         val path = Path().apply {
-            moveTo(w * 0.42f, h * 1.00f)
-            cubicTo(w * 0.40f, h * 0.88f, w * 0.36f, h * 0.80f, w * 0.38f, h * 0.74f)
-            cubicTo(w * 0.30f, h * 0.52f, w * 0.10f, h * 0.22f, w * 0.02f, h * 0.04f)
-            cubicTo(w * 0.22f, h * 0.10f, w * 0.40f, h * 0.26f, w * 0.50f, h * 0.46f)
-            cubicTo(w * 0.60f, h * 0.26f, w * 0.78f, h * 0.10f, w * 0.98f, h * 0.04f)
-            cubicTo(w * 0.90f, h * 0.22f, w * 0.70f, h * 0.52f, w * 0.62f, h * 0.74f)
-            cubicTo(w * 0.64f, h * 0.80f, w * 0.60f, h * 0.88f, w * 0.58f, h * 1.00f)
-            close()
+            val segments = 40
+            for (i in 0..segments) {
+                val t = i.toFloat() / segments
+                val x = w * t
+                val y = h * (0.54f - 0.30f * sin(t * 2f * Math.PI.toFloat()))
+                if (i == 0) moveTo(x, y) else lineTo(x, y)
+            }
         }
-        drawPath(path, color)
+        drawPath(
+            path = path,
+            color = color,
+            style = Stroke(width = size.width * 0.14f, cap = StrokeCap.Round, join = StrokeJoin.Round),
+        )
     }
 }
 
