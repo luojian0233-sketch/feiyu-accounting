@@ -1,6 +1,6 @@
-# 自记账
+# 肥鱼记账
 
-自记账是一款 Android 8.0（API 26）及以上可用的离线个人记账应用。它支持手动收支、账本筛选、月度等区间统计、通知辅助记账、三套本地主题，以及通过系统文件选择器完成的本地 JSON 备份与恢复。
+肥鱼记账是一款 Android 8.0（API 26）及以上可用的离线个人记账应用。它支持手动收支、账本筛选、月度等区间统计、通知辅助记账、四套本地主题，以及通过系统文件选择器完成的本地 JSON 备份与恢复。
 
 ## 隐私与权限
 
@@ -19,7 +19,7 @@
 
 ## 主题
 
-在“设置 → 外观”中可选择“清透薄荷”“小票账本”或“纸感极简”。选择后立即生效并保存在本机。
+在“设置 → 外观”中可选择“清透薄荷”“小票账本”“纸感极简”或“肥鱼简约”。选择后立即生效并保存在本机。“肥鱼简约”以湖水青与浅水色为底、大圆角卡片替代阴影分层，并在首页标题行右侧显示一条小肥鱼。默认主题仍是“清透薄荷”，已有偏好不受影响。
 
 ## 本地备份与恢复
 
@@ -68,3 +68,17 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
 APK 是可重复生成的忽略构建产物，不提交到 Git。本次同时验证了 169 个 JVM 测试（0 失败）、Lint（0 错误、5 个警告）以及 23 个真机 instrumentation 测试（0 失败）。
+
+## 肥鱼记账品牌构建（2026-11-18）
+
+改名与图标改造后的干净构建：`app-debug.apk` 为 `59,681,609` 字节，SHA-256：
+
+```text
+6B1E8F0EE1A7AF430AF62D49ED0627E6366F61DDF2BCC5A6BE8CA8031B869D8E
+```
+
+- JVM：49 个 suite、450 个测试，0 失败、0 错误、0 忽略（含 `BrandIdentityContractTest` 与 `ThemeCatalogContractTest`）。
+- `assembleDebug` 与 `compileDebugAndroidTestKotlin` 通过；`aapt2 dump badging` 显示 `application-label:'肥鱼记账'`，图标指向 `res/mipmap-anydpi-v26/ic_launcher.xml`。
+- 本机网络无法访问 Google Maven，`lintDebug` 未能执行（`androidLintTool` 依赖无法下载），本轮没有 lint 结论。
+- 未连接真机：桌面名称、图标外观与“肥鱼简约”皮肤的目视验收仍为 `未验证`。
+
