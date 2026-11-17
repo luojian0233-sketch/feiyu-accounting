@@ -19,7 +19,7 @@
 
 ## 主题
 
-在“设置 → 外观”中可选择“清透薄荷”“小票账本”“纸感极简”或“肥鱼简约”。选择后立即生效并保存在本机。“肥鱼简约”以湖水青与浅水色为底、大圆角卡片替代阴影分层，并在首页标题行右侧显示一条小肥鱼。默认主题仍是“清透薄荷”，已有偏好不受影响。
+在“设置 → 外观”中可选择“清透薄荷”“小票账本”“纸感极简”或“肥鱼简约”。选择后立即生效并保存在本机。“肥鱼简约”取自主视觉的海军蓝 / 湖蓝 / 金色，用大圆角卡片与色阶分层替代阴影，并在首页顶部放一条深海海浪横幅、标题旁显示头像、空记录时展示整身插画；这些元素全部由 Canvas 与位图资源自绘，不依赖网络。默认主题仍是“清透薄荷”，已有偏好不受影响。
 
 ## 本地备份与恢复
 
@@ -71,14 +71,18 @@ APK 是可重复生成的忽略构建产物，不提交到 Git。本次同时验
 
 ## 肥鱼记账品牌构建（2026-11-18）
 
-改名与图标改造后的干净构建：`app-debug.apk` 为 `59,681,609` 字节，SHA-256：
+- **名称**：“肥鱼记账”，只通过 `@string/app_name` 暴露。
+- **图标**：鲸鱼娘立绘（深蓝长发、白色女仆发带、鱼鳍耳、抱着饭碗），暖沙渐变底。`mipmap-anydpi-v26/ic_launcher.xml` 为自适应图标，前景是五档密度的位图（108dp 画布，角色贴在 36dp 安全圆内），另附 48dp 传统图标。素材处理链记录在 `docs/superpowers/specs/2026-11-18-whale-girl-icon-and-skin-design.md`。
+- **皮肤**：“肥鱼简约”取立绘的海军蓝 / 湖蓝 / 金三色，界面装饰全部由 Canvas 绘制（`ui/theme/WhaleElements.kt`：深海海浪横幅、鲸尾标记、四角星、头像、空状态插画），不铺贴图。
+
+本次干净构建：`app-debug.apk` 为 `59,684,670` 字节，SHA-256：
 
 ```text
-6B1E8F0EE1A7AF430AF62D49ED0627E6366F61DDF2BCC5A6BE8CA8031B869D8E
+8D1B5C0999F6344B99E0CE302A891162D7E6EF559FA03BA83F98C7BDC742EE21
 ```
 
-- JVM：49 个 suite、450 个测试，0 失败、0 错误、0 忽略（含 `BrandIdentityContractTest` 与 `ThemeCatalogContractTest`）。
-- `assembleDebug` 与 `compileDebugAndroidTestKotlin` 通过；`aapt2 dump badging` 显示 `application-label:'肥鱼记账'`，图标指向 `res/mipmap-anydpi-v26/ic_launcher.xml`。
+- JVM：49 个 suite、452 个测试，0 失败、0 错误、0 忽略（含 `BrandIdentityContractTest` 的图标契约与 `ThemeCatalogContractTest`）。
+- `assembleDebug` 与 `compileDebugAndroidTestKotlin` 通过；`aapt2 dump badging` 显示 `application-label:'肥鱼记账'`，四个密度的图标均指向 `res/mipmap-anydpi-v26/ic_launcher.xml`。
 - 本机网络无法访问 Google Maven，`lintDebug` 未能执行（`androidLintTool` 依赖无法下载），本轮没有 lint 结论。
 - 未连接真机：桌面名称、图标外观与“肥鱼简约”皮肤的目视验收仍为 `未验证`。
 
