@@ -96,9 +96,11 @@ def build_header_frames(gif_path: str, out_dir: str) -> int:
     for index, frame in enumerate(frames):
         canvas = Image.new("RGBA", (frame_w, frame_h), (0, 0, 0, 0))
         canvas.paste(frame.crop((x0, y0, x1, y1)), (pad, pad))
-        canvas.resize((target_w, target_h), Image.LANCZOS).save(
-            os.path.join(out_dir, f"{index:02d}.png"), "PNG", optimize=True
-        )
+        # 像素图只有几十种颜色，转成调色板后体积降一个量级（69KB → 13KB/帧），
+        # 边缘本来就是硬边，量化看不出差别。
+        canvas.resize((target_w, target_h), Image.LANCZOS).quantize(
+            colors=64, method=Image.FASTOCTREE
+        ).save(os.path.join(out_dir, f"{index:02d}.png"), "PNG", optimize=True)
     return len(frames), target_w, target_h
 
 
