@@ -256,7 +256,7 @@ private fun OceanWaveHeader(modifier: Modifier = Modifier) {
                 titleColor = MaterialTheme.colorScheme.onPrimary,
                 subtitleColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.72f),
             )
-            FishHeaderSticker(height = 74.dp)
+            FishHeaderSticker()
         }
     }
 }
