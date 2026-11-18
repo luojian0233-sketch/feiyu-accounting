@@ -22,7 +22,7 @@ ASSETS = os.path.join(ROOT, "app", "src", "main", "assets")
 OUT = os.path.join(ROOT, "tools", "reaction_previews")
 
 S = 300                      # 74dp 槽位在 4x 下的边长
-STICKER_H = round(S * 41 / 74)   # 贴纸高度跟 Kotlin 侧 BUBBLE_STICKER_HEIGHT 一致
+STICKER_H = round(S * 41 / 74)   # 贴纸高度跟 Kotlin 侧 STICKER_HEIGHT 一致
 STICKER_DY = round(S * -3 / 74)  # 贴纸整体上移 3dp
 
 # 头卡底色：从 headers-fatty_fish.png 上采的竖直线性渐变

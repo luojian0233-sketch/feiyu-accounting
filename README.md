@@ -51,7 +51,7 @@
 
 点一下贴纸会播一页一个的小动画（`ui/theme/FishHeaderReaction.kt`），贴纸自己先压扁再弹起，特效只在身边发生：首页「好运星星」五颗暖黄像素星从身后扇形炸开、账单「金币雨」七枚像素币砸到头顶、统计「像素盖章」四角角标加一道墨线、设置「光圈弹跳」两圈阶梯像素环荡开。四种反馈共用 40ms 一格的 0~1 时间轴（`playFishReaction`），时长分别 1.05s / 1.4s / 0.9s / 1.05s，播完自动回到待机循环；动作没播完再点不会重开。
 
-`python tools/gen_fish_reaction_preview.py` 是这套动画的预览工厂：按同样的曲线先渲成 GIF 和分镜图到 `tools/reaction_previews/`（已 gitignore），确认效果再往 Kotlin 里接；改曲线时两边要一起改。旧的 `assets/fish_bubble/`（用户做的气泡 GIF 切帧）和 `tools/gen_fish_bubble.py` 保留作素材存档，App 已不再使用。空记录插画换成高清版（`res/drawable-nodpi/whale_mascot.png`，768px，抠白底保留围裙与米饭），启动图标换成比赞那张（`tools/gen_fish_art.py` 统一生成四套头卡贴纸、插画与五档图标）。
+`python tools/gen_fish_reaction_preview.py` 是这套动画的预览工厂：按同样的曲线先渲成 GIF 和分镜图到 `tools/reaction_previews/`（已 gitignore），确认效果再往 Kotlin 里接；改曲线时两边要一起改。空记录插画换成高清版（`res/drawable-nodpi/whale_mascot.png`，768px，抠白底保留围裙与米饭），启动图标换成比赞那张（`tools/gen_fish_art.py` 统一生成四套头卡贴纸、插画与五档图标）。
 
 蓝色肥鱼的底栏用四张像素小图当图标（首页 / 账单 / 统计 / 设置）：白底 26dp 圆角浮起，选中项坐在一颗淡蓝气泡上、标签加粗变蓝，其他项保留原色只降到 88% 不透明度。小图原本是带文字的 GIF，由 `tools/gen_fish_nav.py` 裁掉底部文字、统一留白后切成 120px 逐帧 PNG 放在 `assets/fish_nav/`；点一下导航项就完整播一遍（每帧 80ms，设置那张第 17 帧 240ms），播完停在第一帧，不会自己循环。
 
