@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 data class LedgerFilterState(
     val query: String = "",
@@ -210,7 +211,7 @@ class LedgerFilterSession(initial: LedgerFilterState = LedgerFilterState()) {
 }
 
 class LedgerViewModel(
-    repository: LedgerRepository,
+    private val repository: LedgerRepository,
     private val zone: ZoneId = BOOKKEEPING_ZONE,
     initialStatisticsDrilldown: LedgerFilterState? = null,
     initialOrdinaryFilters: LedgerFilterState = LedgerFilterState(),
@@ -255,6 +256,12 @@ class LedgerViewModel(
 
     fun clearFilters() {
         filterSession.clear()
+    }
+
+    /** 批量删除选中的记录，删除后列表由数据库 Flow 自动刷新。 */
+    fun deleteTransactions(ids: List<Long>) {
+        if (ids.isEmpty()) return
+        viewModelScope.launch { repository.deleteAll(ids) }
     }
 }
 

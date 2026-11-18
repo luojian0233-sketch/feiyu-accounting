@@ -62,6 +62,8 @@ import com.local.autobookkeeping.ui.ledger.LedgerViewModel
 import com.local.autobookkeeping.ui.ledger.statisticsDrilldownFilter
 import com.local.autobookkeeping.ui.ledger.toFilterState
 import com.local.autobookkeeping.ui.navigation.AppDestination
+import com.local.autobookkeeping.ui.theme.NavGlyph
+import com.local.autobookkeeping.ui.theme.NavGlyphKind
 import com.local.autobookkeeping.ui.navigation.AppNavigator
 import com.local.autobookkeeping.ui.recognition.RecognitionReviewScreen
 import com.local.autobookkeeping.ui.statistics.StatisticsScreen
@@ -451,15 +453,14 @@ internal fun AutoBookkeepingRoot(
                                     if (destination == AppDestination.ENTRY) {
                                         FlatAddIcon()
                                     } else {
-                                        Text(
-                                            text = when (destination) {
-                                                AppDestination.HOME -> "⌂"
-                                                AppDestination.LEDGER -> "≡"
-                                                AppDestination.STATISTICS -> "▥"
-                                                AppDestination.SETTINGS -> "⚙"
-                                                AppDestination.ENTRY -> ""
+                                        NavGlyph(
+                                            kind = when (destination) {
+                                                AppDestination.HOME -> NavGlyphKind.HOME
+                                                AppDestination.LEDGER -> NavGlyphKind.LEDGER
+                                                AppDestination.STATISTICS -> NavGlyphKind.STATISTICS
+                                                AppDestination.SETTINGS -> NavGlyphKind.SETTINGS
+                                                AppDestination.ENTRY -> NavGlyphKind.HOME
                                             },
-                                            fontSize = 17.sp,
                                         )
                                     }
                                 },
@@ -508,6 +509,7 @@ internal fun AutoBookkeepingRoot(
                             entryViewModel.edit(it)
                             navigator.openEntry()
                         },
+                        onDelete = ledgerViewModel::deleteTransactions,
                     )
                     AppDestination.ENTRY -> {
                         if (categorySelectorOpen) {

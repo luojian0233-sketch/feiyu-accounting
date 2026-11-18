@@ -22,6 +22,9 @@ interface LedgerRepository {
     fun observeTransactions(): Flow<List<Transaction>>
     suspend fun save(transaction: Transaction): Long
     suspend fun delete(id: Long)
+    suspend fun deleteAll(ids: List<Long>) {
+        ids.forEach { delete(it) }
+    }
     suspend fun findById(id: Long): Transaction? = observeTransactions().first().firstOrNull { it.id == id }
     suspend fun findByDedupeKey(key: String): Transaction?
     suspend fun replaceAllInTransaction(transactions: List<Transaction>)
