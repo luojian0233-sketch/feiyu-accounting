@@ -24,13 +24,15 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,22 +53,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.local.autobookkeeping.ui.navigation.AppDestination
 
-/**
- * 底部导航的皮肤语言，跟首页头卡的装饰一一对应。
- * [PENDING_ASSETS] 是蓝色肥鱼的占位：素材没定之前沿用原来的 Material 底栏。
- */
+/** 底部导航的皮肤语言，跟首页头卡的装饰一一对应。 */
 enum class BottomBarStyle {
     MINT_PILL,
     RECEIPT_TICKET,
     PAPER_LINE,
-    PENDING_ASSETS,
+    OCEAN_STICKER,
 }
 
 fun bottomBarStyleFor(decor: HeaderDecor): BottomBarStyle = when (decor) {
     HeaderDecor.MINT_SPROUT -> BottomBarStyle.MINT_PILL
     HeaderDecor.RECEIPT_STUB -> BottomBarStyle.RECEIPT_TICKET
     HeaderDecor.PAPER_RULE -> BottomBarStyle.PAPER_LINE
-    HeaderDecor.OCEAN_WAVE -> BottomBarStyle.PENDING_ASSETS
+    HeaderDecor.OCEAN_WAVE -> BottomBarStyle.OCEAN_STICKER
 }
 
 private enum class Hairline { NONE, DASHED, SOLID }
@@ -86,6 +85,7 @@ private data class BottomBarPalette(
     val labelLineHeight: TextUnit,
     val labelSpacing: TextUnit,
     val labelWeight: FontWeight,
+    val labelWeightSelected: FontWeight = labelWeight,
     val showIndicator: Boolean,
     val indicator: Color,
     val indicatorShape: Shape,
@@ -98,6 +98,9 @@ private data class BottomBarPalette(
     val entryShape: Shape,
     val entryWidth: Dp,
     val entryHeight: Dp,
+    /** 蓝色肥鱼用逐帧像素小图，图标不是 Canvas 画的。 */
+    val stickers: Boolean = false,
+    val stickerSize: Dp = 36.dp,
 )
 
 @Composable
@@ -195,7 +198,38 @@ private fun bottomBarPalette(style: BottomBarStyle): BottomBarPalette {
             entryHeight = 42.dp,
         )
 
-        BottomBarStyle.PENDING_ASSETS -> error("蓝色肥鱼底栏等素材，走 ClassicBottomBar")
+        // 肥鱼：白色浮起条，选中给一颗淡蓝气泡，图标是逐帧像素小图。
+        BottomBarStyle.OCEAN_STICKER -> BottomBarPalette(
+            container = Color.White,
+            barShape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
+            elevation = 10.dp,
+            height = 76.dp,
+            hairline = Hairline.NONE,
+            hairlineColor = Color.Transparent,
+            iconSelected = colors.primary,
+            iconUnselected = Color(0xFF6E7F95),
+            labelSelected = colors.primary,
+            labelUnselected = Color(0xFF74859B),
+            labelSize = 10.5.sp,
+            labelLineHeight = 12.5.sp,
+            labelSpacing = 0.3.sp,
+            labelWeight = FontWeight.Medium,
+            labelWeightSelected = FontWeight.SemiBold,
+            showIndicator = true,
+            indicator = Color(0xFFDFECFF),
+            indicatorShape = CircleShape,
+            indicatorWidth = 48.dp,
+            indicatorHeight = 48.dp,
+            indicatorBorder = null,
+            underline = false,
+            accentStart = Color(0xFF3E7BD4),
+            accentEnd = Color(0xFF2A57A4),
+            entryShape = CircleShape,
+            entryWidth = 46.dp,
+            entryHeight = 46.dp,
+            stickers = true,
+            stickerSize = 38.dp,
+        )
     }
 }
 
@@ -206,11 +240,10 @@ fun AppBottomBar(
     modifier: Modifier = Modifier,
 ) {
     val style = appVisualTokens.bottomBarStyle
-    if (style == BottomBarStyle.PENDING_ASSETS) {
-        ClassicBottomBar(current, onSelect, modifier)
-        return
-    }
     val palette = bottomBarPalette(style)
+    // 像素小图每次点击完整播一遍；换到别的位置就把令牌清零，动画随之中断。
+    var playToken by remember { mutableIntStateOf(0) }
+    var playing by remember { mutableStateOf<FishStickerKind?>(null) }
     Surface(
         modifier = modifier.fillMaxWidth().testTag("bottom-bar"),
         shape = palette.barShape,
@@ -247,7 +280,14 @@ fun AppBottomBar(
                         destination = destination,
                         selected = destination == current,
                         palette = palette,
-                        onClick = { onSelect(destination) },
+                        playToken = if (playing == destination.sticker) playToken else 0,
+                        onClick = {
+                            destination.sticker?.let {
+                                playing = it
+                                playToken += 1
+                            }
+                            onSelect(destination)
+                        },
                     )
                 }
             }
@@ -260,6 +300,7 @@ private fun RowScope.BarItem(
     destination: AppDestination,
     selected: Boolean,
     palette: BottomBarPalette,
+    playToken: Int,
     onClick: () -> Unit,
 ) {
     if (destination == AppDestination.ENTRY) {
@@ -321,16 +362,30 @@ private fun RowScope.BarItem(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            CompositionLocalProvider(LocalContentColor provides iconColor) {
-                NavGlyph(
-                    kind = destination.glyph,
-                    selected = selected,
-                    size = 21.dp,
+            val sticker = destination.sticker
+            if (palette.stickers && sticker != null) {
+                FishSticker(
+                    kind = sticker,
+                    playToken = playToken,
+                    size = palette.stickerSize,
                     modifier = Modifier.graphicsLayer {
                         scaleX = iconScale
                         scaleY = iconScale
+                        alpha = if (selected) 1f else 0.88f
                     },
                 )
+            } else {
+                CompositionLocalProvider(LocalContentColor provides iconColor) {
+                    NavGlyph(
+                        kind = destination.glyph,
+                        selected = selected,
+                        size = 21.dp,
+                        modifier = Modifier.graphicsLayer {
+                            scaleX = iconScale
+                            scaleY = iconScale
+                        },
+                    )
+                }
             }
         }
         Text(
@@ -339,7 +394,7 @@ private fun RowScope.BarItem(
             fontSize = palette.labelSize,
             lineHeight = palette.labelLineHeight,
             letterSpacing = palette.labelSpacing,
-            fontWeight = palette.labelWeight,
+            fontWeight = if (selected) palette.labelWeightSelected else palette.labelWeight,
             maxLines = 1,
             modifier = Modifier.padding(top = 1.dp),
         )
@@ -441,48 +496,7 @@ fun PlusGlyph(
     }
 }
 
-/** 蓝色肥鱼暂用：保留原来的 Material 底栏，等素材到位再换皮。 */
-@Composable
-private fun ClassicBottomBar(
-    current: AppDestination,
-    onSelect: (AppDestination) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    NavigationBar(modifier = modifier, containerColor = MaterialTheme.colorScheme.surface) {
-        AppDestination.entries.forEach { destination ->
-            NavigationBarItem(
-                selected = current == destination,
-                onClick = { onSelect(destination) },
-                modifier = Modifier
-                    .testTag("nav-${destination.name}")
-                    .then(
-                        if (destination == AppDestination.ENTRY) {
-                            Modifier.semantics { contentDescription = "记一笔" }
-                        } else {
-                            Modifier
-                        },
-                    ),
-                icon = {
-                    if (destination == AppDestination.ENTRY) {
-                        PlusGlyph(color = LocalContentColor.current)
-                    } else {
-                        NavGlyph(
-                            kind = destination.glyph,
-                            selected = current == destination,
-                        )
-                    }
-                },
-                label = {
-                    if (destination != AppDestination.ENTRY) {
-                        Text(destination.label)
-                    }
-                },
-            )
-        }
-    }
-}
-
-/** 底部导航项到图标类型的映射。 */
+/** 底部导航项到 Canvas 图标类型的映射。 */
 val AppDestination.glyph: NavGlyphKind
     get() = when (this) {
         AppDestination.HOME -> NavGlyphKind.HOME
@@ -490,4 +504,14 @@ val AppDestination.glyph: NavGlyphKind
         AppDestination.STATISTICS -> NavGlyphKind.STATISTICS
         AppDestination.SETTINGS -> NavGlyphKind.SETTINGS
         AppDestination.ENTRY -> NavGlyphKind.HOME
+    }
+
+/** 蓝色肥鱼底栏的像素小图，中央「记一笔」没有贴纸。 */
+val AppDestination.sticker: FishStickerKind?
+    get() = when (this) {
+        AppDestination.HOME -> FishStickerKind.HOME
+        AppDestination.LEDGER -> FishStickerKind.LEDGER
+        AppDestination.STATISTICS -> FishStickerKind.STATISTICS
+        AppDestination.SETTINGS -> FishStickerKind.SETTINGS
+        AppDestination.ENTRY -> null
     }

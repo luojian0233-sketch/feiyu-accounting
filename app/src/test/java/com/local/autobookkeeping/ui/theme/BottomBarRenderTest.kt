@@ -49,8 +49,12 @@ class BottomBarRenderTest {
         render(ThemeStyle.PAPER_MINIMAL, AppDestination.LEDGER, "ledger")
 
     @Test
-    fun fattyFishBottomBarStillRendersWhileWaitingForAssets() =
+    fun fattyFishBottomBarShowsStickerIcons() =
         render(ThemeStyle.FATTY_FISH, AppDestination.LEDGER, "ledger")
+
+    @Test
+    fun fattyFishSettingsSelectedKeepsStickerLegible() =
+        render(ThemeStyle.FATTY_FISH, AppDestination.SETTINGS, "settings")
 
     @Test
     fun filledHouseAndBarsReadCorrectly() =

@@ -25,7 +25,13 @@ class BottomBarStyleContractTest {
     }
 
     @Test
-    fun `fatty fish keeps the classic bar until assets are ready`() {
-        assertEquals(BottomBarStyle.PENDING_ASSETS, bottomBarStyleFor(HeaderDecor.OCEAN_WAVE))
+    fun `fatty fish gets its own sticker bar`() {
+        assertEquals(BottomBarStyle.OCEAN_STICKER, bottomBarStyleFor(HeaderDecor.OCEAN_WAVE))
+    }
+
+    @Test
+    fun `all four skins use four different bar languages`() {
+        val styles = HeaderDecor.entries.map { bottomBarStyleFor(it) }
+        assertEquals(styles.size, styles.toSet().size)
     }
 }
