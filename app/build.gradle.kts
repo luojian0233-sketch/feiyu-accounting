@@ -29,6 +29,12 @@ android {
         }
     }
 
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -55,6 +61,8 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testRuntimeOnly(libs.junit.platform.launcher)
     testImplementation(libs.robolectric)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
     testImplementation(libs.kotlinx.coroutines.test)
     testRuntimeOnly("org.junit.vintage:junit-vintage-engine:5.12.2")
 

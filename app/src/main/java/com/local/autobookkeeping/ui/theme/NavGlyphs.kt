@@ -5,9 +5,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -20,19 +25,24 @@ import kotlin.math.sin
 /** 底部导航用的图标，四套皮肤各用一种几何语言。 */
 enum class NavGlyphKind { HOME, LEDGER, STATISTICS, SETTINGS }
 
+/**
+ * 导航图标。未选中画描边，选中画实心剪影，方便一眼看出当前页。
+ * [selected] 目前只对前三套皮肤生效，肥鱼那套等素材到位再补。
+ */
 @Composable
 fun NavGlyph(
     kind: NavGlyphKind,
     modifier: Modifier = Modifier,
     size: Dp = 23.dp,
+    selected: Boolean = false,
 ) {
     val tint = LocalContentColor.current
     val decor = appVisualTokens.headerDecor
     Canvas(modifier.size(size)) {
         when (decor) {
-            HeaderDecor.MINT_SPROUT -> drawMint(kind, tint)
-            HeaderDecor.RECEIPT_STUB -> drawReceipt(kind, tint)
-            HeaderDecor.PAPER_RULE -> drawPaper(kind, tint)
+            HeaderDecor.MINT_SPROUT -> drawMint(kind, tint, selected)
+            HeaderDecor.RECEIPT_STUB -> drawReceipt(kind, tint, selected)
+            HeaderDecor.PAPER_RULE -> drawPaper(kind, tint, selected)
             HeaderDecor.OCEAN_WAVE -> drawOcean(kind, tint)
         }
     }
@@ -120,9 +130,123 @@ private fun DrawScope.wavyLine(
     drawPath(path, color, style = Stroke(width = width, cap = StrokeCap.Round))
 }
 
+// ---------------------------------------------------------------- 实心剪影
+// 选中态统一用「实心形状减去内部细节」的做法：房子挖掉门洞、账单挖掉两行字、
+// 齿轮挖掉轴孔。比单纯加粗线条更像真正的 filled 图标。
+
+private fun union(a: Path, b: Path): Path = Path().apply { op(a, b, PathOperation.Union) }
+
+private fun diff(a: Path, b: Path): Path = Path().apply { op(a, b, PathOperation.Difference) }
+
+private fun DrawScope.roundRectPath(l: Float, t: Float, r: Float, b: Float, radius: Float): Path =
+    Path().apply {
+        addRoundRect(
+            RoundRect(box(l), box(t), box(r), box(b), CornerRadius(radius)),
+        )
+    }
+
+private fun DrawScope.houseSilhouette(tint: Color, radius: Float) {
+    val roof = Path().apply {
+        moveTo(box(0.50f), box(0.10f))
+        lineTo(box(0.95f), box(0.49f))
+        lineTo(box(0.05f), box(0.49f))
+        close()
+    }
+    val body = roundRectPath(0.15f, 0.44f, 0.85f, 0.89f, radius)
+    val house = union(roof, body)
+    val door = roundRectPath(0.415f, 0.615f, 0.585f, 0.89f, radius * 0.75f)
+    drawPath(diff(house, door), tint)
+}
+
+private fun DrawScope.slipSilhouette(tint: Color, radius: Float) {
+    val body = roundRectPath(0.19f, 0.12f, 0.81f, 0.88f, radius)
+    val line1 = roundRectPath(0.31f, 0.32f, 0.69f, 0.395f, radius * 0.6f)
+    val line2 = roundRectPath(0.31f, 0.55f, 0.57f, 0.625f, radius * 0.6f)
+    val withoutLine1 = diff(body, line1)
+    drawPath(diff(withoutLine1, line2), tint)
+}
+
+private fun DrawScope.barsSilhouette(tint: Color, radius: Float) {
+    val tops = listOf(0.56f, 0.42f, 0.28f)
+    val barWidth = 0.13f
+    tops.forEachIndexed { index, top ->
+        val left = 0.235f + index * 0.20f
+        drawPath(roundRectPath(left, top, left + barWidth, 0.85f, radius), tint)
+    }
+}
+
+private fun DrawScope.gearSilhouette(tint: Color) {
+    // 逐齿描一圈「梯形齿 + 牙根」的轮廓再减去轴孔：齿是宽的梯形，
+    // 不是放射状尖刺，否则在 21dp 下会读成一朵花或太阳。
+    val teeth = 8
+    val step = (2f * Math.PI / teeth).toFloat()
+    val root = box(0.212f)
+    val tip = box(0.300f)
+    val outline = Path()
+    for (i in 0 until teeth) {
+        val base = i * step - Math.PI.toFloat() / 2f
+        val points = listOf(
+            root to base - step * 0.5f,
+            tip to base - step * 0.20f,
+            tip to base + step * 0.20f,
+            root to base + step * 0.5f,
+        )
+        points.forEachIndexed { index, (r, angle) ->
+            val x = center.x + r * cos(angle)
+            val y = center.y + r * sin(angle)
+            if (i == 0 && index == 0) outline.moveTo(x, y) else outline.lineTo(x, y)
+        }
+    }
+    outline.close()
+    val holeRadius = box(0.105f)
+    val hole = Path().apply {
+        addOval(
+            Rect(
+                center.x - holeRadius,
+                center.y - holeRadius,
+                center.x + holeRadius,
+                center.y + holeRadius,
+            ),
+        )
+    }
+    drawPath(diff(outline, hole), tint)
+}
+
+/** 选中态的滑杆：粗杆 + 实心旋钮。 */
+private fun DrawScope.slidersFilled(
+    tint: Color,
+    barWidth: Float,
+    knobFraction: Float,
+    square: Boolean,
+) {
+    val knob = box(knobFraction)
+    listOf(
+        0.36f to 0.37f,
+        0.66f to 0.63f,
+    ).forEach { (y, knobX) ->
+        line(0.13f, y, 0.87f, y, tint, barWidth)
+        val corner = if (square) CornerRadius(knob * 0.10f) else CornerRadius(knob / 2f)
+        drawRoundRect(
+            color = tint,
+            topLeft = Offset(box(knobX) - knob / 2f, box(y) - knob / 2f),
+            size = Size(knob, knob),
+            cornerRadius = corner,
+        )
+    }
+}
+
 /** 清透薄荷：圆头描边 + 一点实心，像叶子一样柔和。 */
-private fun DrawScope.drawMint(kind: NavGlyphKind, tint: Color) {
+private fun DrawScope.drawMint(kind: NavGlyphKind, tint: Color, selected: Boolean) {
     val w = 1.9.dp.toPx()
+    if (selected) {
+        when (kind) {
+            NavGlyphKind.HOME -> houseSilhouette(tint, box(0.075f))
+            NavGlyphKind.LEDGER -> slipSilhouette(tint, box(0.10f))
+            NavGlyphKind.STATISTICS -> barsSilhouette(tint, box(0.048f))
+            NavGlyphKind.SETTINGS -> gearSilhouette(tint)
+        }
+        return
+    }
     when (kind) {
         NavGlyphKind.HOME -> {
             polyline(listOf(0.16f to 0.50f, 0.50f to 0.20f, 0.84f to 0.50f), tint, w, StrokeCap.Round)
@@ -135,15 +259,8 @@ private fun DrawScope.drawMint(kind: NavGlyphKind, tint: Color) {
             drawCircle(tint, box(0.062f), Offset(box(0.50f), box(0.64f)))
         }
         NavGlyphKind.LEDGER -> {
-            val path = Path().apply {
-                addRoundRect(
-                    androidx.compose.ui.geometry.RoundRect(
-                        box(0.22f), box(0.16f), box(0.78f), box(0.84f),
-                        androidx.compose.ui.geometry.CornerRadius(box(0.10f)),
-                    ),
-                )
-            }
-            drawPath(path, tint, style = Stroke(width = w))
+            val radius = box(0.10f)
+            drawPath(roundRectPath(0.22f, 0.16f, 0.78f, 0.84f, radius), tint, style = Stroke(width = w))
             line(0.34f, 0.40f, 0.66f, 0.40f, tint, w)
             line(0.34f, 0.60f, 0.58f, 0.60f, tint, w)
         }
@@ -159,8 +276,17 @@ private fun DrawScope.drawMint(kind: NavGlyphKind, tint: Color) {
 }
 
 /** 小票账本：直角、等宽线，像打印出来的小票。 */
-private fun DrawScope.drawReceipt(kind: NavGlyphKind, tint: Color) {
+private fun DrawScope.drawReceipt(kind: NavGlyphKind, tint: Color, selected: Boolean) {
     val w = 1.6.dp.toPx()
+    if (selected) {
+        when (kind) {
+            NavGlyphKind.HOME -> houseSilhouette(tint, box(0.005f))
+            NavGlyphKind.LEDGER -> slipSilhouette(tint, box(0.008f))
+            NavGlyphKind.STATISTICS -> barsSilhouette(tint, box(0.008f))
+            NavGlyphKind.SETTINGS -> slidersFilled(tint, w * 2.1f, 0.275f, square = true)
+        }
+        return
+    }
     when (kind) {
         NavGlyphKind.HOME -> {
             polyline(
@@ -203,7 +329,7 @@ private fun DrawScope.drawReceipt(kind: NavGlyphKind, tint: Color) {
                 drawRect(
                     tint,
                     topLeft = Offset(box(left), box(top)),
-                    size = androidx.compose.ui.geometry.Size(box(0.11f), box(0.84f - top)),
+                    size = Size(box(0.11f), box(0.84f - top)),
                 )
             }
         }
@@ -212,21 +338,30 @@ private fun DrawScope.drawReceipt(kind: NavGlyphKind, tint: Color) {
             drawRect(
                 tint,
                 topLeft = Offset(box(0.36f), box(0.27f)),
-                size = androidx.compose.ui.geometry.Size(box(0.13f), box(0.18f)),
+                size = Size(box(0.13f), box(0.18f)),
             )
             line(0.18f, 0.66f, 0.82f, 0.66f, tint, w, StrokeCap.Butt)
             drawRect(
                 tint,
                 topLeft = Offset(box(0.56f), box(0.57f)),
-                size = androidx.compose.ui.geometry.Size(box(0.13f), box(0.18f)),
+                size = Size(box(0.13f), box(0.18f)),
             )
         }
     }
 }
 
 /** 纸感极简：细线、留白，像钢笔在纸上画的草图。 */
-private fun DrawScope.drawPaper(kind: NavGlyphKind, tint: Color) {
+private fun DrawScope.drawPaper(kind: NavGlyphKind, tint: Color, selected: Boolean) {
     val w = 1.25.dp.toPx()
+    if (selected) {
+        when (kind) {
+            NavGlyphKind.HOME -> houseSilhouette(tint, box(0.025f))
+            NavGlyphKind.LEDGER -> slipSilhouette(tint, box(0.02f))
+            NavGlyphKind.STATISTICS -> barsSilhouette(tint, box(0.012f))
+            NavGlyphKind.SETTINGS -> slidersFilled(tint, w * 2.2f, 0.255f, square = false)
+        }
+        return
+    }
     when (kind) {
         NavGlyphKind.HOME -> {
             polyline(

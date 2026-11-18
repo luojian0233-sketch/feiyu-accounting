@@ -8,13 +8,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -30,11 +27,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -62,8 +56,6 @@ import com.local.autobookkeeping.ui.ledger.LedgerViewModel
 import com.local.autobookkeeping.ui.ledger.statisticsDrilldownFilter
 import com.local.autobookkeeping.ui.ledger.toFilterState
 import com.local.autobookkeeping.ui.navigation.AppDestination
-import com.local.autobookkeeping.ui.theme.NavGlyph
-import com.local.autobookkeeping.ui.theme.NavGlyphKind
 import com.local.autobookkeeping.ui.navigation.AppNavigator
 import com.local.autobookkeeping.ui.recognition.RecognitionReviewScreen
 import com.local.autobookkeeping.ui.statistics.StatisticsScreen
@@ -72,6 +64,7 @@ import com.local.autobookkeeping.ui.statistics.StatisticsViewModel
 import com.local.autobookkeeping.ui.settings.SettingsScreen
 import com.local.autobookkeeping.ui.settings.SettingsUiState
 import com.local.autobookkeeping.ui.settings.SettingsViewModel
+import com.local.autobookkeeping.ui.theme.AppBottomBar
 import com.local.autobookkeeping.ui.theme.AutoBookkeepingTheme
 import com.local.autobookkeeping.ui.theme.ThemeStyle
 import com.local.autobookkeeping.recognition.tile.TileAddResult
@@ -420,58 +413,25 @@ internal fun AutoBookkeepingRoot(
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
                 if (!isCategorySelector) {
-                    NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                        AppDestination.entries.forEach { destination ->
-                            NavigationBarItem(
-                                selected = current == destination,
-                                onClick = {
-                                    categorySelectorOpen = false
-                                    if (
-                                        navigator.isStatisticsDrilldownActive &&
-                                        destination != AppDestination.ENTRY
-                                    ) {
-                                        ledgerViewModel.closeStatisticsDrilldown()
-                                    }
-                                    if (
-                                        destination == AppDestination.ENTRY &&
-                                        current != AppDestination.ENTRY
-                                    ) {
-                                        entryViewModel.startNew()
-                                    }
-                                    navigator.select(destination)
-                                },
-                                modifier = Modifier
-                                    .testTag("nav-${destination.name}")
-                                    .then(
-                                        if (destination == AppDestination.ENTRY) {
-                                            Modifier.semantics { contentDescription = "记一笔" }
-                                        } else {
-                                            Modifier
-                                        },
-                                    ),
-                                icon = {
-                                    if (destination == AppDestination.ENTRY) {
-                                        FlatAddIcon()
-                                    } else {
-                                        NavGlyph(
-                                            kind = when (destination) {
-                                                AppDestination.HOME -> NavGlyphKind.HOME
-                                                AppDestination.LEDGER -> NavGlyphKind.LEDGER
-                                                AppDestination.STATISTICS -> NavGlyphKind.STATISTICS
-                                                AppDestination.SETTINGS -> NavGlyphKind.SETTINGS
-                                                AppDestination.ENTRY -> NavGlyphKind.HOME
-                                            },
-                                        )
-                                    }
-                                },
-                                label = {
-                                    if (destination != AppDestination.ENTRY) {
-                                        Text(destination.label)
-                                    }
-                                },
-                            )
-                        }
-                    }
+                    AppBottomBar(
+                        current = current,
+                        onSelect = { destination ->
+                            categorySelectorOpen = false
+                            if (
+                                navigator.isStatisticsDrilldownActive &&
+                                destination != AppDestination.ENTRY
+                            ) {
+                                ledgerViewModel.closeStatisticsDrilldown()
+                            }
+                            if (
+                                destination == AppDestination.ENTRY &&
+                                current != AppDestination.ENTRY
+                            ) {
+                                entryViewModel.startNew()
+                            }
+                            navigator.select(destination)
+                        },
+                    )
                 }
             },
         ) { padding ->
@@ -701,30 +661,6 @@ internal fun AutoBookkeepingRoot(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun FlatAddIcon() {
-    val color = androidx.compose.material3.LocalContentColor.current
-    Canvas(Modifier.size(24.dp)) {
-        val length = size.minDimension * 0.28f
-        val centerX = size.width / 2
-        val centerY = size.height / 2
-        drawLine(
-            color = color,
-            start = androidx.compose.ui.geometry.Offset(centerX - length, centerY),
-            end = androidx.compose.ui.geometry.Offset(centerX + length, centerY),
-            strokeWidth = 3.dp.toPx(),
-            cap = StrokeCap.Round,
-        )
-        drawLine(
-            color = color,
-            start = androidx.compose.ui.geometry.Offset(centerX, centerY - length),
-            end = androidx.compose.ui.geometry.Offset(centerX, centerY + length),
-            strokeWidth = 3.dp.toPx(),
-            cap = StrokeCap.Round,
-        )
     }
 }
 

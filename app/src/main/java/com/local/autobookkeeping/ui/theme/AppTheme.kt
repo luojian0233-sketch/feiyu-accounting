@@ -49,7 +49,11 @@ data class AppVisualTokens(
     val dashedSeparators: Boolean,
     val headerDecor: HeaderDecor = HeaderDecor.MINT_SPROUT,
     val showFishMascot: Boolean = false,
-)
+) {
+    /** 底部导航皮肤，跟头卡装饰同步切换。 */
+    val bottomBarStyle: BottomBarStyle
+        get() = bottomBarStyleFor(headerDecor)
+}
 
 private val LocalAppVisualTokens = staticCompositionLocalOf {
     AppVisualTokens(
