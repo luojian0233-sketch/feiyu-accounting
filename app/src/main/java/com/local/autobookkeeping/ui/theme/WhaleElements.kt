@@ -125,7 +125,10 @@ fun SparkleMark(
     }
 }
 
-/** 头像：立绘里的头部贴在暖沙色圆盘上，作为皮肤的小吉祥物。 */
+/**
+ * 静态头像：立绘里的头部贴在暖沙色圆盘上。头卡已改用循环贴纸
+ * （[FishHeaderSticker]），这里保留给需要静止头像的位置。
+ */
 @Composable
 fun WhaleMascot(
     modifier: Modifier = Modifier,
@@ -163,9 +166,9 @@ fun WhaleEmptyHint(
         Image(
             painter = painterResource(R.drawable.whale_mascot),
             contentDescription = null,
-            modifier = Modifier.size(132.dp),
+            modifier = Modifier.size(148.dp),
         )
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(2.dp))
         Text(
             message,
             style = MaterialTheme.typography.bodyMedium,

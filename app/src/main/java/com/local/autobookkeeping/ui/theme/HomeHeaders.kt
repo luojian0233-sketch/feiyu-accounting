@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -240,14 +241,14 @@ private fun PaperRuleHeader(modifier: Modifier = Modifier) {
     }
 }
 
-/** 肥鱼：沿用深海横幅，右侧是她的头像。 */
+/** 肥鱼：沿用深海横幅，右侧是她自己的循环动画小图。 */
 @Composable
 private fun OceanWaveHeader(modifier: Modifier = Modifier) {
     WhaleWaveHeader(modifier) {
         Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp),
+                .fillMaxSize()
+                .padding(start = 20.dp, end = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
@@ -255,7 +256,7 @@ private fun OceanWaveHeader(modifier: Modifier = Modifier) {
                 titleColor = MaterialTheme.colorScheme.onPrimary,
                 subtitleColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.72f),
             )
-            WhaleMascot(size = 52.dp)
+            FishHeaderSticker(height = 74.dp)
         }
     }
 }
