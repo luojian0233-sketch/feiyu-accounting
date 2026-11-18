@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -17,11 +18,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
@@ -104,21 +109,61 @@ fun LoopingFishSticker(
 }
 
 /**
- * 头卡右上角的贴纸：GIF 自带的「好运来」是深蓝色的，直接压在深海渐变上会糊成一片，
- * 所以垫一张近白的圆角贴纸牌、再给一点投影，整块像是贴上头卡的贴纸徽章。
+ * 头卡右上角的贴纸：外面裹一层半透明白的「深海气泡」。
+ *
+ * 早前是一块近白实心牌，压在深蓝渐变上太抢眼；换成玻璃泡后底色能透上来，
+ * 只剩一圈高光和描边把贴纸托住。GIF 里的「好运来」也在生成脚本里翻成了白字
+ * （见 `tools/gen_fish_art.py` 的 `recolor_sticker_text`），深蓝字压在深海底上会糊成一片。
  */
 @Composable
 fun FishHeaderSticker(
     modifier: Modifier = Modifier,
     height: Dp = 74.dp,
 ) {
-    val shape = RoundedCornerShape(16.dp)
+    val shape = RoundedCornerShape(20.dp)
     Box(
         modifier = modifier
-            .shadow(elevation = 6.dp, shape = shape, clip = false)
-            .background(Color(0xFFFDFEFF).copy(alpha = 0.96f), shape)
-            .padding(horizontal = 5.dp, vertical = 4.dp),
+            .clip(shape)
+            .background(
+                Brush.verticalGradient(
+                    0f to Color.White.copy(alpha = 0.18f),
+                    0.52f to Color.White.copy(alpha = 0.05f),
+                    1f to Color.White.copy(alpha = 0.08f),
+                ),
+            )
+            .drawBehind { bubbleSheen() }
+            .border(
+                width = 1.dp,
+                brush = Brush.linearGradient(
+                    listOf(Color.White.copy(alpha = 0.52f), Color.White.copy(alpha = 0.14f)),
+                ),
+                shape = shape,
+            )
+            .padding(horizontal = 6.dp, vertical = 5.dp),
     ) {
         LoopingFishSticker(height = height)
     }
+}
+
+/** 左上角一颗收得住的反光 + 底边内侧一线微光，玻璃泡的体积全靠这两笔。 */
+private fun DrawScope.bubbleSheen() {
+    val glow = size.minDimension * 0.46f
+    val center = Offset(size.width * 0.26f, size.height * 0.14f)
+    drawCircle(
+        brush = Brush.radialGradient(
+            0f to Color.White.copy(alpha = 0.27f),
+            1f to Color.Transparent,
+            center = center,
+            radius = glow,
+        ),
+        radius = glow,
+        center = center,
+    )
+    drawRect(
+        brush = Brush.verticalGradient(
+            listOf(Color.Transparent, Color.White.copy(alpha = 0.07f)),
+            startY = size.height * 0.74f,
+            endY = size.height,
+        ),
+    )
 }
