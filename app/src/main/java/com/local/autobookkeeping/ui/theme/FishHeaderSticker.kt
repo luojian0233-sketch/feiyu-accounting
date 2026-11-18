@@ -55,6 +55,14 @@ enum class HeaderStickerKind(
     ),
 }
 
+/** 页面身份 → 肥鱼的哪张台词贴纸。 */
+internal fun HeaderPage.stickerKind(): HeaderStickerKind = when (this) {
+    HeaderPage.HOME -> HeaderStickerKind.HOME
+    HeaderPage.LEDGER -> HeaderStickerKind.LEDGER
+    HeaderPage.STATISTICS -> HeaderStickerKind.STATISTICS
+    HeaderPage.SETTINGS -> HeaderStickerKind.SETTINGS
+}
+
 private object HeaderStickerCache {
     private val firstFrames = HashMap<HeaderStickerKind, ImageBitmap>()
     private val allFrames = HashMap<HeaderStickerKind, List<ImageBitmap>>()

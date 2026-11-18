@@ -59,19 +59,19 @@ class PageChromeRenderTest {
                     ThemedHomeHeader(
                         title = "账单",
                         subtitle = "每一笔都算得清",
-                        sticker = HeaderStickerKind.LEDGER,
+                        page = HeaderPage.LEDGER,
                     )
                     Spacer(Modifier.height(12.dp))
                     ThemedHomeHeader(
                         title = "统计",
                         subtitle = "钱都花在哪儿了",
-                        sticker = HeaderStickerKind.STATISTICS,
+                        page = HeaderPage.STATISTICS,
                     )
                     Spacer(Modifier.height(12.dp))
                     ThemedHomeHeader(
                         title = "设置",
                         subtitle = "按你的习惯来",
-                        sticker = HeaderStickerKind.SETTINGS,
+                        page = HeaderPage.SETTINGS,
                     )
                 }
             }
@@ -92,8 +92,8 @@ class PageChromeRenderTest {
                         .background(MaterialTheme.colorScheme.background)
                         .padding(16.dp),
                 ) {
-                    HeaderStickerKind.entries.forEach { kind ->
-                        ThemedHomeHeader(title = kind.name, sticker = kind)
+                    HeaderPage.entries.forEach { page ->
+                        ThemedHomeHeader(title = page.name, page = page)
                         Spacer(Modifier.height(10.dp))
                     }
                 }

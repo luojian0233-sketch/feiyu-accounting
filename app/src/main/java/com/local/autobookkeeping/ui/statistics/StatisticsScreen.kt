@@ -46,7 +46,7 @@ import androidx.compose.ui.unit.dp
 import com.local.autobookkeeping.domain.model.CategoryTotal
 import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.ui.theme.AppCardSurface
-import com.local.autobookkeeping.ui.theme.HeaderStickerKind
+import com.local.autobookkeeping.ui.theme.HeaderPage
 import com.local.autobookkeeping.ui.theme.ThemedHomeHeader
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -89,7 +89,7 @@ fun StatisticsScreen(
                 modifier = Modifier.padding(top = 14.dp),
                 title = "统计",
                 subtitle = "钱都花在哪儿了",
-                sticker = HeaderStickerKind.STATISTICS,
+                page = HeaderPage.STATISTICS,
             )
         }
         item {

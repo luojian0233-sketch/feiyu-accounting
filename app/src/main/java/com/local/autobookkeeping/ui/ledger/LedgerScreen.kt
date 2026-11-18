@@ -44,7 +44,7 @@ import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.domain.model.Transaction
 import com.local.autobookkeeping.ui.theme.AppCardSurface
 import com.local.autobookkeeping.ui.theme.AppSeparator
-import com.local.autobookkeeping.ui.theme.HeaderStickerKind
+import com.local.autobookkeeping.ui.theme.HeaderPage
 import com.local.autobookkeeping.ui.theme.ThemedHomeHeader
 import com.local.autobookkeeping.ui.theme.appVisualTokens
 import java.time.YearMonth
@@ -82,7 +82,7 @@ fun LedgerScreen(
             modifier = Modifier.padding(top = 14.dp),
             title = "账单",
             subtitle = "每一笔都算得清",
-            sticker = HeaderStickerKind.LEDGER,
+            page = HeaderPage.LEDGER,
         )
         if (!selecting) {
             Row(

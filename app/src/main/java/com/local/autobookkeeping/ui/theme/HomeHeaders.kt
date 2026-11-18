@@ -1,15 +1,18 @@
 package com.local.autobookkeeping.ui.theme
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -26,33 +29,41 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
- * 页面顶部的美化头卡：四套皮肤各有一套装饰语言，全部由 Canvas 绘制，
+ * 页面顶部的美化头卡：四套皮肤各有一套装饰语言，底纹全部由 Canvas 绘制，
  * 不含位图、不响应点击，也不带无障碍语义。标题文字由调用方给，
  * 四个页面对着一张卡换文案，皮肤的装饰语言保持一致。
  *
- * [sticker] 只有肥鱼皮肤用得上：右上角气泡里那张像素贴纸，四页各一句台词。
+ * 右上角留给「标注徽章」：薄荷/账本/纸感各按自己的材质画一枚会动的小图标
+ * （见 [HeaderBadge]），肥鱼那边仍是像素气泡里的人物贴纸。
+ *
+ * 版式约束（之前纸感极简压字就是因为缺了这条）：
+ * 文字列 `weight(1f)` 吃掉剩余宽度、单行省略，装饰永远待在右侧固定槽位里，
+ * 再长的副标题也压不到图案上。
  */
 @Composable
 fun ThemedHomeHeader(
     modifier: Modifier = Modifier,
     title: String = HOME_HEADER_TITLE,
     subtitle: String = HOME_HEADER_SUBTITLE,
-    sticker: HeaderStickerKind = HeaderStickerKind.HOME,
+    page: HeaderPage = HeaderPage.HOME,
 ) {
     when (appVisualTokens.headerDecor) {
-        HeaderDecor.MINT_SPROUT -> MintSproutHeader(modifier, title, subtitle)
-        HeaderDecor.RECEIPT_STUB -> ReceiptStubHeader(modifier, title, subtitle)
-        HeaderDecor.PAPER_RULE -> PaperRuleHeader(modifier, title, subtitle)
-        HeaderDecor.OCEAN_WAVE -> OceanWaveHeader(modifier, title, subtitle, sticker)
+        HeaderDecor.MINT_SPROUT -> MintSproutHeader(modifier, title, subtitle, page)
+        HeaderDecor.RECEIPT_STUB -> ReceiptStubHeader(modifier, title, subtitle, page)
+        HeaderDecor.PAPER_RULE -> PaperRuleHeader(modifier, title, subtitle, page)
+        HeaderDecor.OCEAN_WAVE -> OceanWaveHeader(modifier, title, subtitle, page)
     }
 }
 
 private const val HOME_HEADER_TITLE = "今天"
 private const val HOME_HEADER_SUBTITLE = "吃好每一顿，记好每一笔"
 
+/** 头卡正文：标题 + 副标题，都只占一行，宽度由外面 weight 分配。 */
 @Composable
 private fun HeaderTitle(
     title: String,
@@ -67,14 +78,58 @@ private fun HeaderTitle(
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.SemiBold,
             color = titleColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
-        Text(subtitle, style = MaterialTheme.typography.bodySmall, color = subtitleColor)
+        Text(
+            subtitle,
+            style = MaterialTheme.typography.bodySmall,
+            color = subtitleColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
-/** 清透薄荷：晨露般的薄荷渐层 + 两团柔光 + 右侧一株嫩芽。 */
+/** 三套非肥鱼皮肤共用的头卡骨架：文字占剩余宽度、徽章钉在右侧槽位。 */
 @Composable
-private fun MintSproutHeader(modifier: Modifier = Modifier, title: String, subtitle: String) {
+private fun BadgedHeaderRow(
+    title: String,
+    subtitle: String,
+    titleColor: Color,
+    page: HeaderPage,
+    startPadding: Dp = 18.dp,
+    leading: @Composable () -> Unit = {},
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(start = startPadding, end = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        leading()
+        HeaderTitle(
+            title = title,
+            subtitle = subtitle,
+            titleColor = titleColor,
+            subtitleColor = titleColor.copy(alpha = 0.62f),
+            modifier = Modifier.weight(1f),
+        )
+        Spacer(Modifier.width(10.dp))
+        headerBadgeFor(appVisualTokens.headerDecor, page)?.let { kind ->
+            HeaderBadge(kind = kind)
+        }
+    }
+}
+
+/** 清透薄荷：晨露般的薄荷渐层 + 两团柔光，右侧一枚玻璃露珠徽章。 */
+@Composable
+private fun MintSproutHeader(
+    modifier: Modifier = Modifier,
+    title: String,
+    subtitle: String,
+    page: HeaderPage,
+) {
     val titleColor = Color(0xFF0B493A)
     Box(
         modifier = modifier
@@ -104,50 +159,18 @@ private fun MintSproutHeader(modifier: Modifier = Modifier, title: String, subti
             drawCircle(Color(0xFF8FCBB2).copy(alpha = 0.35f), h * 0.022f, Offset(w * 0.30f, h * 0.93f))
             drawCircle(Color(0xFF8FCBB2).copy(alpha = 0.25f), h * 0.014f, Offset(w * 0.20f, h * 0.90f))
         }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 18.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            HeaderTitle(title, subtitle, titleColor, titleColor.copy(alpha = 0.66f))
-            MintSproutEmblem()
-        }
+        BadgedHeaderRow(title, subtitle, titleColor, page)
     }
 }
 
+/** 小票账本：纸面 + 上下齿孔虚线，右侧一枚带齿孔的纸签徽章。 */
 @Composable
-private fun MintSproutEmblem() {
-    Canvas(Modifier.size(44.dp)) {
-        val d = size.minDimension
-        drawCircle(Color.White.copy(alpha = 0.62f), d / 2f)
-        drawCircle(Color(0xFF7FC3A8).copy(alpha = 0.30f), d / 2f, style = Stroke(width = 1.dp.toPx()))
-        val stem = Path().apply {
-            moveTo(d * 0.50f, d * 0.74f)
-            lineTo(d * 0.50f, d * 0.44f)
-        }
-        drawPath(stem, Color(0xFF2D7D62), style = Stroke(width = d * 0.055f, cap = StrokeCap.Round))
-        val leftLeaf = Path().apply {
-            moveTo(d * 0.49f, d * 0.58f)
-            cubicTo(d * 0.34f, d * 0.56f, d * 0.28f, d * 0.44f, d * 0.30f, d * 0.34f)
-            cubicTo(d * 0.42f, d * 0.36f, d * 0.48f, d * 0.46f, d * 0.49f, d * 0.58f)
-            close()
-        }
-        drawPath(leftLeaf, Color(0xFF4EA37F))
-        val rightLeaf = Path().apply {
-            moveTo(d * 0.51f, d * 0.50f)
-            cubicTo(d * 0.64f, d * 0.47f, d * 0.72f, d * 0.36f, d * 0.70f, d * 0.26f)
-            cubicTo(d * 0.58f, d * 0.29f, d * 0.52f, d * 0.39f, d * 0.51f, d * 0.50f)
-            close()
-        }
-        drawPath(rightLeaf, Color(0xFF6FBE9B))
-    }
-}
-
-/** 小票账本：纸面 + 上下齿孔虚线 + 右侧一枚圆形印章。 */
-@Composable
-private fun ReceiptStubHeader(modifier: Modifier = Modifier, title: String, subtitle: String) {
+private fun ReceiptStubHeader(
+    modifier: Modifier = Modifier,
+    title: String,
+    subtitle: String,
+    page: HeaderPage,
+) {
     val titleColor = Color(0xFF243B32)
     Box(
         modifier = modifier
@@ -164,11 +187,12 @@ private fun ReceiptStubHeader(modifier: Modifier = Modifier, title: String, subt
                 style = Stroke(width = 1.dp.toPx()),
             )
             val dash = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 5.dp.toPx()))
-            listOf(h * 0.14f, h * 0.84f).forEach { y ->
+            // 上一道虚线让开标题行（原来是 h*0.14，正切在字上），改到 0.10 并收短
+            listOf(h * 0.10f, h * 0.88f).forEach { y ->
                 drawLine(
                     Color(0xFFBFB9A8),
                     Offset(w * 0.05f, y),
-                    Offset(w * 0.78f, y),
+                    Offset(w * 0.70f, y),
                     strokeWidth = 1.dp.toPx(),
                     pathEffect = dash,
                 )
@@ -181,37 +205,19 @@ private fun ReceiptStubHeader(modifier: Modifier = Modifier, title: String, subt
                 drawCircle(notch, h * 0.030f, Offset(cx, 0f))
                 drawCircle(notch, h * 0.030f, Offset(cx, h))
             }
-            // 印章
-            val stamp = Offset(w * 0.855f, h * 0.50f)
-            drawCircle(Color(0xFF6E8C7C).copy(alpha = 0.55f), h * 0.185f, stamp, style = Stroke(width = 1.2.dp.toPx()))
-            drawCircle(Color(0xFF6E8C7C).copy(alpha = 0.34f), h * 0.135f, stamp, style = Stroke(width = 0.8.dp.toPx()))
-            drawLine(
-                Color(0xFF6E8C7C).copy(alpha = 0.55f),
-                Offset(stamp.x - h * 0.075f, stamp.y),
-                Offset(stamp.x + h * 0.075f, stamp.y),
-                strokeWidth = 1.dp.toPx(),
-            )
-            drawLine(
-                Color(0xFF6E8C7C).copy(alpha = 0.40f),
-                Offset(stamp.x - h * 0.055f, stamp.y + h * 0.062f),
-                Offset(stamp.x + h * 0.055f, stamp.y + h * 0.062f),
-                strokeWidth = 1.dp.toPx(),
-            )
         }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 18.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            HeaderTitle(title, subtitle, titleColor, titleColor.copy(alpha = 0.62f))
-        }
+        BadgedHeaderRow(title, subtitle, titleColor, page)
     }
 }
 
-/** 纸感极简：米色纸面 + 左侧一道深绿短竖线 + 右侧三行渐短的横线。 */
+/** 纸感极简：米色纸面 + 左侧一道深绿短竖线，右侧一片墨线标注徽章。 */
 @Composable
-private fun PaperRuleHeader(modifier: Modifier = Modifier, title: String, subtitle: String) {
+private fun PaperRuleHeader(
+    modifier: Modifier = Modifier,
+    title: String,
+    subtitle: String,
+    page: HeaderPage,
+) {
     val titleColor = Color(0xFF18372B)
     Box(
         modifier = modifier
@@ -220,34 +226,18 @@ private fun PaperRuleHeader(modifier: Modifier = Modifier, title: String, subtit
             .clip(RoundedCornerShape(9.dp)),
     ) {
         Canvas(Modifier.matchParentSize()) {
-            val w = size.width
-            val h = size.height
             drawRect(Color(0xFFF8F4E9))
-            drawLine(
-                Color(0xFF2E5A46).copy(alpha = 0.80f),
-                Offset(w * 0.035f, h * 0.30f),
-                Offset(w * 0.035f, h * 0.70f),
-                strokeWidth = 3.dp.toPx(),
-                cap = StrokeCap.Round,
-            )
-            val rules = listOf(0.34f to 0.26f, 0.46f to 0.19f, 0.58f to 0.12f)
-            rules.forEachIndexed { index, (y, len) ->
-                drawLine(
-                    Color(0xFFB9C2B4).copy(alpha = 0.62f - index * 0.12f),
-                    Offset(w * 0.70f, h * y),
-                    Offset(w * 0.70f + w * len, h * y),
-                    strokeWidth = 1.dp.toPx(),
-                    cap = StrokeCap.Round,
-                )
-            }
         }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 20.dp, end = 18.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            HeaderTitle(title, subtitle, titleColor, titleColor.copy(alpha = 0.60f))
+        BadgedHeaderRow(title, subtitle, titleColor, page, startPadding = 16.dp) {
+            // 这道竖线原来按卡片宽度的 3.5% 定位，横屏/平板上会直接压进标题第一个字；
+            // 改成跟着文字排版走的固定宽度色块，永远不会跑到字上
+            Box(
+                Modifier
+                    .width(3.dp)
+                    .height(26.dp)
+                    .background(Color(0xFF2E5A46).copy(alpha = 0.80f), RoundedCornerShape(2.dp)),
+            )
+            Spacer(Modifier.width(9.dp))
         }
     }
 }
@@ -258,7 +248,7 @@ private fun OceanWaveHeader(
     modifier: Modifier = Modifier,
     title: String,
     subtitle: String,
-    sticker: HeaderStickerKind,
+    page: HeaderPage,
 ) {
     WhaleWaveHeader(modifier) {
         Row(
@@ -273,8 +263,10 @@ private fun OceanWaveHeader(
                 subtitle = subtitle,
                 titleColor = MaterialTheme.colorScheme.onPrimary,
                 subtitleColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.72f),
+                modifier = Modifier.weight(1f),
             )
-            FishHeaderSticker(kind = sticker)
+            Spacer(Modifier.width(8.dp))
+            FishHeaderSticker(kind = page.stickerKind())
         }
     }
 }
