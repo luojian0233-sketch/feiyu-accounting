@@ -5,12 +5,15 @@ import android.graphics.Canvas
 import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.unit.dp
@@ -53,11 +56,23 @@ class PageChromeRenderTest {
                 ) {
                     ThemedHomeHeader()
                     Spacer(Modifier.height(12.dp))
-                    ThemedHomeHeader(title = "账单", subtitle = "每一笔都算得清")
+                    ThemedHomeHeader(
+                        title = "账单",
+                        subtitle = "每一笔都算得清",
+                        sticker = HeaderStickerKind.LEDGER,
+                    )
                     Spacer(Modifier.height(12.dp))
-                    ThemedHomeHeader(title = "统计", subtitle = "钱都花在哪儿了")
+                    ThemedHomeHeader(
+                        title = "统计",
+                        subtitle = "钱都花在哪儿了",
+                        sticker = HeaderStickerKind.STATISTICS,
+                    )
                     Spacer(Modifier.height(12.dp))
-                    ThemedHomeHeader(title = "设置", subtitle = "按你的习惯来")
+                    ThemedHomeHeader(
+                        title = "设置",
+                        subtitle = "按你的习惯来",
+                        sticker = HeaderStickerKind.SETTINGS,
+                    )
                 }
             }
         }
@@ -65,6 +80,51 @@ class PageChromeRenderTest {
         Thread.sleep(500)
         compose.waitForIdle()
         save("page-headers")
+    }
+
+    @Test
+    fun fourBubblesSideBySide() {
+        compose.setContent {
+            AutoBookkeepingTheme(ThemeStyle.FATTY_FISH) {
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.background)
+                        .padding(16.dp),
+                ) {
+                    HeaderStickerKind.entries.forEach { kind ->
+                        ThemedHomeHeader(title = kind.name, sticker = kind)
+                        Spacer(Modifier.height(10.dp))
+                    }
+                }
+            }
+        }
+        compose.waitForIdle()
+        Thread.sleep(600)
+        compose.waitForIdle()
+        save("page-sticker-kinds")
+    }
+
+    /** 四个气泡并排看：贴纸大小、字幕位置是否一致，四页是不是各说各的。 */
+    @Test
+    fun stickerKindsCloseup() {
+        compose.setContent {
+            AutoBookkeepingTheme(ThemeStyle.FATTY_FISH) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(0xFF16365E))
+                        .padding(8.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                ) {
+                    HeaderStickerKind.entries.forEach { kind -> FishHeaderSticker(kind = kind) }
+                }
+            }
+        }
+        compose.waitForIdle()
+        Thread.sleep(600)
+        compose.waitForIdle()
+        save("page-sticker-bubbles")
     }
 
     @Test

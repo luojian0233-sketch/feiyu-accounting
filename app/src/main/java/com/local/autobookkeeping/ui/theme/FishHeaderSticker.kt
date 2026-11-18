@@ -35,65 +35,85 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 /**
- * 头卡上的像素小图：跟底栏那批贴纸同源（320x320 的 GIF），
- * 由 `tools/gen_fish_art.py` 按统一取景切成竖版逐帧 PNG（连「好运来」一起留着），
- * 放在 `assets/fish_header/NN.png`。
+ * 头卡上的像素小图：跟底栏那批贴纸同源（320x320 的 GIF），由 `tools/gen_fish_art.py`
+ * 按统一取景切成竖版逐帧 PNG（字幕翻成白字一起留着），放在 `assets/fish_header/<kind>/`。
+ *
+ * 四个页面各用一张：首页「好运来」、账单「让我看看」、统计「买买买」、设置「安排」，
+ * 素材在 `tools/fish_src/`，`--stickers` 一次重刷四套。
  */
-internal const val HEADER_STICKER_FRAMES = 24
-internal const val HEADER_STICKER_FRAME_MILLIS = 80L
+enum class HeaderStickerKind(
+    internal val assetDir: String,
+    /** 每帧自己的时长：素材里有停两拍的格子，统一成 80ms 会把节奏踩平。 */
+    internal val frameMillis: LongArray,
+) {
+    HOME("home", LongArray(24) { 80L }),
+    LEDGER("ledger", LongArray(24) { 80L }),
+    STATISTICS("statistics", LongArray(24) { 80L }),
+    SETTINGS(
+        "settings",
+        longArrayOf(80, 160, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 160, 160, 80, 160, 160, 80),
+    ),
+}
 
 private object HeaderStickerCache {
-    private var firstFrame: ImageBitmap? = null
-    private var allFrames: List<ImageBitmap>? = null
+    private val firstFrames = HashMap<HeaderStickerKind, ImageBitmap>()
+    private val allFrames = HashMap<HeaderStickerKind, List<ImageBitmap>>()
 
-    fun first(context: Context): ImageBitmap = synchronized(this) {
-        firstFrame ?: decode(context, 0).also { firstFrame = it }
+    fun first(context: Context, kind: HeaderStickerKind): ImageBitmap = synchronized(this) {
+        firstFrames.getOrPut(kind) { decode(context, kind, 0) }
     }
 
-    fun all(context: Context): List<ImageBitmap> = synchronized(this) {
-        allFrames ?: (0 until HEADER_STICKER_FRAMES).map { decode(context, it) }.also { allFrames = it }
+    fun all(context: Context, kind: HeaderStickerKind): List<ImageBitmap> = synchronized(this) {
+        allFrames.getOrPut(kind) { kind.frameMillis.indices.map { decode(context, kind, it) } }
     }
 
-    private fun decode(context: Context, index: Int): ImageBitmap =
-        context.assets.open("fish_header/${index.toString().padStart(2, '0')}.png").use {
+    private fun decode(context: Context, kind: HeaderStickerKind, index: Int): ImageBitmap =
+        context.assets.open("fish_header/${kind.assetDir}/${index.toString().padStart(2, '0')}.png").use {
             BitmapFactory.decodeStream(it).asImageBitmap()
         }
 }
 
 /**
- * 一直循环：[HEADER_STICKER_FRAMES] 帧转完接着从头来，中途不会被停住。
- * 抽成普通挂起函数，单元测试里可以用虚拟时间验证「转完一圈会接上」。
+ * 一直循环：帧转完接着从头来，中途不会被停住。每帧时长可以不一样
+ * （设置那张有几个 160ms 的长拍）。抽成普通挂起函数，单元测试里能用虚拟时间验证。
  */
 internal suspend fun loopStickerFrames(
-    frameCount: Int,
-    frameMillis: Long,
+    frameMillis: LongArray,
     onFrame: (Int) -> Unit,
 ): Nothing {
     while (true) {
-        for (index in 0 until frameCount) {
+        for (index in frameMillis.indices) {
             onFrame(index)
-            delay(frameMillis)
+            delay(frameMillis[index])
         }
     }
 }
 
+/** 等长帧的简写：整段都是同一个节奏时不用手写字面量数组。 */
+internal suspend fun loopStickerFrames(
+    frameCount: Int,
+    frameMillis: Long,
+    onFrame: (Int) -> Unit,
+): Nothing = loopStickerFrames(LongArray(frameCount) { frameMillis }, onFrame)
+
 /** 首帧同步解码避免闪白，其余帧后台读完再开转；高度定死、宽度按素材原比例。 */
 @Composable
 fun LoopingFishSticker(
+    kind: HeaderStickerKind = HeaderStickerKind.HOME,
     modifier: Modifier = Modifier,
     height: Dp = 84.dp,
 ) {
     val context = LocalContext.current
-    val firstFrame = remember { HeaderStickerCache.first(context) }
-    var frames by remember { mutableStateOf(listOf(firstFrame)) }
-    LaunchedEffect(Unit) {
-        frames = withContext(Dispatchers.IO) { HeaderStickerCache.all(context) }
+    val firstFrame = remember(kind) { HeaderStickerCache.first(context, kind) }
+    var frames by remember(kind) { mutableStateOf(listOf(firstFrame)) }
+    LaunchedEffect(kind) {
+        frames = withContext(Dispatchers.IO) { HeaderStickerCache.all(context, kind) }
     }
 
-    var frameIndex by remember { mutableIntStateOf(0) }
-    LaunchedEffect(frames.size) {
+    var frameIndex by remember(kind) { mutableIntStateOf(0) }
+    LaunchedEffect(frames.size, kind) {
         if (frames.size <= 1) return@LaunchedEffect
-        loopStickerFrames(frames.size, HEADER_STICKER_FRAME_MILLIS) { frameIndex = it }
+        loopStickerFrames(kind.frameMillis) { frameIndex = it }
     }
 
     Image(
@@ -125,8 +145,8 @@ internal const val BUBBLE_STATE_BURSTING = "气泡爆开"
 /** 74dp：头卡 104dp 上下各留 15dp，再大就把深海横幅顶满了。 */
 internal val BUBBLE_SIZE = 74.dp
 
-/** 气泡内径只有外径的六成多，贴纸得压到内圈里，否则「好运来」会骑在环上。 */
-internal val BUBBLE_STICKER_HEIGHT = 44.dp
+/** 气泡内径只有外径的六成多，贴纸得压到内圈里；底部字幕最宽，卡在 41dp 才不会压到环。 */
+internal val BUBBLE_STICKER_HEIGHT = 41.dp
 
 private object BubbleFrameCache {
     private var idleFrames: List<ImageBitmap>? = null
@@ -166,15 +186,20 @@ internal suspend fun playBubbleBurst(frameMillis: LongArray, onFrame: (Int) -> U
  *
  * 气泡是用户做的两套 GIF 素材（`assets/fish_bubble/`）：平时循环「默认状态」16 帧，
  * 点一下播一遍「触碰时」20 帧——泡泡鼓一下、碎成水花、再重新凝聚回原样，
- * 播完接着回到默认循环。贴纸（人物 + 「好运来」）全程钉在中间不动：
+ * 播完接着回到默认循环。贴纸（人物 + 字幕）全程钉在中间不动：
  * 碎的是外面那层泡，人是主角，让他跟着消失再接不上第一帧就白点了。
- * 贴纸上的「好运来」由 `tools/gen_fish_art.py` 翻成白字（深蓝字在深海底上会糊）。
+ *
+ * [kind] 决定里面是哪张：四个页面各一句台词（见 [HeaderStickerKind]）。
+ * 字幕由 `tools/gen_fish_art.py` 翻成白字（深蓝字在深海底上会糊）。
  *
  * 点击用 clickable + 关掉 indication：气泡自己就是反馈，不叠涟漪；
  * 顺带让读屏也能点到（头卡其余部分是纯装饰，不挂语义）。
  */
 @Composable
-fun FishHeaderSticker(modifier: Modifier = Modifier) {
+fun FishHeaderSticker(
+    kind: HeaderStickerKind = HeaderStickerKind.HOME,
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
     val firstIdle = remember { BubbleFrameCache.firstIdle(context) }
     var idleFrames by remember { mutableStateOf(listOf(firstIdle)) }
@@ -229,10 +254,12 @@ fun FishHeaderSticker(modifier: Modifier = Modifier) {
             filterQuality = FilterQuality.None,
         )
         LoopingFishSticker(
+            kind = kind,
             modifier = Modifier
                 .align(Alignment.Center)
-                // 贴纸素材里人物在上、「好运来」在下，整体居中会显得偏下，抬 2dp 找平
-                .offset(y = (-1).dp),
+                // 贴纸素材里人物在上、字幕在下，整体居中会显得偏下，抬 2dp 找平，
+                // 顺便把字幕挪到圆环更宽的那一段，四字字幕（让我看看）不蹭边
+                .offset(y = (-3).dp),
             height = BUBBLE_STICKER_HEIGHT,
         )
     }

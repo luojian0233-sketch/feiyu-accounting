@@ -32,18 +32,21 @@ import androidx.compose.ui.unit.dp
  * 页面顶部的美化头卡：四套皮肤各有一套装饰语言，全部由 Canvas 绘制，
  * 不含位图、不响应点击，也不带无障碍语义。标题文字由调用方给，
  * 四个页面对着一张卡换文案，皮肤的装饰语言保持一致。
+ *
+ * [sticker] 只有肥鱼皮肤用得上：右上角气泡里那张像素贴纸，四页各一句台词。
  */
 @Composable
 fun ThemedHomeHeader(
     modifier: Modifier = Modifier,
     title: String = HOME_HEADER_TITLE,
     subtitle: String = HOME_HEADER_SUBTITLE,
+    sticker: HeaderStickerKind = HeaderStickerKind.HOME,
 ) {
     when (appVisualTokens.headerDecor) {
         HeaderDecor.MINT_SPROUT -> MintSproutHeader(modifier, title, subtitle)
         HeaderDecor.RECEIPT_STUB -> ReceiptStubHeader(modifier, title, subtitle)
         HeaderDecor.PAPER_RULE -> PaperRuleHeader(modifier, title, subtitle)
-        HeaderDecor.OCEAN_WAVE -> OceanWaveHeader(modifier, title, subtitle)
+        HeaderDecor.OCEAN_WAVE -> OceanWaveHeader(modifier, title, subtitle, sticker)
     }
 }
 
@@ -251,7 +254,12 @@ private fun PaperRuleHeader(modifier: Modifier = Modifier, title: String, subtit
 
 /** 肥鱼：沿用深海横幅，右侧是她自己的循环动画小图。 */
 @Composable
-private fun OceanWaveHeader(modifier: Modifier = Modifier, title: String, subtitle: String) {
+private fun OceanWaveHeader(
+    modifier: Modifier = Modifier,
+    title: String,
+    subtitle: String,
+    sticker: HeaderStickerKind,
+) {
     WhaleWaveHeader(modifier) {
         Row(
             modifier = Modifier
@@ -266,7 +274,7 @@ private fun OceanWaveHeader(modifier: Modifier = Modifier, title: String, subtit
                 titleColor = MaterialTheme.colorScheme.onPrimary,
                 subtitleColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.72f),
             )
-            FishHeaderSticker()
+            FishHeaderSticker(kind = sticker)
         }
     }
 }

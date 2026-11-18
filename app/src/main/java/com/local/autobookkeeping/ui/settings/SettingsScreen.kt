@@ -30,6 +30,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.local.autobookkeeping.ui.theme.AppSectionCard
+import com.local.autobookkeeping.ui.theme.HeaderStickerKind
 import com.local.autobookkeeping.ui.theme.ThemedHomeHeader
 import com.local.autobookkeeping.ui.theme.AppSeparator
 import com.local.autobookkeeping.ui.theme.ThemeStyle
@@ -104,6 +105,7 @@ fun SettingsScreen(
                 modifier = Modifier.padding(top = 14.dp),
                 title = "设置",
                 subtitle = "按你的习惯来",
+                sticker = HeaderStickerKind.SETTINGS,
             )
         }
         item {

@@ -1,13 +1,15 @@
 """生成「蓝色肥鱼」皮肤用的位图资源。
 
 三件事：
-1. 顶部动画贴纸：把 `上方美化栏替换.gif` 底部的「好运来」统一取景后切成逐帧 PNG，
-   并把字从「深蓝填充 + 白描边」翻成「白填充 + 深墨描边」（见 `recolor_sticker_text`）。
+1. 头卡贴纸：四页各一张（首页「好运来」/ 账单「让我看看」/ 统计「买买买」/ 设置「安排」），
+   从 `tools/fish_src/` 的 GIF 统一取景切成逐帧 PNG，并把底部字幕从
+   「深蓝填充 + 白描边」翻成「白填充 + 深墨描边」（见 `recolor_sticker_text`）。
 2. 空记录插画：把高清立绘（吃饭那张）抠掉白底，输出 `whale_mascot.png`。
 3. 启动图标：把比赞那张抠底、裁成头肩构图，生成自适应前景与各密度旧版图标。
 
-用法（仓库根目录）：python tools/gen_fish_art.py --gif <路径> --mascot <路径> --icon <路径>
-只重刷已生成的头卡帧（手边没有原 GIF 时）：python tools/gen_fish_art.py --recolor-header
+用法（仓库根目录）：
+    python tools/gen_fish_art.py --stickers           # 只重刷四套头卡贴纸
+    python tools/gen_fish_art.py --stickers --mascot <路径> --icon <路径>   # 连插画/图标一起
 """
 
 from __future__ import annotations
@@ -18,11 +20,19 @@ import shutil
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
-HEADER_FRAME_HEIGHT = 288  # 竖版贴纸：人物 + 底部「好运来」，保持原图 216:271 的比例
+HEADER_FRAME_HEIGHT = 288  # 竖版贴纸：人物 + 底部字幕，四套统一这个高度
 MASCOT_PX = 768
 
-# 头卡是半透明的深海气泡，深蓝字会跟底色糊在一起：把字翻成白字 + 深墨描边。
-TEXT_TOP_RATIO = 0.79  # 「好运来」顶部在竖版贴纸的 79% 处（228/288）
+# 四页各一张贴纸：目录名要和 Kotlin 侧 HeaderStickerKind.assetDir 对上。
+STICKER_SOURCES = {
+    "home": "上方美化栏替换.gif",
+    "ledger": "账单替换.gif",
+    "statistics": "统计替换.gif",
+    "settings": "设置替换.gif",
+}
+
+# 字幕压在深海底上会糊：把字翻成白字 + 深墨描边。
+TEXT_TOP_RATIO = 0.79  # 自动找分界失败时的兜底「字幕顶部」
 TEXT_FILL = (255, 255, 255)  # 原深蓝笔画 → 白
 TEXT_OUTLINE = (16, 26, 56)  # 原近白描边 → 深墨（比深海底更深，白字才有边）
 TEXT_FILL_LUMA = 0.20  # 原深蓝填充的亮度
@@ -72,8 +82,30 @@ def square_canvas(image: Image.Image, side: int, padding: float, anchor_bottom: 
     return canvas
 
 
+def caption_top(frame: Image.Image, threshold: int = 40) -> int:
+    """底部字幕块的起始行：从底往上越过字幕、再越过一段空行，就是人物与字的分界。
+
+    四套素材的字幕都单独占底部一小块、上面留几行透明，所以按空行切最稳；
+    找不到空行（字幕贴着人物）时返回 0，交给调用方用比例兜底。
+    """
+    alpha = frame.split()[3]
+    width, height = frame.size
+    opaque = [alpha.crop((0, y, width, y + 1)).getextrema()[1] > threshold for y in range(height)]
+
+    y = height - 1
+    while y >= 0 and not opaque[y]:
+        y -= 1
+    if y < 0:
+        return 0
+    while y >= 0 and opaque[y]:
+        y -= 1
+    while y >= 0 and not opaque[y]:
+        y -= 1
+    return y + 1
+
+
 def recolor_sticker_text(frame: Image.Image) -> Image.Image:
-    """把底部「好运来」翻成白字：原深蓝笔画 → 白，原近白描边 → 深墨。
+    """把底部字幕翻成白字：原深蓝笔画 → 白，原近白描边 → 深墨。
 
     字是像素图，只有「深蓝填充 + 近白描边」两档加抗锯齿过渡；按亮度在两色之间
     插值再映射回「白 ↔ 深墨」，等于一次双色反相 —— 字形、描边宽度、抗锯齿都原样
@@ -81,7 +113,10 @@ def recolor_sticker_text(frame: Image.Image) -> Image.Image:
     """
     frame = frame.convert("RGBA")
     width, height = frame.size
-    top = round(height * TEXT_TOP_RATIO)
+    top = caption_top(frame)
+    if top < height * 0.5:
+        # 没找到明显空行：宁可只翻底部一条，也不要把人物一起反相
+        top = round(height * TEXT_TOP_RATIO)
     out = frame.copy()
     span = TEXT_OUTLINE_LUMA - TEXT_FILL_LUMA
     for y in range(top, height):
@@ -103,15 +138,15 @@ def recolor_sticker_text(frame: Image.Image) -> Image.Image:
     return out
 
 
-def build_header_frames(gif_path: str, out_dir: str) -> int:
-    """统一取景后逐帧输出，「好运来」保留并翻成白字。"""
+def build_sticker_frames(gif_path: str, out_dir: str) -> tuple[int, int, int, int]:
+    """统一取景后逐帧输出，字幕保留并翻成白字。返回帧数、宽高、字幕起始行。"""
     source = Image.open(gif_path)
     frames: list[Image.Image] = []
     for index in range(source.n_frames):
         source.seek(index)
         frames.append(source.convert("RGBA"))
 
-    # 「好运来」保留，所以取整幅画面的并集包围盒
+    # 字幕保留，所以取整幅画面的并集包围盒
     x0 = y0 = 10**9
     x1 = y1 = -1
     for frame in frames:
@@ -133,26 +168,29 @@ def build_header_frames(gif_path: str, out_dir: str) -> int:
     if os.path.isdir(out_dir):
         shutil.rmtree(out_dir)
     os.makedirs(out_dir)
+    caption_row = 0
     for index, frame in enumerate(frames):
         canvas = Image.new("RGBA", (frame_w, frame_h), (0, 0, 0, 0))
         canvas.paste(frame.crop((x0, y0, x1, y1)), (pad, pad))
         canvas = recolor_sticker_text(canvas.resize((target_w, target_h), Image.LANCZOS))
-        # 像素图只有几十种颜色，转成调色板后体积降一个量级（69KB → 13KB/帧），
+        caption_row = caption_top(canvas)
+        # 像素图只有几十种颜色，转成调色板后体积降一个量级，
         # 边缘本来就是硬边，量化看不出差别。
-        canvas.quantize(colors=64, method=Image.FASTOCTREE).save(
+        canvas.quantize(colors=96, method=Image.FASTOCTREE).save(
             os.path.join(out_dir, f"{index:02d}.png"), "PNG", optimize=True
         )
-    return len(frames), target_w, target_h
+    return len(frames), target_w, target_h, caption_row
 
 
-def recolor_header_dir(out_dir: str) -> int:
-    """没有原 GIF 时直接重刷已生成的头卡帧，帧名与尺寸保持不变。"""
-    names = sorted(name for name in os.listdir(out_dir) if name.endswith(".png"))
-    for name in names:
-        path = os.path.join(out_dir, name)
-        frame = recolor_sticker_text(Image.open(path).convert("RGBA"))
-        frame.quantize(colors=64, method=Image.FASTOCTREE).save(path, "PNG", optimize=True)
-    return len(names)
+def build_all_stickers(root: str) -> None:
+    """四套贴纸一起重刷：`tools/fish_src/` 是唯一素材来源。"""
+    src_dir = os.path.join(root, "tools/fish_src")
+    out_root = os.path.join(root, "app/src/main/assets/fish_header")
+    for kind, name in STICKER_SOURCES.items():
+        count, width, height, caption = build_sticker_frames(
+            os.path.join(src_dir, name), os.path.join(out_root, kind)
+        )
+        print(f"  {kind:10s} {count:2d} frames @ {width}x{height}  caption@{caption}  ({name})")
 
 
 def build_mascot(image_path: str, out_path: str) -> None:
@@ -202,29 +240,24 @@ def build_launcher(image_path: str, res_dir: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--gif", help="上方美化栏 GIF")
+    parser.add_argument("--stickers", action="store_true", help="从 tools/fish_src/ 重刷四套头卡贴纸")
     parser.add_argument("--mascot", help="空记录高清立绘")
     parser.add_argument("--icon", help="启动图标立绘")
-    parser.add_argument(
-        "--recolor-header",
-        action="store_true",
-        help="只把已生成的头卡帧重刷成白字（手边没有原 GIF 时用），不动其他资源",
-    )
     args = parser.parse_args()
 
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    header_dir = os.path.join(root, "app/src/main/assets/fish_header")
 
-    if args.recolor_header:
-        print(f"recoloured header frames: {recolor_header_dir(header_dir)}")
-        return
-    if not (args.gif and args.mascot and args.icon):
-        parser.error("要么给齐 --gif/--mascot/--icon，要么用 --recolor-header")
-
-    count, frame_w, frame_h = build_header_frames(args.gif, header_dir)
-    build_mascot(args.mascot, os.path.join(root, "app/src/main/res/drawable-nodpi/whale_mascot.png"))
-    build_launcher(args.icon, os.path.join(root, "app/src/main/res"))
-    print(f"header frames: {count} @ {frame_w}x{frame_h}")
+    if args.stickers:
+        print("stickers:")
+        build_all_stickers(root)
+    if args.mascot:
+        build_mascot(args.mascot, os.path.join(root, "app/src/main/res/drawable-nodpi/whale_mascot.png"))
+        print("mascot: fresh")
+    if args.icon:
+        build_launcher(args.icon, os.path.join(root, "app/src/main/res"))
+        print("launcher icons: fresh")
+    if not (args.stickers or args.mascot or args.icon):
+        parser.error("至少给一个 --stickers / --mascot / --icon")
 
 
 if __name__ == "__main__":
