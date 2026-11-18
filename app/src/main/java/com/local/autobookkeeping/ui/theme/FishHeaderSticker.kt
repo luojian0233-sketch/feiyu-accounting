@@ -2,8 +2,6 @@ package com.local.autobookkeeping.ui.theme
 
 import android.content.Context
 import android.graphics.BitmapFactory
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -22,13 +20,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
@@ -119,15 +118,15 @@ internal val BUBBLE_TAP_FRAME_MILLIS = longArrayOf(
     80, 80, 80, 80, 80, 80, 80, 80, 80, 120,
 )
 
-/** 气泡破掉、还没重新凝聚的这几帧里把贴纸藏起来（第 4 帧开始裂，第 15 帧小泡冒头）。 */
-internal val BUBBLE_TAP_STICKER_HIDDEN = 4..15
-
 internal const val BUBBLE_TEST_TAG = "fishHeaderBubble"
+internal const val BUBBLE_STATE_IDLE = "气泡待机"
+internal const val BUBBLE_STATE_BURSTING = "气泡爆开"
 
-internal val BUBBLE_SIZE = 84.dp
+/** 74dp：头卡 104dp 上下各留 15dp，再大就把深海横幅顶满了。 */
+internal val BUBBLE_SIZE = 74.dp
 
 /** 气泡内径只有外径的六成多，贴纸得压到内圈里，否则「好运来」会骑在环上。 */
-internal val BUBBLE_STICKER_HEIGHT = 48.dp
+internal val BUBBLE_STICKER_HEIGHT = 44.dp
 
 private object BubbleFrameCache {
     private var idleFrames: List<ImageBitmap>? = null
@@ -167,7 +166,8 @@ internal suspend fun playBubbleBurst(frameMillis: LongArray, onFrame: (Int) -> U
  *
  * 气泡是用户做的两套 GIF 素材（`assets/fish_bubble/`）：平时循环「默认状态」16 帧，
  * 点一下播一遍「触碰时」20 帧——泡泡鼓一下、碎成水花、再重新凝聚回原样，
- * 播完接着回到默认循环。破碎那几帧贴纸跟着一起淡出，否则会挡在空气泡中间。
+ * 播完接着回到默认循环。贴纸（人物 + 「好运来」）全程钉在中间不动：
+ * 碎的是外面那层泡，人是主角，让他跟着消失再接不上第一帧就白点了。
  * 贴纸上的「好运来」由 `tools/gen_fish_art.py` 翻成白字（深蓝字在深海底上会糊）。
  *
  * 点击用 clickable + 关掉 indication：气泡自己就是反馈，不叠涟漪；
@@ -181,7 +181,6 @@ fun FishHeaderSticker(modifier: Modifier = Modifier) {
     var tapFrames by remember { mutableStateOf<List<ImageBitmap>>(emptyList()) }
     var bursting by remember { mutableStateOf(false) }
     var frameIndex by remember { mutableIntStateOf(0) }
-    var stickerShown by remember { mutableStateOf(true) }
 
     // 首帧同步解码防闪白，其余帧（含很少用到的破碎帧）进页面后就在后台读完，点下去不卡。
     LaunchedEffect(Unit) {
@@ -204,23 +203,18 @@ fun FishHeaderSticker(modifier: Modifier = Modifier) {
         val frames = tapFrames.ifEmpty { withContext(Dispatchers.IO) { BubbleFrameCache.tap(context) } }
         playBubbleBurst(BUBBLE_TAP_FRAME_MILLIS) { index ->
             frameIndex = index.coerceAtMost(frames.lastIndex.coerceAtLeast(0))
-            stickerShown = index !in BUBBLE_TAP_STICKER_HIDDEN
         }
-        stickerShown = true
         bursting = false
     }
 
-    val stickerAlpha by animateFloatAsState(
-        targetValue = if (stickerShown) 1f else 0f,
-        animationSpec = tween(durationMillis = 90),
-        label = "bubbleSticker",
-    )
     val frames = if (bursting) tapFrames else idleFrames
 
     Box(
         modifier = modifier
             .size(BUBBLE_SIZE)
             .testTag(BUBBLE_TEST_TAG)
+            // 读屏只知道「这里能点」，说清当前是在循环还是刚被戳破
+            .semantics { stateDescription = if (bursting) BUBBLE_STATE_BURSTING else BUBBLE_STATE_IDLE }
             // 点一下戳破：不要涟漪、不要按压态，气泡本身就是反馈
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
@@ -238,8 +232,7 @@ fun FishHeaderSticker(modifier: Modifier = Modifier) {
             modifier = Modifier
                 .align(Alignment.Center)
                 // 贴纸素材里人物在上、「好运来」在下，整体居中会显得偏下，抬 2dp 找平
-                .offset(y = (-2).dp)
-                .alpha(stickerAlpha),
+                .offset(y = (-1).dp),
             height = BUBBLE_STICKER_HEIGHT,
         )
     }

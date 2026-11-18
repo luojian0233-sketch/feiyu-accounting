@@ -44,6 +44,7 @@ import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.domain.model.Transaction
 import com.local.autobookkeeping.ui.theme.AppCardSurface
 import com.local.autobookkeeping.ui.theme.AppSeparator
+import com.local.autobookkeeping.ui.theme.ThemedHomeHeader
 import com.local.autobookkeeping.ui.theme.appVisualTokens
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
@@ -76,44 +77,39 @@ fun LedgerScreen(
             .fillMaxSize()
             .padding(horizontal = 14.dp),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 16.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text(
-                "账单",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-            )
-            TextButton(
-                onClick = {
-                    if (selecting) {
-                        exitSelection()
-                    } else {
-                        selecting = true
-                        selectedIds = emptySet()
-                    }
-                },
-                modifier = Modifier.testTag(LEDGER_SELECT_TOGGLE_TAG),
-            ) {
-                Text(if (selecting) "取消" else "批量")
-            }
-        }
+        ThemedHomeHeader(
+            modifier = Modifier.padding(top = 14.dp),
+            title = "账单",
+            subtitle = "每一笔都算得清",
+        )
         if (!selecting) {
-            OutlinedTextField(
-                value = state.filters.query,
-                onValueChange = { query -> onFiltersChanged { it.copy(query = query) } },
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .testTag("ledger-search"),
-                label = { Text("搜索分类、商户、备注或账户") },
-                singleLine = true,
-                textStyle = MaterialTheme.typography.bodyMedium,
-                shape = RoundedCornerShape(14.dp),
-            )
+                    .padding(top = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedTextField(
+                    value = state.filters.query,
+                    onValueChange = { query -> onFiltersChanged { it.copy(query = query) } },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("ledger-search"),
+                    label = { Text("搜索分类、商户、备注或账户") },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                    shape = RoundedCornerShape(14.dp),
+                )
+                TextButton(
+                    onClick = {
+                        selecting = true
+                        selectedIds = emptySet()
+                    },
+                    modifier = Modifier.testTag(LEDGER_SELECT_TOGGLE_TAG),
+                ) {
+                    Text("批量")
+                }
+            }
         }
         if (selecting) {
             SelectionBar(
@@ -123,6 +119,7 @@ fun LedgerScreen(
                     selectedIds = if (selectedIds.size == allIds.size) emptySet() else allIds.toSet()
                 },
                 onDelete = { pendingDelete = selectedIds.toList() },
+                onCancel = { exitSelection() },
             )
         }
         val receiptStyle = appVisualTokens.dashedSeparators
@@ -213,6 +210,7 @@ private fun SelectionBar(
     allSelected: Boolean,
     onToggleAll: () -> Unit,
     onDelete: () -> Unit,
+    onCancel: () -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -227,6 +225,10 @@ private fun SelectionBar(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(
+                onClick = onCancel,
+                modifier = Modifier.testTag(LEDGER_SELECT_TOGGLE_TAG),
+            ) { Text("取消") }
             TextButton(
                 onClick = onToggleAll,
                 modifier = Modifier.testTag(LEDGER_SELECT_ALL_TAG),

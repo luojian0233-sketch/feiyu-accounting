@@ -46,11 +46,14 @@ class FishBubbleAssetsTest {
     }
 
     @Test
-    fun `sticker hides while the bubble is broken`() {
-        assertTrue("第 4 帧开始裂", 4 in BUBBLE_TAP_STICKER_HIDDEN)
-        assertTrue("第 15 帧小泡冒头就把贴纸放回来", 15 in BUBBLE_TAP_STICKER_HIDDEN)
-        assertTrue(3 !in BUBBLE_TAP_STICKER_HIDDEN)
-        assertTrue(16 !in BUBBLE_TAP_STICKER_HIDDEN)
+    fun `sticker sits inside the bubble ring`() {
+        // 贴纸全程钉在中间（人物不能跟着消失），所以尺寸必须落在气泡内圈里：
+        // 气泡素材的环占掉外圈约四成，贴纸高过外径六成就骑到环上。
+        assertTrue("气泡别顶满头卡", BUBBLE_SIZE.value <= 78f)
+        assertTrue(
+            "贴纸要压在内圈里",
+            BUBBLE_STICKER_HEIGHT.value / BUBBLE_SIZE.value <= 0.62f,
+        )
     }
 }
 

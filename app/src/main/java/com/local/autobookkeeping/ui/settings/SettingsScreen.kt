@@ -30,6 +30,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.local.autobookkeeping.ui.theme.AppSectionCard
+import com.local.autobookkeeping.ui.theme.ThemedHomeHeader
 import com.local.autobookkeeping.ui.theme.AppSeparator
 import com.local.autobookkeeping.ui.theme.ThemeStyle
 
@@ -99,11 +100,10 @@ fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Text(
-                "设置",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
+            ThemedHomeHeader(
                 modifier = Modifier.padding(top = 14.dp),
+                title = "设置",
+                subtitle = "按你的习惯来",
             )
         }
         item {

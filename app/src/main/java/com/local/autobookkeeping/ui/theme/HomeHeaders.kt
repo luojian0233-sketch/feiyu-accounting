@@ -29,41 +29,49 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
 /**
- * 首页顶部的美化头卡：四套皮肤各有一套装饰语言，全部由 Canvas 绘制，
- * 不含位图、不含文字、不响应点击，也不带无障碍语义。
+ * 页面顶部的美化头卡：四套皮肤各有一套装饰语言，全部由 Canvas 绘制，
+ * 不含位图、不响应点击，也不带无障碍语义。标题文字由调用方给，
+ * 四个页面对着一张卡换文案，皮肤的装饰语言保持一致。
  */
 @Composable
-fun ThemedHomeHeader(modifier: Modifier = Modifier) {
+fun ThemedHomeHeader(
+    modifier: Modifier = Modifier,
+    title: String = HOME_HEADER_TITLE,
+    subtitle: String = HOME_HEADER_SUBTITLE,
+) {
     when (appVisualTokens.headerDecor) {
-        HeaderDecor.MINT_SPROUT -> MintSproutHeader(modifier)
-        HeaderDecor.RECEIPT_STUB -> ReceiptStubHeader(modifier)
-        HeaderDecor.PAPER_RULE -> PaperRuleHeader(modifier)
-        HeaderDecor.OCEAN_WAVE -> OceanWaveHeader(modifier)
+        HeaderDecor.MINT_SPROUT -> MintSproutHeader(modifier, title, subtitle)
+        HeaderDecor.RECEIPT_STUB -> ReceiptStubHeader(modifier, title, subtitle)
+        HeaderDecor.PAPER_RULE -> PaperRuleHeader(modifier, title, subtitle)
+        HeaderDecor.OCEAN_WAVE -> OceanWaveHeader(modifier, title, subtitle)
     }
 }
 
-private const val HEADER_SUBTITLE = "吃好每一顿，记好每一笔"
+private const val HOME_HEADER_TITLE = "今天"
+private const val HOME_HEADER_SUBTITLE = "吃好每一顿，记好每一笔"
 
 @Composable
 private fun HeaderTitle(
+    title: String,
+    subtitle: String,
     titleColor: Color,
     subtitleColor: Color,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier) {
         Text(
-            "今天",
+            title,
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.SemiBold,
             color = titleColor,
         )
-        Text(HEADER_SUBTITLE, style = MaterialTheme.typography.bodySmall, color = subtitleColor)
+        Text(subtitle, style = MaterialTheme.typography.bodySmall, color = subtitleColor)
     }
 }
 
 /** 清透薄荷：晨露般的薄荷渐层 + 两团柔光 + 右侧一株嫩芽。 */
 @Composable
-private fun MintSproutHeader(modifier: Modifier = Modifier) {
+private fun MintSproutHeader(modifier: Modifier = Modifier, title: String, subtitle: String) {
     val titleColor = Color(0xFF0B493A)
     Box(
         modifier = modifier
@@ -100,7 +108,7 @@ private fun MintSproutHeader(modifier: Modifier = Modifier) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            HeaderTitle(titleColor, titleColor.copy(alpha = 0.66f))
+            HeaderTitle(title, subtitle, titleColor, titleColor.copy(alpha = 0.66f))
             MintSproutEmblem()
         }
     }
@@ -136,7 +144,7 @@ private fun MintSproutEmblem() {
 
 /** 小票账本：纸面 + 上下齿孔虚线 + 右侧一枚圆形印章。 */
 @Composable
-private fun ReceiptStubHeader(modifier: Modifier = Modifier) {
+private fun ReceiptStubHeader(modifier: Modifier = Modifier, title: String, subtitle: String) {
     val titleColor = Color(0xFF243B32)
     Box(
         modifier = modifier
@@ -193,14 +201,14 @@ private fun ReceiptStubHeader(modifier: Modifier = Modifier) {
                 .padding(horizontal = 18.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            HeaderTitle(titleColor, titleColor.copy(alpha = 0.62f))
+            HeaderTitle(title, subtitle, titleColor, titleColor.copy(alpha = 0.62f))
         }
     }
 }
 
 /** 纸感极简：米色纸面 + 左侧一道深绿短竖线 + 右侧三行渐短的横线。 */
 @Composable
-private fun PaperRuleHeader(modifier: Modifier = Modifier) {
+private fun PaperRuleHeader(modifier: Modifier = Modifier, title: String, subtitle: String) {
     val titleColor = Color(0xFF18372B)
     Box(
         modifier = modifier
@@ -236,14 +244,14 @@ private fun PaperRuleHeader(modifier: Modifier = Modifier) {
                 .padding(start = 20.dp, end = 18.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            HeaderTitle(titleColor, titleColor.copy(alpha = 0.60f))
+            HeaderTitle(title, subtitle, titleColor, titleColor.copy(alpha = 0.60f))
         }
     }
 }
 
 /** 肥鱼：沿用深海横幅，右侧是她自己的循环动画小图。 */
 @Composable
-private fun OceanWaveHeader(modifier: Modifier = Modifier) {
+private fun OceanWaveHeader(modifier: Modifier = Modifier, title: String, subtitle: String) {
     WhaleWaveHeader(modifier) {
         Row(
             modifier = Modifier
@@ -253,6 +261,8 @@ private fun OceanWaveHeader(modifier: Modifier = Modifier) {
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             HeaderTitle(
+                title = title,
+                subtitle = subtitle,
                 titleColor = MaterialTheme.colorScheme.onPrimary,
                 subtitleColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.72f),
             )

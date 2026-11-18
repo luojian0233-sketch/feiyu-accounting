@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import com.local.autobookkeeping.domain.model.CategoryTotal
 import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.ui.theme.AppCardSurface
+import com.local.autobookkeeping.ui.theme.ThemedHomeHeader
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -83,11 +84,10 @@ fun StatisticsScreen(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item {
-            Text(
-                "统计",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(top = 16.dp),
+            ThemedHomeHeader(
+                modifier = Modifier.padding(top = 14.dp),
+                title = "统计",
+                subtitle = "钱都花在哪儿了",
             )
         }
         item {
