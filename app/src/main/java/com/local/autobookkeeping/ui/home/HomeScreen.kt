@@ -25,10 +25,9 @@ import androidx.compose.ui.unit.dp
 import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.domain.model.Transaction
 import com.local.autobookkeeping.ui.theme.AppCardSurface
+import com.local.autobookkeeping.ui.theme.HeaderAccentMark
+import com.local.autobookkeeping.ui.theme.ThemedHomeHeader
 import com.local.autobookkeeping.ui.theme.WhaleEmptyHint
-import com.local.autobookkeeping.ui.theme.WhaleMascot
-import com.local.autobookkeeping.ui.theme.WaveMark
-import com.local.autobookkeeping.ui.theme.WhaleWaveHeader
 import com.local.autobookkeeping.ui.theme.appVisualTokens
 import com.local.autobookkeeping.ui.ledger.formatMoney
 
@@ -47,46 +46,7 @@ fun HomeScreen(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item {
-            if (appVisualTokens.showFishMascot) {
-                WhaleWaveHeader(Modifier.padding(top = 18.dp)) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 20.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Column {
-                            Text(
-                                "今天",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onPrimary,
-                            )
-                            Text(
-                                "吃好每一顿，记好每一笔",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.72f),
-                            )
-                        }
-                        WhaleMascot(size = 52.dp)
-                    }
-                }
-            } else {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 18.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text(
-                        "今天",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-            }
+            ThemedHomeHeader(Modifier.padding(top = 18.dp))
         }
         item {
             AppCardSurface {
@@ -149,10 +109,8 @@ fun HomeScreen(
         item {
             Spacer(Modifier.height(2.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (appVisualTokens.showFishMascot) {
-                    WaveMark(width = 20.dp)
-                    Spacer(Modifier.width(7.dp))
-                }
+                HeaderAccentMark()
+                Spacer(Modifier.width(7.dp))
                 Text("最近记录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             }
         }

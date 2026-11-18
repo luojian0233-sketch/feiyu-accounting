@@ -32,6 +32,14 @@ enum class ThemeStyle {
     FATTY_FISH,
 }
 
+/** 首页头卡的装饰语言，每套皮肤一种。 */
+enum class HeaderDecor {
+    MINT_SPROUT,
+    RECEIPT_STUB,
+    PAPER_RULE,
+    OCEAN_WAVE,
+}
+
 @Immutable
 data class AppVisualTokens(
     val cardShape: Shape,
@@ -39,6 +47,7 @@ data class AppVisualTokens(
     val cardColor: Color,
     val separatorColor: Color,
     val dashedSeparators: Boolean,
+    val headerDecor: HeaderDecor = HeaderDecor.MINT_SPROUT,
     val showFishMascot: Boolean = false,
 )
 
@@ -49,6 +58,7 @@ private val LocalAppVisualTokens = staticCompositionLocalOf {
         cardColor = Color.White,
         separatorColor = Color(0xFFE2EAE6),
         dashedSeparators = false,
+        headerDecor = HeaderDecor.MINT_SPROUT,
     )
 }
 
@@ -166,6 +176,7 @@ fun AutoBookkeepingTheme(
             cardColor = Color.White,
             separatorColor = Color(0xFFE2EAE6),
             dashedSeparators = false,
+            headerDecor = HeaderDecor.MINT_SPROUT,
         )
         ThemeStyle.RECEIPT_LEDGER -> AppVisualTokens(
             cardShape = RoundedCornerShape(2.dp),
@@ -173,6 +184,7 @@ fun AutoBookkeepingTheme(
             cardColor = Color(0xFFFFFEFA),
             separatorColor = Color(0xFFB8B6AE),
             dashedSeparators = true,
+            headerDecor = HeaderDecor.RECEIPT_STUB,
         )
         ThemeStyle.PAPER_MINIMAL -> AppVisualTokens(
             cardShape = RoundedCornerShape(8.dp),
@@ -180,6 +192,7 @@ fun AutoBookkeepingTheme(
             cardColor = Color(0xFFF8F4E9),
             separatorColor = Color(0xFF9AA89D),
             dashedSeparators = false,
+            headerDecor = HeaderDecor.PAPER_RULE,
         )
         ThemeStyle.FATTY_FISH -> AppVisualTokens(
             cardShape = RoundedCornerShape(22.dp),
@@ -187,6 +200,7 @@ fun AutoBookkeepingTheme(
             cardColor = Color.White,
             separatorColor = Color(0xFFDCE8F6),
             dashedSeparators = false,
+            headerDecor = HeaderDecor.OCEAN_WAVE,
             showFishMascot = true,
         )
     }
