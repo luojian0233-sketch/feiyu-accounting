@@ -9,6 +9,10 @@ import com.local.autobookkeeping.data.CategorySetting
 import com.local.autobookkeeping.data.SettingsOperations
 import com.local.autobookkeeping.data.SettingsValidationException
 import com.local.autobookkeeping.data.isValidBankPackage
+import com.local.autobookkeeping.data.update.AppVersion
+import com.local.autobookkeeping.data.update.UpdateCheckResult
+import com.local.autobookkeeping.data.update.UpdateChecker
+import com.local.autobookkeeping.data.update.UpdateSourceNotConfiguredException
 import com.local.autobookkeeping.ui.theme.DEFAULT_THEME_STYLE
 import com.local.autobookkeeping.ui.theme.ThemeStyle
 import kotlinx.coroutines.CancellationException
@@ -17,6 +21,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import java.io.InputStream
 import java.io.OutputStream
@@ -49,7 +54,29 @@ data class SettingsUiState(
     val showBackupRestoreConfirmation: Boolean = false,
     val showFirstClearConfirmation: Boolean = false,
     val showFinalClearConfirmation: Boolean = false,
+    val currentVersionName: String = "",
+    val currentVersionCode: Int = 0,
+    val updateState: UpdateCheckState = UpdateCheckState.Idle,
 )
+
+/** 检查更新是低频操作，状态就这么几种，用密封接口比一串布尔值清楚。 */
+sealed interface UpdateCheckState {
+    data object Idle : UpdateCheckState
+    data object Checking : UpdateCheckState
+
+    /** 已是最新，或远端还没有发布过任何版本。 */
+    data object UpToDate : UpdateCheckState
+    data class Available(
+        val versionName: String,
+        val downloadUrl: String,
+        val changelog: String,
+    ) : UpdateCheckState
+
+    data class Failed(val message: String) : UpdateCheckState
+
+    /** 还没在 gradle.properties 里填 appUpdateRepo。 */
+    data object Unconfigured : UpdateCheckState
+}
 
 class SettingsViewModel(
     private val repository: SettingsOperations,
@@ -57,6 +84,9 @@ class SettingsViewModel(
     private val accessibilityAccess: AccessibilityAccessProvider = AccessibilityAccessProvider {
         false
     },
+    private val updateChecker: UpdateChecker? = null,
+    private val currentVersion: AppVersion = AppVersion(name = "", code = 0),
+    // 保持在最后一个位置参数：大量测试用 `SettingsViewModel(repo) { ... }` 的尾随 lambda 形式。
     private val notificationAccess: NotificationAccessProvider,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(SettingsUiState())
@@ -65,6 +95,10 @@ class SettingsViewModel(
     private var bankPackagesInitialized = false
 
     init {
+        mutableState.value = mutableState.value.copy(
+            currentVersionName = currentVersion.name,
+            currentVersionCode = currentVersion.code,
+        )
         refreshAutomaticAccess()
         repository.theme.onEach { value ->
             mutableState.value = mutableState.value.copy(theme = value)
@@ -102,6 +136,46 @@ class SettingsViewModel(
 
     fun refreshNotificationAccess() {
         refreshAutomaticAccess()
+    }
+
+    /**
+     * 点一次查一次，没有后台轮询、没有开机自启。账本 App 不该在背后偷偷联网，
+     * 用户点的那一刻才发请求。
+     */
+    fun checkForUpdate() {
+        val checker = updateChecker
+        if (checker == null) {
+            mutableState.value = mutableState.value.copy(
+                updateState = UpdateCheckState.Unconfigured,
+            )
+            return
+        }
+        if (mutableState.value.updateState == UpdateCheckState.Checking) return
+        mutableState.value = mutableState.value.copy(updateState = UpdateCheckState.Checking)
+        viewModelScope.launch {
+            val outcome = checker.check(currentVersion)
+            mutableState.value = mutableState.value.copy(
+                updateState = outcome.fold(
+                    onSuccess = { result ->
+                        when (result) {
+                            UpdateCheckResult.UpToDate -> UpdateCheckState.UpToDate
+                            is UpdateCheckResult.Available -> UpdateCheckState.Available(
+                                versionName = result.release.versionName,
+                                downloadUrl = result.release.downloadUrl,
+                                changelog = result.release.changelog,
+                            )
+                        }
+                    },
+                    onFailure = { failure ->
+                        if (failure is UpdateSourceNotConfiguredException) {
+                            UpdateCheckState.Unconfigured
+                        } else {
+                            UpdateCheckState.Failed("检查失败，请确认网络后重试")
+                        }
+                    },
+                ),
+            )
+        }
     }
 
     fun refreshAutomaticAccess() {
@@ -142,6 +216,12 @@ class SettingsViewModel(
     fun reportQuickSettingsTileManualInstructions() {
         mutableState.value = mutableState.value.copy(
             error = "请在快捷设置编辑中手动添加截屏记账按钮",
+        )
+    }
+
+    fun reportDownloadLaunchFailure() {
+        mutableState.value = mutableState.value.copy(
+            error = "无法打开浏览器，请稍后重试",
         )
     }
 

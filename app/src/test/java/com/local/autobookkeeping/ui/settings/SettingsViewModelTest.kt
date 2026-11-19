@@ -5,6 +5,10 @@ import com.local.autobookkeeping.backup.RestoreResult
 import com.local.autobookkeeping.data.AccountSetting
 import com.local.autobookkeeping.data.CategorySetting
 import com.local.autobookkeeping.data.SettingsOperations
+import com.local.autobookkeeping.data.update.AppVersion
+import com.local.autobookkeeping.data.update.LatestRelease
+import com.local.autobookkeeping.data.update.UpdateCheckResult
+import com.local.autobookkeeping.data.update.UpdateChecker
 import com.local.autobookkeeping.ui.theme.ThemeStyle
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
@@ -12,15 +16,18 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.BeforeEach
@@ -350,6 +357,88 @@ class SettingsViewModelTest {
                 restoreViewModel.confirmBackupRestore("{}".byteInputStream())
             }
         }
+    }
+
+    @Test
+    fun `update check exposes the newer release`() = runTest(dispatcher) {
+        val viewModel = SettingsViewModel(
+            repository = FakeSettingsOperations(),
+            notificationAccess = { false },
+            updateChecker = UpdateChecker {
+                Result.success(
+                    UpdateCheckResult.Available(
+                        LatestRelease(
+                            versionName = "1.2.0",
+                            versionCode = 2,
+                            changelog = "· 分类抽屉",
+                            downloadUrl = "https://example.com/app.apk",
+                            releasePageUrl = "https://example.com",
+                        ),
+                    ),
+                )
+            },
+            currentVersion = AppVersion(name = "1.0", code = 1),
+        )
+
+        viewModel.checkForUpdate()
+        advanceUntilIdle()
+
+        val available = assertInstanceOf(
+            UpdateCheckState.Available::class.java,
+            viewModel.state.value.updateState,
+        )
+        assertEquals("1.2.0", available.versionName)
+        assertEquals("https://example.com/app.apk", available.downloadUrl)
+    }
+
+    @Test
+    fun `settings always shows the installed version even before checking`() = runTest(dispatcher) {
+        val viewModel = SettingsViewModel(
+            repository = FakeSettingsOperations(),
+            notificationAccess = { false },
+            updateChecker = UpdateChecker { Result.success(UpdateCheckResult.UpToDate) },
+            currentVersion = AppVersion(name = "1.2.0", code = 2),
+        )
+
+        assertEquals("1.2.0", viewModel.state.value.currentVersionName)
+        assertEquals(2, viewModel.state.value.currentVersionCode)
+
+        viewModel.checkForUpdate()
+        advanceUntilIdle()
+
+        assertEquals(UpdateCheckState.UpToDate, viewModel.state.value.updateState)
+    }
+
+    /** 还没填 appUpdateRepo 时是「没配」，不该吓唬用户说网络出错。 */
+    @Test
+    fun `missing update source is not reported as a network failure`() = runTest(dispatcher) {
+        val viewModel = SettingsViewModel(
+            repository = FakeSettingsOperations(),
+            notificationAccess = { false },
+        )
+
+        viewModel.checkForUpdate()
+        advanceUntilIdle()
+
+        assertEquals(UpdateCheckState.Unconfigured, viewModel.state.value.updateState)
+    }
+
+    @Test
+    fun `update check failure asks the user to retry`() = runTest(dispatcher) {
+        val viewModel = SettingsViewModel(
+            repository = FakeSettingsOperations(),
+            notificationAccess = { false },
+            updateChecker = UpdateChecker { Result.failure(IOException("offline")) },
+            currentVersion = AppVersion(name = "1.0", code = 1),
+        )
+
+        viewModel.checkForUpdate()
+        advanceUntilIdle()
+
+        assertEquals(
+            UpdateCheckState.Failed("检查失败，请确认网络后重试"),
+            viewModel.state.value.updateState,
+        )
     }
 
     private class FakeSettingsOperations(

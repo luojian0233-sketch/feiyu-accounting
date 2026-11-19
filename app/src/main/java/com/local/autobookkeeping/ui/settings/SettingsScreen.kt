@@ -72,6 +72,8 @@ fun SettingsScreen(
     onImportBackup: () -> Unit,
     onConfirmBackupRestore: () -> Unit,
     onDismissBackupRestore: () -> Unit,
+    onCheckUpdate: () -> Unit = {},
+    onOpenDownload: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var newCategory by rememberSaveable { mutableStateOf("") }
@@ -301,6 +303,49 @@ fun SettingsScreen(
                 )
             }
         }
+        item {
+            AppSectionCard(modifier = Modifier.testTag(VERSION_CARD_TAG).padding(bottom = 16.dp)) {
+                SectionTitle("版本")
+                Text(
+                    "当前版本 ${state.currentVersionName}（${state.currentVersionCode}）",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.testTag(VERSION_CURRENT_TAG),
+                )
+                Row(
+                    modifier = Modifier.padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val checking = state.updateState == UpdateCheckState.Checking
+                    OutlinedButton(
+                        onClick = onCheckUpdate,
+                        enabled = !checking,
+                        modifier = Modifier.testTag(CHECK_UPDATE_TAG),
+                    ) { Text(if (checking) "检查中…" else "检查更新") }
+                    val available = state.updateState as? UpdateCheckState.Available
+                    if (available != null) {
+                        Button(
+                            onClick = { onOpenDownload(available.downloadUrl) },
+                            modifier = Modifier.testTag(OPEN_DOWNLOAD_TAG),
+                        ) { Text("去下载") }
+                    }
+                }
+                updateStateMessage(state.updateState)?.let { message ->
+                    Text(
+                        message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = when (state.updateState) {
+                            is UpdateCheckState.Failed -> MaterialTheme.colorScheme.error
+                            is UpdateCheckState.Available -> MaterialTheme.colorScheme.primary
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        modifier = Modifier
+                            .testTag(UPDATE_STATUS_TAG)
+                            .padding(top = 6.dp),
+                    )
+                }
+            }
+        }
     }
 
     if (showCategorySheet) {
@@ -393,6 +438,21 @@ fun SettingsScreen(
 const val CATEGORY_MANAGER_ENTRY_TAG = "settings-category-manager"
 const val CATEGORY_SHEET_TAG = "settings-category-sheet"
 const val CATEGORY_SHEET_DONE_TAG = "settings-category-sheet-done"
+const val VERSION_CARD_TAG = "settings-version-card"
+const val VERSION_CURRENT_TAG = "settings-version-current"
+const val CHECK_UPDATE_TAG = "settings-check-update"
+const val OPEN_DOWNLOAD_TAG = "settings-open-download"
+const val UPDATE_STATUS_TAG = "settings-update-status"
+
+private fun updateStateMessage(state: UpdateCheckState): String? = when (state) {
+    UpdateCheckState.Idle -> null
+    UpdateCheckState.Checking -> "正在检查…"
+    UpdateCheckState.UpToDate -> "已是最新版本"
+    is UpdateCheckState.Available ->
+        "发现新版本 ${state.versionName}，点击「去下载」在浏览器中打开"
+    is UpdateCheckState.Failed -> state.message
+    UpdateCheckState.Unconfigured -> "尚未配置更新源（appUpdateRepo）"
+}
 
 @Composable
 private fun SectionTitle(text: String) {

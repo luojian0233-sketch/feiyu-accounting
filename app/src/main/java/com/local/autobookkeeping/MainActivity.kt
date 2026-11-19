@@ -52,6 +52,8 @@ import com.local.autobookkeeping.ui.entry.EntryViewModel
 import com.local.autobookkeeping.ui.entry.defaultEntryCategoryChoices
 import com.local.autobookkeeping.ui.home.HomeScreen
 import com.local.autobookkeeping.ui.home.HomeViewModel
+import com.local.autobookkeeping.data.update.AppVersion
+import com.local.autobookkeeping.data.update.GithubUpdateChecker
 import com.local.autobookkeeping.ui.home.NotificationPermissionProvider
 import com.local.autobookkeeping.ui.ledger.LedgerScreen
 import com.local.autobookkeeping.ui.ledger.LedgerViewModel
@@ -272,6 +274,11 @@ internal fun AutoBookkeepingRoot(
                     automaticAccess?.isAccessibilityAccessEnabled() == true
                 },
                 backupOperations = backupOperations,
+                updateChecker = GithubUpdateChecker(BuildConfig.UPDATE_REPO),
+                currentVersion = AppVersion(
+                    name = BuildConfig.VERSION_NAME,
+                    code = BuildConfig.VERSION_CODE,
+                ),
             )
         }
     }
@@ -683,6 +690,12 @@ internal fun AutoBookkeepingRoot(
                                 pendingRestoreUri = null
                                 settingsViewModel.dismissBackupRestore()
                             },
+                            onCheckUpdate = settingsViewModel::checkForUpdate,
+                            onOpenDownload = { url ->
+                                if (!openInBrowser(context, url)) {
+                                    settingsViewModel.reportDownloadLaunchFailure()
+                                }
+                            },
                         )
                     }
                 }
@@ -696,4 +709,19 @@ private fun PlaceholderScreen(text: String) {
     Box(Modifier.fillMaxSize().padding(20.dp)) {
         Text(text, style = MaterialTheme.typography.bodyMedium)
     }
+}
+
+/**
+ * 新版本交给浏览器下载。
+ *
+ * App 自己不下载、不持有 APK、不申请安装权限——这条路少掉整套 FileProvider 与
+ * 未知来源授权，代价只是用户要多点两下。
+ */
+private fun openInBrowser(context: android.content.Context, url: String): Boolean = try {
+    context.startActivity(
+        Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+    )
+    true
+} catch (_: RuntimeException) {
+    false
 }
