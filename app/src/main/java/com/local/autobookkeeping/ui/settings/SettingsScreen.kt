@@ -5,18 +5,24 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -26,6 +32,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -72,6 +79,7 @@ fun SettingsScreen(
     var categoryToRename by rememberSaveable { mutableStateOf<Long?>(null) }
     var accountToRename by rememberSaveable { mutableStateOf<Long?>(null) }
     var showAutomaticSettings by rememberSaveable { mutableStateOf(false) }
+    var showCategorySheet by rememberSaveable { mutableStateOf(false) }
 
     BackHandler(enabled = showAutomaticSettings) {
         showAutomaticSettings = false
@@ -169,29 +177,33 @@ fun SettingsScreen(
             }
         }
         item {
-            AppSectionCard {
-                SectionTitle("分类")
-                AddRow(
-                    value = newCategory,
-                    label = "新分类名称",
-                    enabled = !state.busy,
-                    onValueChanged = { newCategory = it },
-                    onAdd = {
-                        onAddCategory(newCategory)
-                        newCategory = ""
-                    },
-                )
-                state.categories.forEachIndexed { index, item ->
-                    ManagedRow(
-                        name = item.name,
-                        hidden = item.hidden,
-                        enabled = !state.busy,
-                        canMoveUp = index > 0,
-                        canMoveDown = index < state.categories.lastIndex,
-                        onRename = { categoryToRename = item.id },
-                        onMoveUp = { onMoveCategory(item.id, -1) },
-                        onMoveDown = { onMoveCategory(item.id, 1) },
-                        onHiddenChanged = { onCategoryHiddenChanged(item.id, it) },
+            AppSectionCard(
+                modifier = Modifier
+                    .testTag(CATEGORY_MANAGER_ENTRY_TAG)
+                    .clickable { showCategorySheet = true },
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column {
+                        Text(
+                            "分类",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            "共 ${state.categories.size} 个 · " +
+                                "${state.categories.count { !it.hidden }} 个启用",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Text(
+                        "管理 ›",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
                     )
                 }
             }
@@ -291,6 +303,22 @@ fun SettingsScreen(
         }
     }
 
+    if (showCategorySheet) {
+        CategoryManagerSheet(
+            state = state,
+            newCategory = newCategory,
+            onNewCategoryChanged = { newCategory = it },
+            onAddCategory = {
+                onAddCategory(newCategory)
+                newCategory = ""
+            },
+            onRequestRename = { categoryToRename = it },
+            onMoveCategory = onMoveCategory,
+            onCategoryHiddenChanged = onCategoryHiddenChanged,
+            onDismiss = { showCategorySheet = false },
+        )
+    }
+
     categoryToRename?.let { id ->
         val item = state.categories.firstOrNull { it.id == id }
         if (item != null) {
@@ -362,6 +390,10 @@ fun SettingsScreen(
     }
 }
 
+const val CATEGORY_MANAGER_ENTRY_TAG = "settings-category-manager"
+const val CATEGORY_SHEET_TAG = "settings-category-sheet"
+const val CATEGORY_SHEET_DONE_TAG = "settings-category-sheet-done"
+
 @Composable
 private fun SectionTitle(text: String) {
     Text(
@@ -414,6 +446,84 @@ private fun AddRow(
     }
 }
 
+/**
+ * 分类管理收进底部抽屉。
+ *
+ * 三十多个分类在设置页里铺开要翻好几屏，而改分类是低频操作——平时只需要知道
+ * 「有几个、开了几个」，真要动的时候再拉起来。抽屉里高度充裕，排序也顺手。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CategoryManagerSheet(
+    state: SettingsUiState,
+    newCategory: String,
+    onNewCategoryChanged: (String) -> Unit,
+    onAddCategory: () -> Unit,
+    onRequestRename: (Long) -> Unit,
+    onMoveCategory: (Long, Int) -> Unit,
+    onCategoryHiddenChanged: (Long, Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxHeight(0.9f)
+                .padding(horizontal = 20.dp)
+                .testTag(CATEGORY_SHEET_TAG),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column {
+                    Text("分类", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        "共 ${state.categories.size} 个 · " +
+                            "${state.categories.count { !it.hidden }} 个启用",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.testTag(CATEGORY_SHEET_DONE_TAG),
+                ) { Text("完成") }
+            }
+            AddRow(
+                value = newCategory,
+                label = "新分类名称",
+                enabled = !state.busy,
+                onValueChanged = onNewCategoryChanged,
+                onAdd = onAddCategory,
+            )
+            LazyColumn(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(top = 4.dp),
+            ) {
+                itemsIndexed(state.categories, key = { _, item -> item.id }) { index, item ->
+                    ManagedRow(
+                        name = item.name,
+                        hidden = item.hidden,
+                        enabled = !state.busy,
+                        canMoveUp = index > 0,
+                        canMoveDown = index < state.categories.lastIndex,
+                        onRename = { onRequestRename(item.id) },
+                        onMoveUp = { onMoveCategory(item.id, -1) },
+                        onMoveDown = { onMoveCategory(item.id, 1) },
+                        onHiddenChanged = { onCategoryHiddenChanged(item.id, it) },
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun ManagedRow(
     name: String,
@@ -427,33 +537,59 @@ private fun ManagedRow(
     onHiddenChanged: (Boolean) -> Unit,
 ) {
     Column {
-        AppSeparator(Modifier.padding(top = 8.dp))
+        AppSeparator(Modifier.padding(top = 6.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
-                Text(name, style = MaterialTheme.typography.bodyMedium)
-                Text(
-                    if (hidden) "已隐藏（历史交易仍可显示）" else "新记账时可选",
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(name, style = MaterialTheme.typography.bodyMedium)
+                    // 「新记账时可选」原本每个分类都重复一遍，二十几个分类就是二十几行废话。
+                    // 开关本身就说明了这件事，只有「已隐藏」这个反常状态值得单独标一下。
+                    if (hidden) {
+                        Text(
+                            "已隐藏",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 6.dp),
+                        )
+                    }
+                }
             }
+            CompactAction("改名", enabled, onRename)
+            CompactAction("↑", enabled && canMoveUp, onMoveUp)
+            CompactAction("↓", enabled && canMoveDown, onMoveDown)
             Switch(
                 checked = !hidden,
                 onCheckedChange = { visible -> onHiddenChanged(!visible) },
                 enabled = enabled,
+                modifier = Modifier.padding(start = 2.dp),
             )
         }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
-        ) {
-            TextButton(onClick = onRename, enabled = enabled) { Text("改名") }
-            TextButton(onClick = onMoveUp, enabled = enabled && canMoveUp) { Text("↑") }
-            TextButton(onClick = onMoveDown, enabled = enabled && canMoveDown) { Text("↓") }
-        }
     }
+}
+
+/** 排序按钮三连占一整行太浪费，压成贴着名字的小字：28dp 高、无最小宽度。 */
+@Composable
+private fun CompactAction(
+    text: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = if (enabled) {
+            MaterialTheme.colorScheme.primary
+        } else {
+            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+        },
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 7.dp, vertical = 8.dp),
+    )
 }
 
 @Composable
