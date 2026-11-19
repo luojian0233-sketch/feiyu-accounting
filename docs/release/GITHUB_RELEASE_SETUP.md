@@ -42,9 +42,12 @@ git remote add origin https://github.com/<你的用户名>/feiyu-accounting.git
 git push -u origin master
 ```
 
-推的时候会要求认证。密码不能用账号密码了，要用 **Personal Access Token**：
-GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token，
-勾 `repo` 权限，生成后复制那串 `ghp_...`，粘贴到密码位置。Windows 凭据管理器会记住它。
+推的时候会弹出登录窗口，选 **Sign in with your browser** 就行——Edge 里已经登着账号，
+点一下授权即可，凭据会存进 Windows 凭据管理器，以后不用再登。
+
+> 如果没弹窗、而是直接问你要密码：GitHub 早已不支持账号密码，需要 Personal Access Token。
+> GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) →
+> Generate new token，勾 `repo`，把生成的 `ghp_...` 粘到密码位置。
 
 > 不想动分支结构的话，也可以直接 `git push -u origin feature/android-mvp`，
 > 然后在仓库 Settings → Branches 把默认分支改成它。
@@ -61,6 +64,9 @@ cd "E:/软件开发/自动记账App/.worktrees/android-mvp"
 
 产物在 `app/build/outputs/apk/release/app-release.apk`。
 它用的是 `C:/keys/feiyu-release.jks` 签名——**这个 keystore 丢了就永远无法覆盖升级**，记得另存一份。
+
+> 离线打 release 时可能卡在 `lintVitalAnalyzeRelease`（该任务要单独下载 lint 工具）。
+> 加上 `-x lintVitalAnalyzeRelease -x lintVitalRelease` 跳过它即可，单测已经覆盖了发布前要查的东西。
 
 ### 2. 在网页上建 Release
 
