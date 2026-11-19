@@ -91,12 +91,12 @@ class RecognitionCoordinatorTest {
     }
 
     @Test
-    fun `pending matching includes exact fifteen minute boundary`() = runTest {
+    fun `pending matching includes exact one day boundary`() = runTest {
         store.visibleCategories += "通讯"
         store.seed(
             transaction(
                 id = 7,
-                occurredAt = NOW.minusSeconds(15 * 60),
+                occurredAt = NOW.minusSeconds(24 * 60 * 60),
                 pending = true,
             ),
         )
@@ -109,12 +109,12 @@ class RecognitionCoordinatorTest {
     }
 
     @Test
-    fun `pending matching does not cross fifteen minute boundary`() = runTest {
+    fun `pending matching does not cross one day boundary`() = runTest {
         store.visibleCategories += "通讯"
         store.seed(
             transaction(
                 id = 7,
-                occurredAt = NOW.minusSeconds(15 * 60).minusMillis(1),
+                occurredAt = NOW.minusSeconds(24 * 60 * 60).minusMillis(1),
                 pending = true,
             ),
         )

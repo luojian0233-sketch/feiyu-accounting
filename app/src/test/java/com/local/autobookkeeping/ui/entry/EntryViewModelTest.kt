@@ -1,11 +1,13 @@
 package com.local.autobookkeeping.ui.entry
 
 import com.local.autobookkeeping.data.LedgerRepository
+import com.local.autobookkeeping.data.MerchantRuleOperations
 import com.local.autobookkeeping.data.RecognitionConfirmationOperations
 import com.local.autobookkeeping.data.AccountSetting
 import com.local.autobookkeeping.data.CategorySetting
 import com.local.autobookkeeping.data.SettingsOperations
 import com.local.autobookkeeping.ui.theme.ThemeStyle
+import com.local.autobookkeeping.domain.model.CATEGORY_UNSURE
 import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.domain.model.PaymentPlatform
 import com.local.autobookkeeping.domain.model.Source
@@ -232,6 +234,42 @@ class EntryViewModelTest {
         assertEquals("保存失败，请稍后重试", viewModel.state.value.error)
     }
 
+    @Test
+    fun `saving a record with a merchant remembers how it was classified`() = runTest(dispatcher) {
+        val rules = FakeMerchantRules()
+        val viewModel = EntryViewModel(
+            repository = DelayedRepository(releaseImmediately = true),
+            merchantRules = rules,
+        )
+        viewModel.edit(transaction(id = 5).copy(merchant = "瑞幸咖啡", category = CATEGORY_UNSURE))
+
+        viewModel.update { it.copy(category = "餐饮") }
+        val result = viewModel.save()
+
+        assertTrue(result.isSuccess)
+        assertEquals(listOf(RememberedRule("瑞幸咖啡", "餐饮", null)), rules.recorded)
+    }
+
+    @Test
+    fun `saving never learns a placeholder category or a blank merchant`() = runTest(dispatcher) {
+        val rules = FakeMerchantRules()
+        val viewModel = EntryViewModel(
+            repository = DelayedRepository(releaseImmediately = true),
+            merchantRules = rules,
+        )
+
+        // 分类还是「待分类」——没有可复用的信息，学进去只会把占位分类写死在规则表里
+        viewModel.edit(transaction(id = 6).copy(merchant = "瑞幸咖啡", category = CATEGORY_UNSURE))
+        assertTrue(viewModel.save().isSuccess)
+
+        // 分类明确但商户为空——微信通知的常态，同样没有 key 可学
+        viewModel.startNew()
+        viewModel.update { it.copy(amountText = "12.00", category = "餐饮", merchant = "") }
+        assertTrue(viewModel.save().isSuccess)
+
+        assertTrue(rules.recorded.isEmpty())
+    }
+
     private fun transaction(id: Long) = Transaction(
         id = id,
         amountMinor = 100,
@@ -250,6 +288,16 @@ class EntryViewModelTest {
         eventKind = TransactionEventKind.PAYMENT,
         recognitionConfidence = 87,
     )
+
+    private data class RememberedRule(val merchant: String, val category: String, val account: String?)
+
+    private class FakeMerchantRules : MerchantRuleOperations {
+        val recorded = mutableListOf<RememberedRule>()
+
+        override suspend fun rememberMerchantRule(merchant: String, category: String, account: String?) {
+            recorded += RememberedRule(merchant, category, account)
+        }
+    }
 
     private class DelayedRepository(
         releaseImmediately: Boolean = false,

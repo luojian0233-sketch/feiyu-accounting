@@ -238,7 +238,13 @@ class RecognitionCoordinator(
 
     private companion object {
         const val AUTO_SAVE_CONFIDENCE = 80
-        const val PENDING_MATCH_SECONDS = 15 * 60L
+
+        /**
+         * 通知先到、页面识别后补商户，中间可能隔几小时（睡前才翻账单很常见）。
+         * 窗口放到一天，命中与否再靠「同平台同方向同金额只允许唯一候选」兜底：
+         * 一旦有歧义就不补，宁可留待分类，也不把商户安到错的记录上。
+         */
+        const val PENDING_MATCH_SECONDS = 24 * 60 * 60L
         const val CONFIRMED_MATCH_SECONDS = 2 * 60L
     }
 }

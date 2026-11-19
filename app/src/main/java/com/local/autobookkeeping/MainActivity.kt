@@ -41,6 +41,7 @@ import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.local.autobookkeeping.data.LedgerRepository
+import com.local.autobookkeeping.data.MerchantRuleOperations
 import com.local.autobookkeeping.data.RecognitionConfirmationOperations
 import com.local.autobookkeeping.data.SettingsOperations
 import com.local.autobookkeeping.backup.BackupOperations
@@ -107,6 +108,7 @@ class MainActivity : ComponentActivity() {
                 settingsRepository = graph.settingsRepository,
                 backupOperations = graph.backupManager,
                 recognitionConfirmation = graph.recognitionStore,
+                merchantRules = graph.recognitionStore,
                 automaticBookkeepingAccess = graph.automaticBookkeepingAccess,
                 mainLaunchViewModel = launchViewModel,
             )
@@ -207,6 +209,7 @@ internal fun AutoBookkeepingRoot(
     settingsRepository: SettingsOperations? = null,
     backupOperations: BackupOperations? = null,
     recognitionConfirmation: RecognitionConfirmationOperations? = null,
+    merchantRules: MerchantRuleOperations? = null,
     automaticBookkeepingAccess: AutomaticBookkeepingAccess? = null,
     mainLaunchViewModel: MainLaunchViewModel? = null,
 ) {
@@ -250,7 +253,7 @@ internal fun AutoBookkeepingRoot(
         )
     }
     val entryViewModel = viewModel {
-        EntryViewModel(repository, settingsRepository, recognitionConfirmation)
+        EntryViewModel(repository, settingsRepository, recognitionConfirmation, merchantRules)
     }
     val statisticsViewModel = viewModel {
         StatisticsViewModel(
@@ -536,6 +539,10 @@ internal fun AutoBookkeepingRoot(
                                     entryViewModel.update {
                                         it.copy(amountText = applyAmountKey(it.amountText, key))
                                     }
+                                },
+                                onOpenPageRecognition = {
+                                    amountKeypadOpen = false
+                                    automaticAccess?.openAccessibilitySettings()
                                 },
                                 onBack = {
                                     categorySelectorOpen = false

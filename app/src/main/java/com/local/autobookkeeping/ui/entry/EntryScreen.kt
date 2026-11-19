@@ -25,6 +25,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -39,6 +40,7 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 const val ENTRY_DATE_TAG = "entry-date"
+const val ENTRY_PAGE_RECOGNITION_TAG = "entry-open-page-recognition"
 
 @Composable
 fun EntryScreen(
@@ -53,6 +55,7 @@ fun EntryScreen(
     keypadOpen: Boolean = false,
     onKeypadOpenChange: (Boolean) -> Unit = {},
     onAmountKey: (AmountKey) -> Unit = {},
+    onOpenPageRecognition: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val draft = state.draft
@@ -103,6 +106,26 @@ fun EntryScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = Color(0xFF5B6673),
                     )
+                }
+                if (draft.merchant.isBlank()) {
+                    item {
+                        // 微信支付通知里没有商户名，规则学不到东西。页面识别是唯一能把它读出来的口子。
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Text(
+                                "开启页面识别后，打开微信账单详情能自动读到是哪家店。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF8A5B00),
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                            TextButton(
+                                onClick = onOpenPageRecognition,
+                                modifier = Modifier.testTag(ENTRY_PAGE_RECOGNITION_TAG),
+                            ) { Text("开启") }
+                        }
+                    }
                 }
             }
             item {

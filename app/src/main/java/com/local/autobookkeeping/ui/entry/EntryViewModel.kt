@@ -3,8 +3,10 @@ package com.local.autobookkeeping.ui.entry
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.local.autobookkeeping.data.LedgerRepository
+import com.local.autobookkeeping.data.MerchantRuleOperations
 import com.local.autobookkeeping.data.RecognitionConfirmationOperations
 import com.local.autobookkeeping.data.SettingsOperations
+import com.local.autobookkeeping.domain.model.CATEGORY_UNSURE
 import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.domain.model.PaymentPlatform
 import com.local.autobookkeeping.domain.model.Source
@@ -120,6 +122,7 @@ class EntryViewModel(
     private val repository: LedgerRepository,
     settings: SettingsOperations? = null,
     private val recognitionConfirmation: RecognitionConfirmationOperations? = null,
+    private val merchantRules: MerchantRuleOperations? = null,
 ) : ViewModel() {
     private val managesConfiguration = settings != null
     private val mutableState = MutableStateFlow(
@@ -213,7 +216,7 @@ class EntryViewModel(
             val id = if (useAtomicRecognitionConfirmation) {
                 checkNotNull(recognitionConfirmation).confirmAndRemember(transaction)
             } else {
-                repository.save(transaction)
+                repository.save(transaction).also { rememberMerchant(transaction) }
             }
             mutableState.value = mutableState.value.copy(saving = false)
             Result.success(id)
@@ -232,6 +235,31 @@ class EntryViewModel(
     }
 
     suspend fun confirmPending(): Result<Long> = save(confirmPending = true)
+
+    /**
+     * 保存时顺手记下「这家商户该归哪一类」。
+     *
+     * 只有商户名和分类都确定时才学：待分类记录、空商户都没有可复用的信息，
+     * 硬学只会把占位分类写进规则表，反而让后续识别全部落错分类。
+     *
+     * 规则是保存成功之后的附加收益，写失败不该让用户以为整笔没存上。
+     */
+    private suspend fun rememberMerchant(transaction: Transaction) {
+        val rules = merchantRules ?: return
+        if (transaction.merchant.isBlank()) return
+        if (transaction.category.isBlank() || transaction.category == CATEGORY_UNSURE) return
+        try {
+            rules.rememberMerchantRule(
+                merchant = transaction.merchant,
+                category = transaction.category,
+                account = transaction.account.ifBlank { null },
+            )
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (_: Throwable) {
+            // 规则没学上不影响这笔账已经存下去的事实，别让它把整个保存判成失败
+        }
+    }
 
     suspend fun delete(): Result<Unit> {
         val id = mutableState.value.draft.id
