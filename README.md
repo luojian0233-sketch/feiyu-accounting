@@ -94,6 +94,25 @@
 
 `python tools/gen_skin_keypad_preview.py` 出四套皮肤整屏、键盘特写与按下态的预览图；`python tools/gen_fish_done_preview.py` 是肥鱼「完成」键的配色备选（金色为最终版）。两套脚本都写到 `tools/skin_previews/`（已 gitignore），先看预览再进代码。
 
+## 自动记账效率
+
+通知进来到记账落库分两段：解析（`NotificationRouter` + 三个解析器）和落库（`CandidateProcessor` + Room）。
+2026-11-19 的基准（[明细](docs/testing/auto-bookkeeping-benchmark.md)）：
+
+| 阶段 | 平均 | p95 |
+| --- | ---: | ---: |
+| 解析 + 来源闸门 | 28 µs | 47 µs |
+| 解析 + 去重 + 组装 | 35 µs | 69 µs |
+| 到 SQLite 落库 | 1.5 ms | 2.7 ms |
+
+一天 200 条通知的 CPU 成本约 7 ms、落库约 0.3 s，速度不是问题。
+真正的瓶颈是「待核对」比例：20 条常规样本只有 3 条能直接入账，因为支付通知通常不带商户名，
+`CandidateProcessor.requiresConfirmation` 会一律降级为待确认。要提高自动入账率，应该做商户规则学习
+（`MerchantRuleEntity` 已有表），而不是放宽解析置信度。
+
+复跑：`gradlew.bat :app:testDebugUnitTest --tests "*AutoBookkeeping*Benchmark*"`，
+报告写到 `app/build/benchmark/`。
+
 ## 本地备份与恢复
 
 1. 打开“设置 → 本地备份”。
