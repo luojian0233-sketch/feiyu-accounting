@@ -7,6 +7,8 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.local.autobookkeeping.domain.model.BUILT_IN_CATEGORY_NAMES
+import com.local.autobookkeeping.domain.model.CATEGORY_UNSURE
+import com.local.autobookkeeping.domain.model.LEGACY_PENDING_CATEGORY
 
 @Database(
     entities = [
@@ -77,6 +79,29 @@ abstract class AppDatabase : RoomDatabase() {
                     arrayOf<Any>(name, index),
                 )
             }
+        }
+
+        /**
+         * 「待确认」改名「待分类」：语义从「整笔不算数、不进统计」变成「已入账、分类待补」。
+         *
+         * 老库里挂在这个分类下的记录跟着换过去，否则升级之后它们仍然挡着统计。
+         * 三步都幂等，每次打开跑一遍没有副作用。
+         */
+        override fun onOpen(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "INSERT OR IGNORE INTO categories (name, displayOrder, hidden) " +
+                    "VALUES (?, (SELECT COALESCE(MAX(displayOrder), -1) + 1 FROM categories), 0)",
+                arrayOf<Any>(CATEGORY_UNSURE),
+            )
+            db.execSQL(
+                "UPDATE transactions SET categoryId = (SELECT id FROM categories WHERE name = ?) " +
+                    "WHERE categoryId IN (SELECT id FROM categories WHERE name = ?)",
+                arrayOf<Any>(CATEGORY_UNSURE, LEGACY_PENDING_CATEGORY),
+            )
+            db.execSQL(
+                "DELETE FROM categories WHERE name = ?",
+                arrayOf<Any>(LEGACY_PENDING_CATEGORY),
+            )
         }
     }
 }

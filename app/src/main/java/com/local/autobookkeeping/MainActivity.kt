@@ -479,6 +479,7 @@ internal fun AutoBookkeepingRoot(
                             navigator.openEntry()
                         },
                         onDelete = ledgerViewModel::deleteTransactions,
+                        onConfirm = ledgerViewModel::confirmTransactions,
                     )
                     AppDestination.ENTRY -> {
                         if (categorySelectorOpen) {

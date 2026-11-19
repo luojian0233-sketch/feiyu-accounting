@@ -32,6 +32,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.local.autobookkeeping.domain.model.CATEGORY_UNSURE
 import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.ui.BOOKKEEPING_ZONE
 import java.time.LocalDate
@@ -92,6 +93,15 @@ fun EntryScreen(
                         "这是一笔自动识别记录，请核对方向、分类和商户后再确认。",
                         style = MaterialTheme.typography.bodySmall,
                         color = Color(0xFF8A5B00),
+                    )
+                }
+            } else if (draft.category == CATEGORY_UNSURE) {
+                item {
+                    // 这笔已经算进账了，只是系统判不出花在哪类——别让人误以为还没记上
+                    Text(
+                        "这笔已经计入账目，只是判不出花在哪类，顺手选一个吧。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF5B6673),
                     )
                 }
             }

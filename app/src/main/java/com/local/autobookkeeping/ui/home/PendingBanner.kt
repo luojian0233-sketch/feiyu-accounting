@@ -37,7 +37,9 @@ import kotlin.math.pow
 const val PENDING_BANNER_TAG = "pending-banner"
 
 /**
- * 首页「N 笔自动记录待核对」提示条。
+ * 首页「N 笔自动记录待分类」提示条。
+ *
+ * 这些记录已经计入统计，只是分类还没补——所以文案用「待分类」而不是「待核对」。
  *
  * 四套皮肤各用一种材质语言，而不是同一块奶油色换个色值：
  * 薄荷是嫩芽渐层、小票是虚线齿孔的票据、纸感是带墨线和折角的便签、肥鱼是深海渐变加星光。
@@ -91,7 +93,8 @@ fun PendingBanner(
                 HeaderDecor.OCEAN_WAVE -> Unit
             }
             Text(
-                text = "$count 笔自动记录待核对",
+                // 这两笔都已经是入账状态，只是分类要人来补；说「待核对」会让人以为账没算上
+                text = "$count 笔自动记录待分类",
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.bodyMedium,
                 color = labelColor(decor),

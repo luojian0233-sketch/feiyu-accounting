@@ -5,6 +5,7 @@ import com.local.autobookkeeping.data.MerchantRuleMatch
 import com.local.autobookkeeping.data.RecognitionMatchQuery
 import com.local.autobookkeeping.data.RecognitionStore
 import com.local.autobookkeeping.domain.model.CaptureChannel
+import com.local.autobookkeeping.domain.model.CATEGORY_UNSURE
 import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.domain.model.PaymentPlatform
 import com.local.autobookkeeping.domain.model.RecognitionCandidate
@@ -234,14 +235,15 @@ class RecognitionCoordinatorTest {
 
         val result = coordinator.process(telecomCandidate())
 
+        // 用户关掉自动保存就是「别替我记账」，哪怕金额和分类都看得出来也得等人确认
         assertEquals(RecognitionOutcome.Saved(1, pending = true), result)
-        assertEquals("待确认", store.transactions.single().category)
+        assertEquals(CATEGORY_UNSURE, store.transactions.single().category)
         assertTrue(store.transactions.single().pendingConfirmation)
         assertEquals(RecognitionDiagnostic.NEEDS_CONFIRMATION, diagnostics.state.value)
     }
 
     @Test
-    fun `automatic save requires direction known event visible category and threshold`() = runTest {
+    fun `missing direction or event blocks booking while unsure category still books`() = runTest {
         store.visibleCategories += "通讯"
         val candidates = listOf(
             telecomCandidate(amount = 100, direction = null, digestChar = 'b'),
@@ -252,16 +254,22 @@ class RecognitionCoordinatorTest {
 
         val results = candidates.map { coordinator.process(it) }
 
+        // 前两笔连「这是笔支出」都还说不准，只能挂着等人看；
+        // 后两笔金额和方向都确定，只是分类没判出来——照常入账，分类留空待补。
         assertEquals(
             listOf(
                 RecognitionOutcome.Saved(1, pending = true),
                 RecognitionOutcome.Saved(2, pending = true),
-                RecognitionOutcome.Saved(3, pending = true),
-                RecognitionOutcome.Saved(4, pending = true),
+                RecognitionOutcome.Saved(3, pending = false),
+                RecognitionOutcome.Saved(4, pending = false),
             ),
             results,
         )
-        assertTrue(store.transactions.all { it.pendingConfirmation && it.category == "待确认" })
+        assertTrue(store.transactions.all { it.category == CATEGORY_UNSURE })
+        assertTrue(store.transactions[0].pendingConfirmation)
+        assertTrue(store.transactions[1].pendingConfirmation)
+        assertFalse(store.transactions[2].pendingConfirmation)
+        assertFalse(store.transactions[3].pendingConfirmation)
         assertEquals(Direction.EXPENSE, store.transactions.first().direction)
     }
 

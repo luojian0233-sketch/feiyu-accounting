@@ -13,10 +13,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -48,6 +50,69 @@ class FishReactionTapTest {
 
     @Test
     fun settingsRing() = tapAndCapture(HeaderPage.SETTINGS, "settings")
+
+    /**
+     * 待机态不能挂残影。真机上账单页卡片右下角钉着一枚被圆角切掉一半的金币：
+     * `(1f - 0.54f) / 0.46f` 在 Float 下是 0.99999996，过不了 `p >= 1f`，
+     * 最后一枚金币就永久留在「已落出槽位」的位置上。
+     * 这里只看槽位底边往下 20dp 那块——贴纸和字幕都收在槽位里，能出现在那儿的只有金币。
+     */
+    @Test
+    fun idleLedgerKeepsNoStrayCoin() {
+        compose.setContent {
+            AutoBookkeepingTheme(ThemeStyle.FATTY_FISH) {
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.background)
+                        .padding(16.dp),
+                ) {
+                    ThemedHomeHeader(page = HeaderPage.LEDGER)
+                }
+            }
+        }
+        compose.waitForIdle()
+        Thread.sleep(600)
+        compose.waitForIdle()
+
+        val sticker = compose.onNodeWithTag(REACTION_TEST_TAG)
+        sticker.assert(
+            SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, REACTION_STATE_IDLE),
+        )
+
+        val density = compose.density.density
+        val bounds = sticker.getUnclippedBoundsInRoot()
+        val view = compose.activity.findViewById<View>(android.R.id.content)
+        val bitmap = Bitmap.createBitmap(
+            view.width.coerceAtLeast(1),
+            view.height.coerceAtLeast(1),
+            Bitmap.Config.ARGB_8888,
+        )
+        view.draw(Canvas(bitmap))
+
+        val top = (bounds.bottom.value * density).toInt()
+        val bottom = ((bounds.bottom.value + 20f) * density).toInt()
+        val left = ((bounds.left.value - 12f) * density).toInt()
+        val right = ((bounds.right.value + 12f) * density).toInt()
+
+        var strays = 0
+        for (y in top until minOf(bottom, bitmap.height)) {
+            for (x in maxOf(left, 0) until minOf(right, bitmap.width)) {
+                if (isCoinPixel(bitmap.getPixel(x, y))) strays++
+            }
+        }
+        assertEquals("槽位下方残留 $strays 个金币像素", 0, strays)
+    }
+
+    private fun isCoinPixel(color: Int): Boolean {
+        val r = (color shr 16) and 0xFF
+        val g = (color shr 8) and 0xFF
+        val b = color and 0xFF
+        return near(r, g, b, 255, 214, 96) || near(r, g, b, 222, 165, 44)
+    }
+
+    private fun near(r: Int, g: Int, b: Int, tr: Int, tg: Int, tb: Int): Boolean =
+        kotlin.math.abs(r - tr) <= 6 && kotlin.math.abs(g - tg) <= 6 && kotlin.math.abs(b - tb) <= 6
 
     private fun tapAndCapture(page: HeaderPage, name: String) {
         compose.setContent {

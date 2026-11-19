@@ -136,6 +136,7 @@ class PageChromeRenderTest {
                     onFiltersChanged = {},
                     onEdit = {},
                     onDelete = {},
+                    onConfirm = {},
                 )
             }
         }

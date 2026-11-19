@@ -40,7 +40,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.local.autobookkeeping.domain.model.CATEGORY_UNSURE
 import com.local.autobookkeeping.domain.model.Direction
+import com.local.autobookkeeping.domain.model.PaymentPlatform
 import com.local.autobookkeeping.domain.model.Transaction
 import com.local.autobookkeeping.ui.theme.AppCardSurface
 import com.local.autobookkeeping.ui.theme.AppSeparator
@@ -54,6 +56,7 @@ const val LEDGER_LIST_TAG = "ledger-list"
 const val LEDGER_SELECT_TOGGLE_TAG = "ledger-select-toggle"
 const val LEDGER_SELECT_ALL_TAG = "ledger-select-all"
 const val LEDGER_DELETE_SELECTED_TAG = "ledger-delete-selected"
+const val LEDGER_CONFIRM_SELECTED_TAG = "ledger-confirm-selected"
 
 @Composable
 fun LedgerScreen(
@@ -61,12 +64,19 @@ fun LedgerScreen(
     onFiltersChanged: ((LedgerFilterState) -> LedgerFilterState) -> Unit,
     onEdit: (Transaction) -> Unit,
     onDelete: (List<Long>) -> Unit,
+    onConfirm: (List<Long>) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var selecting by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(emptySet<Long>()) }
     var pendingDelete by remember { mutableStateOf<List<Long>?>(null) }
     val allIds = remember(state.groups) { state.groups.flatMap { group -> group.transactions.map { it.id } } }
+    // 「确认」只对还挂着待核对的记录有意义，全是已入账的话按钮该是灰的
+    val confirmableCount = remember(selectedIds, state.groups) {
+        state.groups.sumOf { group ->
+            group.transactions.count { it.id in selectedIds && it.pendingConfirmation }
+        }
+    }
 
     fun exitSelection() {
         selecting = false
@@ -116,9 +126,14 @@ fun LedgerScreen(
         if (selecting) {
             SelectionBar(
                 selectedCount = selectedIds.size,
+                confirmableCount = confirmableCount,
                 allSelected = allIds.isNotEmpty() && selectedIds.size == allIds.size,
                 onToggleAll = {
                     selectedIds = if (selectedIds.size == allIds.size) emptySet() else allIds.toSet()
+                },
+                onConfirm = {
+                    onConfirm(selectedIds.toList())
+                    exitSelection()
                 },
                 onDelete = { pendingDelete = selectedIds.toList() },
                 onCancel = { exitSelection() },
@@ -209,8 +224,10 @@ fun LedgerScreen(
 @Composable
 private fun SelectionBar(
     selectedCount: Int,
+    confirmableCount: Int,
     allSelected: Boolean,
     onToggleAll: () -> Unit,
+    onConfirm: () -> Unit,
     onDelete: () -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -225,6 +242,7 @@ private fun SelectionBar(
             "已选 $selectedCount 条",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
         )
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(
@@ -235,6 +253,11 @@ private fun SelectionBar(
                 onClick = onToggleAll,
                 modifier = Modifier.testTag(LEDGER_SELECT_ALL_TAG),
             ) { Text(if (allSelected) "取消全选" else "全选") }
+            TextButton(
+                onClick = onConfirm,
+                enabled = confirmableCount > 0,
+                modifier = Modifier.testTag(LEDGER_CONFIRM_SELECTED_TAG),
+            ) { Text("确认") }
             TextButton(
                 onClick = onDelete,
                 enabled = selectedCount > 0,
@@ -511,15 +534,35 @@ private fun ReceiptDayCard(
 
 @Composable
 private fun TransactionRowContent(transaction: Transaction, modifier: Modifier = Modifier) {
+    // 通知抓来的记录没有商户名，以前标题会退化成分类名，跟下面那行「待分类」重复三次。
+    // 改报支付平台——这是用户唯一还认得出来的信息。
+    val title = transaction.merchant.ifBlank {
+        when (transaction.platform) {
+            PaymentPlatform.WECHAT -> "微信支付"
+            PaymentPlatform.ALIPAY -> "支付宝"
+            PaymentPlatform.OTHER, PaymentPlatform.UNKNOWN -> transaction.category
+        }
+    }
     Row(
         modifier = modifier.padding(horizontal = 11.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Column(Modifier.weight(1f)) {
-            Text(transaction.merchant.ifBlank { transaction.category }, style = MaterialTheme.typography.bodyMedium)
+            Text(title, style = MaterialTheme.typography.bodyMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text(transaction.category, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                if (transaction.pendingConfirmation) Badge("待核对", Color(0xFFFFE6A8))
+                if (transaction.category != CATEGORY_UNSURE) {
+                    Text(
+                        transaction.category,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray,
+                    )
+                }
+                if (transaction.pendingConfirmation) {
+                    Badge("待核对", Color(0xFFFFE6A8))
+                } else if (transaction.category == CATEGORY_UNSURE) {
+                    // 已经计入统计，只是分类还没补——跟「待核对」是两码事，别用同一块黄标
+                    Badge("待分类", Color(0xFFE6E9EF))
+                }
                 if (transaction.internalTransfer) Badge("内部转账", Color(0xFFDDE8F6))
             }
         }

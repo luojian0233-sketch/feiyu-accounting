@@ -34,7 +34,7 @@ import java.io.File
 import java.io.FileOutputStream
 
 /**
- * 四套皮肤的「待核对横幅 + 统计饼图」验收：横幅要各有一套材质语言，
+ * 四套皮肤的「待分类横幅 + 统计饼图」验收：横幅要各有一套材质语言，
  * 饼图要跟着皮肤换色板和切片处理，不能四套长得一样。
  */
 @RunWith(RobolectricTestRunner::class)
@@ -110,7 +110,7 @@ class SkinBannerChartRenderTest {
         }
         compose.waitForIdle()
         compose.onNodeWithTag(PENDING_BANNER_TAG).assertExists()
-        compose.onNodeWithText("19 笔自动记录待核对").assertExists()
+        compose.onNodeWithText("19 笔自动记录待分类").assertExists()
         compose.onNodeWithTag("statistics-pie").assertExists()
         save(name ?: "banner-chart-${style.name.lowercase()}")
     }

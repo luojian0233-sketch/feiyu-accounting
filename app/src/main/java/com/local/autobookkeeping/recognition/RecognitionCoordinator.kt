@@ -4,6 +4,7 @@ import com.local.autobookkeeping.data.DuplicateRecognitionReceiptException
 import com.local.autobookkeeping.data.RecognitionMatchQuery
 import com.local.autobookkeeping.data.RecognitionStore
 import com.local.autobookkeeping.domain.model.CaptureChannel
+import com.local.autobookkeeping.domain.model.CATEGORY_UNSURE
 import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.domain.model.RecognitionCandidate
 import com.local.autobookkeeping.domain.model.RecognitionChoice
@@ -57,7 +58,7 @@ class RecognitionCoordinator(
         val direction = candidate.direction
         if (direction != null) {
             val pendingMatches = store.findMatches(candidate.matchQuery(direction, PENDING_MATCH_SECONDS))
-                .filter(Transaction::pendingConfirmation)
+                .filter(Transaction::awaitingEnrichment)
             when {
                 pendingMatches.size == 1 -> return enrichPending(pendingMatches.single(), candidate)
                 pendingMatches.size > 1 -> return needsSelection(candidate, pendingMatches)
@@ -74,13 +75,13 @@ class RecognitionCoordinator(
 
         val classification = classifier.classify(candidate)
         val refundOrigin = candidate.refundOrigin()
-        val autoSave = shouldAutoSave(candidate, classification)
-        val transaction = candidate.toTransaction(classification, refundOrigin, autoSave)
+        val booking = candidate.bookingDecision(classification)
+        val transaction = candidate.toTransaction(classification, refundOrigin, booking)
         val receipt = candidate.toReceipt()
 
         return try {
             val id = store.create(transaction, receipt)
-            saved(id, pending = !autoSave)
+            saved(id, pending = booking.needsConfirmation)
         } catch (_: DuplicateRecognitionReceiptException) {
             RecognitionOutcome.Duplicate
         }
@@ -104,7 +105,7 @@ class RecognitionCoordinator(
         val direction = candidate.direction ?: return incomplete()
 
         val pendingTarget = store.findMatches(candidate.matchQuery(direction, PENDING_MATCH_SECONDS))
-            .firstOrNull { it.pendingConfirmation && it.id == targetId }
+            .firstOrNull { it.awaitingEnrichment() && it.id == targetId }
         if (pendingTarget != null) {
             return enrichPending(pendingTarget, candidate)
         }
@@ -129,15 +130,15 @@ class RecognitionCoordinator(
         )
         val classification = classifier.classify(combined)
         val refundOrigin = combined.refundOrigin()
-        val autoSave = shouldAutoSave(combined, classification)
+        val booking = combined.bookingDecision(classification)
         val updated = existing.copy(
             amountMinor = combined.amountMinor,
             direction = combined.direction ?: existing.direction,
-            category = if (autoSave) classification.category!! else PENDING_CATEGORY,
+            category = booking.category,
             occurredAt = combined.occurredAt,
             merchant = combined.merchant.orEmpty().trim(),
             account = classification.account.orEmpty().trim(),
-            pendingConfirmation = !autoSave,
+            pendingConfirmation = booking.needsConfirmation,
             refundOfId = existing.refundOfId ?: refundOrigin?.id,
             platform = combined.platform,
             eventKind = combined.eventKind,
@@ -146,7 +147,7 @@ class RecognitionCoordinator(
 
         return try {
             store.update(updated, candidate.toReceipt())
-            saved(existing.id, pending = !autoSave)
+            saved(existing.id, pending = booking.needsConfirmation)
         } catch (_: DuplicateRecognitionReceiptException) {
             RecognitionOutcome.Duplicate
         }
@@ -191,15 +192,34 @@ class RecognitionCoordinator(
         )
     }
 
-    private suspend fun shouldAutoSave(
-        candidate: RecognitionCandidate,
+    /**
+     * 一笔识别结果该怎么落库：分得清就归好类，分不清就挂到「待分类」照常入账。
+     *
+     * 以前只有「全自动」和「待核对」两档，分类判不出来就把整笔拦下。可微信/支付宝的
+     * 支付通知只给「已支付¥4.00」这一行，商户名系统层面就没有，于是每一笔都成了待核对，
+     * 今日支出一直是 0。金额才是通知里最可靠的一项，方向和事件类型也都认得出来，
+     * 到这一步就够记账了，分类缺失不该阻断入账。
+     */
+    private suspend fun RecognitionCandidate.bookingDecision(
         classification: Classification,
-    ): Boolean = autoSavePolicy.isEnabled() &&
-        candidate.direction != null &&
-        candidate.eventKind != TransactionEventKind.UNKNOWN &&
-        candidate.hasStableIdentity() &&
-        classification.category != null &&
-        candidate.confidence >= AUTO_SAVE_CONFIDENCE
+    ): BookingDecision {
+        // 自动保存是用户自己的开关：关掉就意味着「别替我记账」，这里必须先让路。
+        // 开关开着的前提下，金额、方向、事件类型都认得出就够入账了。
+        val bookable = autoSavePolicy.isEnabled() &&
+            direction != null &&
+            eventKind != TransactionEventKind.UNKNOWN &&
+            amountMinor > 0
+        if (!bookable) {
+            return BookingDecision(CATEGORY_UNSURE, needsConfirmation = true)
+        }
+        val categorized = hasStableIdentity() &&
+            classification.category != null &&
+            confidence >= AUTO_SAVE_CONFIDENCE
+        return BookingDecision(
+            category = if (categorized) checkNotNull(classification.category) else CATEGORY_UNSURE,
+            needsConfirmation = false,
+        )
+    }
 
     private suspend fun RecognitionCandidate.refundOrigin(): Transaction? =
         if (eventKind == TransactionEventKind.REFUND) store.findRefundOrigin(this) else null
@@ -220,9 +240,17 @@ class RecognitionCoordinator(
         const val AUTO_SAVE_CONFIDENCE = 80
         const val PENDING_MATCH_SECONDS = 15 * 60L
         const val CONFIRMED_MATCH_SECONDS = 2 * 60L
-        const val PENDING_CATEGORY = "待确认"
     }
 }
+
+/**
+ * 落库时的两个决定：这笔归到哪个分类，以及要不要拦住它等人工确认。
+ * 两者已经解耦——分类判不出来不代表金额不可信。
+ */
+private data class BookingDecision(
+    val category: String,
+    val needsConfirmation: Boolean,
+)
 
 private fun RecognitionCandidate.matchQuery(
     knownDirection: Direction,
@@ -239,16 +267,16 @@ private fun RecognitionCandidate.matchQuery(
 private fun RecognitionCandidate.toTransaction(
     classification: Classification,
     refundOrigin: Transaction?,
-    autoSave: Boolean,
+    booking: BookingDecision,
 ) = Transaction(
     amountMinor = amountMinor,
     direction = direction ?: Direction.EXPENSE,
-    category = if (autoSave) classification.category!! else "待确认",
+    category = booking.category,
     occurredAt = occurredAt,
     merchant = merchant.orEmpty().trim(),
     account = classification.account.orEmpty().trim(),
     source = channel.toSource(),
-    pendingConfirmation = !autoSave,
+    pendingConfirmation = booking.needsConfirmation,
     internalTransfer = false,
     refundOfId = refundOrigin?.id,
     platform = platform,
@@ -266,6 +294,15 @@ private fun RecognitionCandidate.toReceipt() = RecognitionReceipt(
 
 private fun RecognitionCandidate.hasStableIdentity(): Boolean =
     !merchant.isNullOrBlank() || eventKind in STABLE_EVENT_KINDS
+
+/**
+ * 还能被后续证据补全的记录：没入账的待核对，以及已入账但分类还空着的待分类。
+ *
+ * 「通知先到、页面识别后到」全靠这个窗口把商户和分类补齐——记录一旦入账就不再是
+ * pending，但分类还挂着「待分类」时仍然允许被同一笔的页面识别覆盖。
+ */
+private fun Transaction.awaitingEnrichment(): Boolean =
+    pendingConfirmation || category == CATEGORY_UNSURE
 
 private fun merchantsMatch(existing: String, candidate: String?): Boolean {
     val left = existing.takeIf(String::isNotBlank)?.let(::normalizeMerchant)

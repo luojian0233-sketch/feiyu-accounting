@@ -3,6 +3,7 @@ package com.local.autobookkeeping.ui.ledger
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.local.autobookkeeping.data.LedgerRepository
+import com.local.autobookkeeping.domain.model.CATEGORY_UNSURE
 import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.domain.model.DateRange
 import com.local.autobookkeeping.domain.model.Transaction
@@ -15,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -117,7 +119,10 @@ fun filterTransactions(
         (filters.direction == null || transaction.direction == filters.direction) &&
         (filters.category.isNullOrBlank() || transaction.category == filters.category) &&
         (filters.account.isNullOrBlank() || transaction.account == filters.account) &&
-        (!filters.pendingOnly || transaction.pendingConfirmation) &&
+        // 「待处理」既包括还没入账的待核对，也包括已入账但分类没补的待分类
+        (!filters.pendingOnly ||
+            transaction.pendingConfirmation ||
+            transaction.category == CATEGORY_UNSURE) &&
         (!filters.statisticsEligibleOnly ||
             (!transaction.pendingConfirmation && !transaction.internalTransfer)) &&
         queryMatches
@@ -153,7 +158,9 @@ fun calculateHomeSummary(
         incomeMinor = income,
         expenseMinor = expense,
         balanceMinor = Math.subtractExact(income, expense),
-        pendingCount = transactions.count { it.pendingConfirmation },
+        pendingCount = transactions.count {
+            it.pendingConfirmation || it.category == CATEGORY_UNSURE
+        },
         recent = transactions
             .asSequence()
             .filterNot { it.pendingConfirmation || it.internalTransfer }
@@ -262,6 +269,22 @@ class LedgerViewModel(
     fun deleteTransactions(ids: List<Long>) {
         if (ids.isEmpty()) return
         viewModelScope.launch { repository.deleteAll(ids) }
+    }
+
+    /**
+     * 批量确认：把选中的记录一次性认下来。
+     *
+     * 这些记录的金额本来就准，只是分类没补。确认后 pendingConfirmation 摘掉，
+     * 它们才真正计入统计。分类不跟着改——用户没说是哪一类，就不该替他瞎猜。
+     */
+    fun confirmTransactions(ids: List<Long>) {
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            repository.observeTransactions()
+                .first()
+                .filter { it.id in ids && it.pendingConfirmation }
+                .forEach { repository.save(it.copy(pendingConfirmation = false)) }
+        }
     }
 }
 

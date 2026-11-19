@@ -251,6 +251,10 @@ private fun DrawScope.drawRings(t: Float) {
 }
 
 private fun DrawScope.drawCoins(t: Float) {
+    // 待机态 t 恒为 1。这里必须先挡一道：`(1f - 0.54f) / 0.46f` 在 Float 下算出
+    // 0.99999996，过不了下面的 `p >= 1f`，最后一枚金币就会永久停在「已落出槽位」
+    // 的位置，卡片右下角挂着一枚被圆角切掉一半的金币。
+    if (t >= 1f) return
     val s = size.minDimension
     val unit = (s / 64f).coerceAtLeast(3f)
     val land = 0.255f * s

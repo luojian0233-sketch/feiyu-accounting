@@ -1,6 +1,7 @@
 package com.local.autobookkeeping.ui.ledger
 
 import com.local.autobookkeeping.data.LedgerRepository
+import com.local.autobookkeeping.domain.model.CATEGORY_UNSURE
 import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.domain.model.Transaction
 import java.time.Instant
@@ -24,6 +25,9 @@ import org.junit.jupiter.api.Test
 class LedgerBatchDeleteTest {
     private val dispatcher = StandardTestDispatcher()
     private val zone = ZoneId.of("Asia/Shanghai")
+
+    /** 跟 [tx] 的 2026-11-18T04:00Z 落在同一个「今天」里。 */
+    private val NOW = Instant.parse("2026-11-18T12:00:00Z")
 
     @BeforeEach
     fun setUp() {
@@ -71,6 +75,49 @@ class LedgerBatchDeleteTest {
         assertEquals(listOf(1L), repository.rows.value.map { it.id })
     }
 
+    @Test
+    fun `view model confirms only the rows still waiting for a human`() = runTest(dispatcher) {
+        val repository = RecordingRepository(
+            listOf(
+                tx(1).copy(pendingConfirmation = true, category = CATEGORY_UNSURE),
+                tx(2),
+                tx(3).copy(pendingConfirmation = true, category = CATEGORY_UNSURE),
+            ),
+        )
+        val viewModel = LedgerViewModel(repository, zone)
+        advanceUntilIdle()
+
+        viewModel.confirmTransactions(listOf(1L, 2L, 3L))
+        advanceUntilIdle()
+
+        assertTrue(repository.rows.value.none { it.pendingConfirmation })
+        // 已经确认过的 2 号不该被白写一次
+        assertEquals(listOf(1L, 3L), repository.savedTransactions.map { it.id })
+        // 确认只是摘掉「待核对」，分类不替用户猜
+        assertTrue(repository.savedTransactions.all { it.category == CATEGORY_UNSURE })
+    }
+
+    @Test
+    fun `confirmed unsure rows start counting towards the day total`() = runTest(dispatcher) {
+        val repository = RecordingRepository(
+            listOf(tx(1).copy(pendingConfirmation = true, category = CATEGORY_UNSURE)),
+        )
+        val viewModel = LedgerViewModel(repository, zone)
+        advanceUntilIdle()
+
+        val before = calculateHomeSummary(repository.rows.value, NOW, zone)
+        assertEquals(0L, before.expenseMinor)
+        assertEquals(1, before.pendingCount)
+
+        viewModel.confirmTransactions(listOf(1L))
+        advanceUntilIdle()
+
+        val after = calculateHomeSummary(repository.rows.value, NOW, zone)
+        assertEquals(1_000L, after.expenseMinor)
+        // 分类还空着，所以横幅上仍然算一笔待分类
+        assertEquals(1, after.pendingCount)
+    }
+
     private fun tx(id: Long) = Transaction(
         id = id,
         amountMinor = 1_000,
@@ -84,9 +131,15 @@ class LedgerBatchDeleteTest {
     private class RecordingRepository(initial: List<Transaction>) : LedgerRepository {
         val rows = MutableStateFlow(initial)
         val deletedIds = mutableListOf<Long>()
+        val savedTransactions = mutableListOf<Transaction>()
 
         override fun observeTransactions(): Flow<List<Transaction>> = rows
-        override suspend fun save(transaction: Transaction): Long = transaction.id
+        override suspend fun save(transaction: Transaction): Long {
+            savedTransactions += transaction
+            rows.value = rows.value.map { if (it.id == transaction.id) transaction else it }
+            return transaction.id
+        }
+
         override suspend fun delete(id: Long) {
             deletedIds += id
             rows.value = rows.value.filterNot { it.id == id }
