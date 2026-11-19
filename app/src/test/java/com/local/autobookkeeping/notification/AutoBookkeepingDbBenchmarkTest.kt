@@ -2,12 +2,14 @@ package com.local.autobookkeeping.notification
 
 import androidx.room.Room
 import com.local.autobookkeeping.data.NotificationSourceSettings
-import com.local.autobookkeeping.data.RoomLedgerRepository
+import com.local.autobookkeeping.data.RoomRecognitionStore
 import com.local.autobookkeeping.data.db.AppDatabase
+import com.local.autobookkeeping.recognition.AutoSavePolicy
+import com.local.autobookkeeping.recognition.MerchantClassifier
+import com.local.autobookkeeping.recognition.RecognitionCoordinator
 import java.io.File
 import java.time.Instant
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -29,7 +31,8 @@ class AutoBookkeepingDbBenchmarkTest {
     fun `notification to database latency`() = runBlocking {
         val app = RuntimeEnvironment.getApplication()
         val database = Room.inMemoryDatabaseBuilder(app, AppDatabase::class.java).build()
-        val repository = RoomLedgerRepository(database)
+        val store = RoomRecognitionStore(database)
+        val coordinator = RecognitionCoordinator(store, AutoSavePolicy { true }, MerchantClassifier(store))
         val settings = object : NotificationSourceSettings {
             override val autoBookkeepingEnabled = MutableStateFlow(true)
             override val wechatEnabled = MutableStateFlow(true)
@@ -37,14 +40,15 @@ class AutoBookkeepingDbBenchmarkTest {
             override val enabledBankPackages = MutableStateFlow(setOf("com.icbc"))
         }
         val router = NotificationRouter(settings)
-        val processor = CandidateProcessor(repository)
+
         val base = Instant.parse("2026-11-19T04:00:00Z")
 
         suspend fun runOnce(index: Int): Boolean {
             val sample = SAMPLES[index % SAMPLES.size]
             val input = NotificationText(sample.first, sample.second, sample.third, base.plusSeconds(index.toLong()))
             val candidate = router.route(input) ?: return false
-            return processor.process(candidate) != null
+            return coordinator.process(candidate.toRecognitionCandidate()) is
+                com.local.autobookkeeping.domain.model.RecognitionOutcome.Saved
         }
 
         try {
@@ -61,8 +65,6 @@ class AutoBookkeepingDbBenchmarkTest {
             val p95 = sorted[(sorted.size * 0.95).toInt()]
             val p99 = sorted[(sorted.size * 0.99).toInt()]
             val mean = sorted.sum() / sorted.size
-            val rows = repository.observeTransactions().first().size
-
             val report = buildString {
                 appendLine("# 自动记账端到端基准（含 SQLite 落库）")
                 appendLine()
@@ -75,12 +77,11 @@ class AutoBookkeepingDbBenchmarkTest {
                 appendLine("| p99 | ${"%.2f".format(p99 / 1_000_000.0)} ms |")
                 appendLine("| 最大 | ${"%.2f".format(sorted.last() / 1_000_000.0)} ms |")
                 appendLine("| 吞吐 | ${"%.0f".format(1_000_000_000.0 / mean.coerceAtLeast(1))} 条/秒 |")
-                appendLine("| 落库总行数 | $rows 行 |")
             }
             val dir = File("build/benchmark").apply { mkdirs() }
             File(dir, "auto-bookkeeping-db-benchmark.md").writeText(report, Charsets.UTF_8)
             File(dir, "auto-bookkeeping-db-benchmark.txt").writeText(
-                "mean=${mean / 1000};p50=${p50 / 1000};p95=${p95 / 1000};p99=${p99 / 1000};max=${sorted.last() / 1000};rows=$rows",
+                "mean=${mean / 1000};p50=${p50 / 1000};p95=${p95 / 1000};p99=${p99 / 1000};max=${sorted.last() / 1000}",
                 Charsets.UTF_8,
             )
             println(report)

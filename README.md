@@ -96,19 +96,20 @@
 
 ## 自动记账效率
 
-通知进来到记账落库分两段：解析（`NotificationRouter` + 三个解析器）和落库（`CandidateProcessor` + Room）。
+通知进来到记账落库走 `NotificationRouter` → `RecognitionCoordinator`（收据去重、时间窗匹配、商户分类、自动保存判定）。
 2026-11-19 的基准（[明细](docs/testing/auto-bookkeeping-benchmark.md)）：
 
 | 阶段 | 平均 | p95 |
 | --- | ---: | ---: |
-| 解析 + 来源闸门 | 28 µs | 47 µs |
-| 解析 + 去重 + 组装 | 35 µs | 69 µs |
-| 到 SQLite 落库 | 1.5 ms | 2.7 ms |
+| 解析 + 协调器（去重 / 匹配 / 分类） | 57 µs | 105 µs |
+| 到 SQLite 落库 | 3.0 ms | 6.6 ms |
 
-一天 200 条通知的 CPU 成本约 7 ms、落库约 0.3 s，速度不是问题。
-真正的瓶颈是「待核对」比例：20 条常规样本只有 3 条能直接入账，因为支付通知通常不带商户名，
-`CandidateProcessor.requiresConfirmation` 会一律降级为待确认。要提高自动入账率，应该做商户规则学习
-（`MerchantRuleEntity` 已有表），而不是放宽解析置信度。
+一天 200 条通知，CPU 约 12 ms、落库约 0.5 s，速度不是问题。
+
+真正的瓶颈是自动入账率：全新安装时 20 条常规通知只有 1 条能自动入账，其余进「待核对」；
+补 3 条商户规则后也只有 3 条。因为 `RecognitionCoordinator.shouldAutoSave` 要求分类非空、
+置信度 ≥80，而分类只能来自商户规则或退款/转账/红包这类事件类型，
+微信、支付宝的支付通知又不带商户名——商户规则只对带「商户：」的那一小部分有效。
 
 复跑：`gradlew.bat :app:testDebugUnitTest --tests "*AutoBookkeeping*Benchmark*"`，
 报告写到 `app/build/benchmark/`。
