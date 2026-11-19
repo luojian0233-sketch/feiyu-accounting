@@ -12,7 +12,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -27,11 +26,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.ui.BOOKKEEPING_ZONE
@@ -50,6 +49,9 @@ fun EntryScreen(
     onConfirmDelete: () -> Unit,
     onDismissDelete: () -> Unit,
     onBack: () -> Unit,
+    keypadOpen: Boolean = false,
+    onKeypadOpenChange: (Boolean) -> Unit = {},
+    onAmountKey: (AmountKey) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val draft = state.draft
@@ -57,267 +59,293 @@ fun EntryScreen(
     val zone = BOOKKEEPING_ZONE
     val dateTime = draft.occurredAt.atZone(zone)
 
-    LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp)
-            .testTag("entry-list"),
-        verticalArrangement = Arrangement.spacedBy(11.dp),
-    ) {
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                TextButton(
-                    onClick = onBack,
-                    modifier = Modifier.testTag("entry-back"),
-                ) { Text("‹ 返回") }
-                Text(
-                    if (draft.id == null) "记一笔" else "编辑记录",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(top = 10.dp),
-                )
-                TextButton(onClick = {}, enabled = false) { Text("　　") }
-            }
-        }
-        if (draft.pendingConfirmation) {
+    Column(modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .testTag("entry-list"),
+            verticalArrangement = Arrangement.spacedBy(11.dp),
+        ) {
             item {
-                Text(
-                    "这是一笔自动识别记录，请核对方向、分类和商户后再确认。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF8A5B00),
-                )
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                DirectionChip(
-                    "支出",
-                    selected = draft.direction == Direction.EXPENSE,
-                ) { onUpdate { it.copy(direction = Direction.EXPENSE) } }
-                DirectionChip(
-                    "收入",
-                    selected = draft.direction == Direction.INCOME,
-                ) { onUpdate { it.copy(direction = Direction.INCOME) } }
-            }
-        }
-        item {
-            OutlinedTextField(
-                value = draft.amountText,
-                onValueChange = { value -> onUpdate { it.copy(amountText = value) } },
-                label = { Text("金额（元）") },
-                leadingIcon = { Text("¥") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                singleLine = true,
-                textStyle = MaterialTheme.typography.titleMedium,
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("amount"),
-            )
-        }
-        item {
-            Surface(
-                onClick = onOpenCategorySelector,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("entry-category-field"),
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-            ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 14.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Text("分类")
-                    Text("${draft.category.ifBlank { "请选择分类" }}  ›")
+                    TextButton(
+                        onClick = onBack,
+                        modifier = Modifier.testTag("entry-back"),
+                    ) { Text("‹ 返回") }
+                    Text(
+                        if (draft.id == null) "记一笔" else "编辑记录",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(top = 10.dp),
+                    )
+                    TextButton(onClick = {}, enabled = false) { Text("　　") }
                 }
             }
-        }
-        item {
-            OutlinedTextField(
-                value = draft.merchant,
-                onValueChange = { value -> onUpdate { it.copy(merchant = value) } },
-                label = { Text("商户") },
-                singleLine = true,
-                textStyle = MaterialTheme.typography.bodyMedium,
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("merchant"),
-            )
-        }
-        item {
-            if (state.configurationManaged) {
-                Text("账户", style = MaterialTheme.typography.labelLarge)
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    item {
-                        FilterChip(
-                            selected = draft.account.isBlank(),
-                            onClick = { onUpdate { it.copy(account = "") } },
-                            label = { Text("未选择") },
-                        )
-                    }
-                    items(
-                        state.accountChoices,
-                        key = { "${it.name}-${it.historicalOnly}" },
-                    ) { account ->
-                        FilterChip(
-                            selected = draft.account == account.name,
-                            onClick = { onUpdate { it.copy(account = account.name) } },
-                            label = {
-                                Text(
-                                    if (account.historicalOnly) {
-                                        "${account.name}（已隐藏/历史）"
-                                    } else {
-                                        account.name
-                                    },
-                                    style = MaterialTheme.typography.labelMedium,
-                                )
-                            },
-                        )
+            if (draft.pendingConfirmation) {
+                item {
+                    Text(
+                        "这是一笔自动识别记录，请核对方向、分类和商户后再确认。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF8A5B00),
+                    )
+                }
+            }
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DirectionChip(
+                        "支出",
+                        selected = draft.direction == Direction.EXPENSE,
+                    ) { onUpdate { it.copy(direction = Direction.EXPENSE) } }
+                    DirectionChip(
+                        "收入",
+                        selected = draft.direction == Direction.INCOME,
+                    ) { onUpdate { it.copy(direction = Direction.INCOME) } }
+                }
+            }
+            item {
+                AmountFieldDisplay(
+                    amountText = draft.amountText,
+                    focused = keypadOpen,
+                    onClick = { onKeypadOpenChange(true) },
+                )
+            }
+            item {
+                Surface(
+                    onClick = {
+                        onKeypadOpenChange(false)
+                        onOpenCategorySelector()
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("entry-category-field"),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text("分类")
+                        Text("${draft.category.ifBlank { "请选择分类" }}  ›")
                     }
                 }
-            } else {
+            }
+            item {
                 OutlinedTextField(
-                    value = draft.account,
-                    onValueChange = { value -> onUpdate { it.copy(account = value) } },
-                    label = { Text("账户") },
+                    value = draft.merchant,
+                    onValueChange = { value -> onUpdate { it.copy(merchant = value) } },
+                    label = { Text("商户") },
                     singleLine = true,
                     textStyle = MaterialTheme.typography.bodyMedium,
                     shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged { if (it.isFocused) onKeypadOpenChange(false) }
+                        .testTag("merchant"),
                 )
             }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AssistChip(
-                    onClick = {
-                        DatePickerDialog(
-                            context,
-                            { _, year, month, day ->
-                                val changed = replaceLocalDate(
-                                    draft.occurredAt,
-                                    LocalDate.of(year, month + 1, day),
-                                )
-                                onUpdate { it.copy(occurredAt = changed) }
-                            },
-                            dateTime.year,
-                            dateTime.monthValue - 1,
-                            dateTime.dayOfMonth,
-                        ).show()
-                    },
-                    label = { Text(dateTime.format(DateTimeFormatter.ofPattern("yyyy年M月d日"))) },
-                    modifier = Modifier.testTag(ENTRY_DATE_TAG),
-                )
-                AssistChip(
-                    onClick = {
-                        TimePickerDialog(
-                            context,
-                            { _, hour, minute ->
-                                onUpdate {
-                                    it.copy(
-                                        occurredAt = dateTime
-                                            .withHour(hour)
-                                            .withMinute(minute)
-                                            .withSecond(0)
-                                            .toInstant(),
+            item {
+                if (state.configurationManaged) {
+                    Text("账户", style = MaterialTheme.typography.labelLarge)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        item {
+                            FilterChip(
+                                selected = draft.account.isBlank(),
+                                onClick = {
+                                    onKeypadOpenChange(false)
+                                    onUpdate { it.copy(account = "") }
+                                },
+                                label = { Text("未选择") },
+                            )
+                        }
+                        items(
+                            state.accountChoices,
+                            key = { "${it.name}-${it.historicalOnly}" },
+                        ) { account ->
+                            FilterChip(
+                                selected = draft.account == account.name,
+                                onClick = {
+                                    onKeypadOpenChange(false)
+                                    onUpdate { it.copy(account = account.name) }
+                                },
+                                label = {
+                                    Text(
+                                        if (account.historicalOnly) {
+                                            "${account.name}（已隐藏/历史）"
+                                        } else {
+                                            account.name
+                                        },
+                                        style = MaterialTheme.typography.labelMedium,
                                     )
-                                }
-                            },
-                            dateTime.hour,
-                            dateTime.minute,
-                            true,
-                        ).show()
-                    },
-                    label = { Text(dateTime.format(DateTimeFormatter.ofPattern("HH:mm"))) },
-                )
-            }
-        }
-        item {
-            OutlinedTextField(
-                value = draft.note,
-                onValueChange = { value -> onUpdate { it.copy(note = value) } },
-                label = { Text("备注") },
-                textStyle = MaterialTheme.typography.bodyMedium,
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Column {
-                    Text("内部转账", style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        "保存记录，但不计入收支统计",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.Gray,
+                                },
+                            )
+                        }
+                    }
+                } else {
+                    OutlinedTextField(
+                        value = draft.account,
+                        onValueChange = { value -> onUpdate { it.copy(account = value) } },
+                        label = { Text("账户") },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onFocusChanged { if (it.isFocused) onKeypadOpenChange(false) },
                     )
                 }
-                Switch(
-                    checked = draft.internalTransfer,
-                    onCheckedChange = { checked -> onUpdate { it.copy(internalTransfer = checked) } },
-                )
             }
-        }
-        if (state.error != null) {
             item {
-                Text(
-                    state.error,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.testTag("entry-error"),
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AssistChip(
+                        onClick = {
+                            onKeypadOpenChange(false)
+                            DatePickerDialog(
+                                context,
+                                { _, year, month, day ->
+                                    val changed = replaceLocalDate(
+                                        draft.occurredAt,
+                                        LocalDate.of(year, month + 1, day),
+                                    )
+                                    onUpdate { it.copy(occurredAt = changed) }
+                                },
+                                dateTime.year,
+                                dateTime.monthValue - 1,
+                                dateTime.dayOfMonth,
+                            ).show()
+                        },
+                        label = { Text(dateTime.format(DateTimeFormatter.ofPattern("yyyy年M月d日"))) },
+                        modifier = Modifier.testTag(ENTRY_DATE_TAG),
+                    )
+                    AssistChip(
+                        onClick = {
+                            onKeypadOpenChange(false)
+                            TimePickerDialog(
+                                context,
+                                { _, hour, minute ->
+                                    onUpdate {
+                                        it.copy(
+                                            occurredAt = dateTime
+                                                .withHour(hour)
+                                                .withMinute(minute)
+                                                .withSecond(0)
+                                                .toInstant(),
+                                        )
+                                    }
+                                },
+                                dateTime.hour,
+                                dateTime.minute,
+                                true,
+                            ).show()
+                        },
+                        label = { Text(dateTime.format(DateTimeFormatter.ofPattern("HH:mm"))) },
+                    )
+                }
+            }
+            item {
+                OutlinedTextField(
+                    value = draft.note,
+                    onValueChange = { value -> onUpdate { it.copy(note = value) } },
+                    label = { Text("备注") },
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged { if (it.isFocused) onKeypadOpenChange(false) },
                 )
             }
-        }
-        item {
-            Button(
-                onClick = { onSave(false) },
-                enabled = !state.saving && !state.deleting,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-            ) {
-                Text(
-                    when {
-                        state.saving -> "正在保存…"
-                        draft.id == null -> "保存记录"
-                        else -> "保存修改"
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column {
+                        Text("内部转账", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "保存记录，但不计入收支统计",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray,
+                        )
+                    }
+                    Switch(
+                        checked = draft.internalTransfer,
+                        onCheckedChange = { checked ->
+                            onKeypadOpenChange(false)
+                            onUpdate { it.copy(internalTransfer = checked) }
+                        },
+                    )
+                }
+            }
+            if (state.error != null) {
+                item {
+                    Text(
+                        state.error,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.testTag("entry-error"),
+                    )
+                }
+            }
+            item {
+                Button(
+                    onClick = {
+                        onKeypadOpenChange(false)
+                        onSave(false)
                     },
-                )
-            }
-        }
-        if (draft.pendingConfirmation) {
-            item {
-                OutlinedButton(
-                    onClick = { onSave(true) },
-                    enabled = !state.saving,
+                    enabled = !state.saving && !state.deleting,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(14.dp),
                 ) {
-                    Text("确认并保存")
+                    Text(
+                        when {
+                            state.saving -> "正在保存…"
+                            draft.id == null -> "保存记录"
+                            else -> "保存修改"
+                        },
+                    )
+                }
+            }
+            if (draft.pendingConfirmation) {
+                item {
+                    OutlinedButton(
+                        onClick = {
+                            onKeypadOpenChange(false)
+                            onSave(true)
+                        },
+                        enabled = !state.saving,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                    ) {
+                        Text("确认并保存")
+                    }
+                }
+            }
+            if (draft.id != null) {
+                item {
+                    TextButton(
+                        onClick = onRequestDelete,
+                        enabled = !state.deleting,
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(if (state.deleting) "正在删除…" else "删除记录")
+                    }
                 }
             }
         }
-        if (draft.id != null) {
-            item {
-                TextButton(
-                    onClick = onRequestDelete,
-                    enabled = !state.deleting,
-                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(if (state.deleting) "正在删除…" else "删除记录")
-                }
-            }
-        }
+
+        AmountKeypad(
+            visible = keypadOpen,
+            onKey = onAmountKey,
+            onDone = { onKeypadOpenChange(false) },
+        )
     }
 
     if (state.showDeleteConfirmation) {

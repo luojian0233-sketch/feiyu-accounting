@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringSetPreferencesKey
+import com.local.autobookkeeping.ui.theme.DEFAULT_THEME_STYLE
 import com.local.autobookkeeping.ui.theme.ThemeStyle
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.CancellationException
@@ -111,11 +112,11 @@ class SettingsRepositoryTest {
         }
 
     @Test
-    fun `theme defaults to clear mint and survives repository recreation`() = runTest {
+    fun `theme defaults to fatty fish and survives repository recreation`() = runTest {
         val preferences = InMemorySettingsPreferenceStore()
 
         assertEquals(
-            ThemeStyle.CLEAR_MINT,
+            ThemeStyle.FATTY_FISH,
             SettingsRepository(preferences, InMemoryLocalSettingsStore()).theme.first(),
         )
 
@@ -297,7 +298,7 @@ private class InMemorySettingsPreferenceStore : SettingsPreferenceStore {
     override val wechatEnabled = MutableStateFlow(false)
     override val alipayEnabled = MutableStateFlow(false)
     override val enabledBankPackages = MutableStateFlow<Set<String>>(emptySet())
-    override val theme = MutableStateFlow(ThemeStyle.CLEAR_MINT)
+    override val theme = MutableStateFlow(DEFAULT_THEME_STYLE)
 
     override suspend fun setWechatEnabled(enabled: Boolean) {
         wechatEnabled.value = enabled

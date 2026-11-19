@@ -46,6 +46,7 @@ import com.local.autobookkeeping.data.SettingsOperations
 import com.local.autobookkeeping.backup.BackupOperations
 import com.local.autobookkeeping.ui.entry.CategorySelectorScreen
 import com.local.autobookkeeping.ui.entry.EntryScreen
+import com.local.autobookkeeping.ui.entry.applyAmountKey
 import com.local.autobookkeeping.ui.entry.EntryViewModel
 import com.local.autobookkeeping.ui.entry.defaultEntryCategoryChoices
 import com.local.autobookkeeping.ui.home.HomeScreen
@@ -65,6 +66,7 @@ import com.local.autobookkeeping.ui.settings.SettingsScreen
 import com.local.autobookkeeping.ui.settings.SettingsUiState
 import com.local.autobookkeeping.ui.settings.SettingsViewModel
 import com.local.autobookkeeping.ui.theme.AppBottomBar
+import com.local.autobookkeeping.ui.theme.DEFAULT_THEME_STYLE
 import com.local.autobookkeeping.ui.theme.AutoBookkeepingTheme
 import com.local.autobookkeeping.ui.theme.ThemeStyle
 import com.local.autobookkeeping.recognition.tile.TileAddResult
@@ -211,7 +213,10 @@ internal fun AutoBookkeepingRoot(
     val navigator = rememberSaveable(saver = AppNavigator.Saver) { AppNavigator() }
     val current = navigator.current
     var categorySelectorOpen by rememberSaveable { mutableStateOf(false) }
+    var amountKeypadOpen by rememberSaveable { mutableStateOf(false) }
     val isCategorySelector = current == AppDestination.ENTRY && categorySelectorOpen
+    // 局内键盘展开时让位给键盘，底栏收起
+    val isAmountKeypadOpen = current == AppDestination.ENTRY && amountKeypadOpen
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val automaticAccess = automaticBookkeepingAccess
@@ -307,9 +312,9 @@ internal fun AutoBookkeepingRoot(
         ?: SettingsUiState()
     val themeStyle = settingsRepository
         ?.theme
-        ?.collectAsStateWithLifecycle(initialValue = ThemeStyle.CLEAR_MINT)
+        ?.collectAsStateWithLifecycle(initialValue = DEFAULT_THEME_STYLE)
         ?.value
-        ?: ThemeStyle.CLEAR_MINT
+        ?: DEFAULT_THEME_STYLE
     val mainLaunchState = mainLaunchViewModel
         ?.state
         ?.collectAsStateWithLifecycle()
@@ -360,6 +365,7 @@ internal fun AutoBookkeepingRoot(
     LaunchedEffect(current) {
         if (current != AppDestination.ENTRY) {
             categorySelectorOpen = false
+            amountKeypadOpen = false
         }
     }
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -379,10 +385,12 @@ internal fun AutoBookkeepingRoot(
     }
     val activeReview = mainLaunchState as? MainLaunchUiState.Review
     BackHandler(
-        enabled = activeReview == null && (isCategorySelector || navigator.canHandleBack),
+        enabled = activeReview == null &&
+            (isCategorySelector || isAmountKeypadOpen || navigator.canHandleBack),
     ) {
         when {
             isCategorySelector -> categorySelectorOpen = false
+            isAmountKeypadOpen -> amountKeypadOpen = false
             navigator.isStatisticsDrilldownActive && current == AppDestination.LEDGER -> {
                 ledgerViewModel.closeStatisticsDrilldown()
                 navigator.handleBack()
@@ -412,11 +420,12 @@ internal fun AutoBookkeepingRoot(
             containerColor = MaterialTheme.colorScheme.background,
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
-                if (!isCategorySelector) {
+                if (!isCategorySelector && !isAmountKeypadOpen) {
                     AppBottomBar(
                         current = current,
                         onSelect = { destination ->
                             categorySelectorOpen = false
+                            amountKeypadOpen = false
                             if (
                                 navigator.isStatisticsDrilldownActive &&
                                 destination != AppDestination.ENTRY
@@ -492,7 +501,10 @@ internal fun AutoBookkeepingRoot(
                             EntryScreen(
                                 state = entryState,
                                 onUpdate = entryViewModel::update,
-                                onOpenCategorySelector = { categorySelectorOpen = true },
+                                onOpenCategorySelector = {
+                                    amountKeypadOpen = false
+                                    categorySelectorOpen = true
+                                },
                                 onSave = { confirm ->
                                     scope.launch {
                                         if (entryViewModel.save(confirmPending = confirm).isSuccess) {
@@ -517,6 +529,13 @@ internal fun AutoBookkeepingRoot(
                                     }
                                 },
                                 onDismissDelete = entryViewModel::dismissDelete,
+                                keypadOpen = amountKeypadOpen,
+                                onKeypadOpenChange = { amountKeypadOpen = it },
+                                onAmountKey = { key ->
+                                    entryViewModel.update {
+                                        it.copy(amountText = applyAmountKey(it.amountText, key))
+                                    }
+                                },
                                 onBack = {
                                     categorySelectorOpen = false
                                     navigator.handleBack()

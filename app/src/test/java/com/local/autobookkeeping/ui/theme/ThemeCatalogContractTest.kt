@@ -14,8 +14,8 @@ class ThemeCatalogContractTest {
     }
 
     @Test
-    fun `default theme stays clear mint`() {
-        assertEquals(ThemeStyle.CLEAR_MINT, ThemeStyle.entries.first())
+    fun `default theme is fatty fish`() {
+        assertEquals(ThemeStyle.FATTY_FISH, DEFAULT_THEME_STYLE)
     }
 
     @Test

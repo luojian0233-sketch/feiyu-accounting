@@ -32,6 +32,9 @@ enum class ThemeStyle {
     FATTY_FISH,
 }
 
+/** 首次安装、以及还没存过偏好时的默认皮肤：蓝色肥鱼。 */
+val DEFAULT_THEME_STYLE = ThemeStyle.FATTY_FISH
+
 /** 首页头卡的装饰语言，每套皮肤一种。 */
 enum class HeaderDecor {
     MINT_SPROUT,

@@ -19,7 +19,6 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
-import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.espresso.Espresso.onView
@@ -29,7 +28,10 @@ import androidx.test.espresso.action.ViewActions.click
 import androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom
 import androidx.test.espresso.matcher.ViewMatchers.withId
 import com.local.autobookkeeping.ui.BOOKKEEPING_ZONE
+import com.local.autobookkeeping.ui.entry.AMOUNT_FIELD_TAG
+import com.local.autobookkeeping.ui.entry.AMOUNT_KEYPAD_TAG
 import com.local.autobookkeeping.ui.entry.ENTRY_DATE_TAG
+import com.local.autobookkeeping.ui.entry.KEYPAD_DONE_TAG
 import com.local.autobookkeeping.ui.ledger.LEDGER_LIST_TAG
 import com.local.autobookkeeping.ui.statistics.STATISTICS_LIST_TAG
 import com.local.autobookkeeping.ui.statistics.STATISTICS_TOTAL_TAG
@@ -117,7 +119,7 @@ class EndToEndTest {
         if (income) {
             compose.onNodeWithText("收入").performClick()
         }
-        compose.onNodeWithTag("amount").performTextInput(amount)
+        typeAmount(amount)
         setEntryDate(date)
         compose.onNodeWithTag("entry-category-field").performScrollTo().performClick()
         compose.onNodeWithTag("category-grid").assertIsDisplayed()
@@ -133,6 +135,17 @@ class EndToEndTest {
         }
         compose.onNodeWithText("保存记录").performScrollTo().performClick()
         waitForTag("screen-账单", "保存 $amount 后返回账单")
+    }
+
+    /** 金额走局内键盘：点金额框唤出，再逐位点按键，最后「完成」收起。 */
+    private fun typeAmount(amount: String) {
+        compose.onNodeWithTag(AMOUNT_FIELD_TAG).performClick()
+        compose.onNodeWithTag(AMOUNT_KEYPAD_TAG).assertIsDisplayed()
+        amount.forEach { symbol ->
+            val tag = if (symbol == '.') "keypad-dot" else "keypad-$symbol"
+            compose.onNodeWithTag(tag).performClick()
+        }
+        compose.onNodeWithTag(KEYPAD_DONE_TAG).performClick()
     }
 
     private fun setEntryDate(date: LocalDate) {

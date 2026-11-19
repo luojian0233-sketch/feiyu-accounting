@@ -9,6 +9,7 @@ import com.local.autobookkeeping.data.CategorySetting
 import com.local.autobookkeeping.data.SettingsOperations
 import com.local.autobookkeeping.data.SettingsValidationException
 import com.local.autobookkeeping.data.isValidBankPackage
+import com.local.autobookkeeping.ui.theme.DEFAULT_THEME_STYLE
 import com.local.autobookkeeping.ui.theme.ThemeStyle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,7 +30,7 @@ fun interface AccessibilityAccessProvider {
 }
 
 data class SettingsUiState(
-    val theme: ThemeStyle = ThemeStyle.CLEAR_MINT,
+    val theme: ThemeStyle = DEFAULT_THEME_STYLE,
     val autoBookkeepingEnabled: Boolean = false,
     val autoSaveHighConfidence: Boolean = true,
     val wechatEnabled: Boolean = false,

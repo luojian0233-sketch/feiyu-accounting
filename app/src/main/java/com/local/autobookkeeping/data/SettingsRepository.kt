@@ -16,6 +16,7 @@ import com.local.autobookkeeping.data.db.AccountEntity
 import com.local.autobookkeeping.data.db.AppDatabase
 import com.local.autobookkeeping.data.db.CategoryEntity
 import com.local.autobookkeeping.data.db.nextDisplayOrder
+import com.local.autobookkeeping.ui.theme.DEFAULT_THEME_STYLE
 import com.local.autobookkeeping.ui.theme.ThemeStyle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -254,7 +255,7 @@ private class DataStoreSettingsPreferenceStore(
         .map { preferences ->
             preferences[THEME_STYLE]
                 ?.let { stored -> ThemeStyle.entries.firstOrNull { it.name == stored } }
-                ?: ThemeStyle.CLEAR_MINT
+                ?: DEFAULT_THEME_STYLE
         }
         .distinctUntilChanged()
 
