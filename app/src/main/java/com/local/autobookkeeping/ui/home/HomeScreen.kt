@@ -71,19 +71,10 @@ fun HomeScreen(
         }
         if (state.summary.pendingCount > 0) {
             item {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(onClick = onOpenPending),
-                    color = Color(0xFFFFF3D8),
-                    shape = RoundedCornerShape(12.dp),
-                ) {
-                    Text(
-                        "${state.summary.pendingCount} 笔自动记录待核对 ›",
-                        modifier = Modifier.padding(12.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
+                PendingBanner(
+                    count = state.summary.pendingCount,
+                    onClick = onOpenPending,
+                )
             }
         }
         if (!state.notificationAccessEnabled) {

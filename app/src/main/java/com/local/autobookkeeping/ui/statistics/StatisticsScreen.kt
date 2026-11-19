@@ -1,9 +1,7 @@
 package com.local.autobookkeeping.ui.statistics
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,7 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -48,6 +46,7 @@ import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.ui.theme.AppCardSurface
 import com.local.autobookkeeping.ui.theme.HeaderPage
 import com.local.autobookkeeping.ui.theme.ThemedHomeHeader
+import com.local.autobookkeeping.ui.theme.skinChartPalette
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -192,9 +191,10 @@ fun StatisticsScreen(
             item {
                 Text("分类排行", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
             }
-            items(state.summary.categories, key = { it.category }) { category ->
+            itemsIndexed(state.summary.categories, key = { _, item -> item.category }) { index, category ->
                 CategoryRow(
                     item = category,
+                    index = index,
                     totalMinor = state.summary.totalMinor,
                     onClick = { onCategoryClick(category) },
                 )
@@ -255,9 +255,11 @@ private fun DirectionChip(direction: Direction, selected: Boolean, onClick: () -
 @Composable
 private fun CategoryRow(
     item: CategoryTotal,
+    index: Int,
     totalMinor: Long,
     onClick: () -> Unit,
 ) {
+    val palette = skinChartPalette
     val percentage = item.amountMinor.toDouble() / totalMinor.toDouble() * 100.0
     AppCardSurface(
         modifier = Modifier
@@ -269,11 +271,7 @@ private fun CategoryRow(
             modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                Modifier
-                    .size(9.dp)
-                    .background(categoryChartColor(item.category), CircleShape),
-            )
+            ChartLegendSwatch(mark = palette.legendMark, color = palette.colorAt(index))
             Text(
                 item.category,
                 style = MaterialTheme.typography.bodyMedium,

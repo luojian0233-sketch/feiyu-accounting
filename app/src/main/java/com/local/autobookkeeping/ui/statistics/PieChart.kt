@@ -1,25 +1,23 @@
 package com.local.autobookkeeping.ui.statistics
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
 import com.local.autobookkeeping.domain.model.CategoryTotal
+import com.local.autobookkeeping.ui.theme.ChartLegendMark
+import com.local.autobookkeeping.ui.theme.appVisualTokens
+import com.local.autobookkeeping.ui.theme.skinChartPalette
 import java.util.Locale
 import kotlin.math.max
-
-private val chartColors = listOf(
-    Color(0xFF23866B),
-    Color(0xFFFFA76C),
-    Color(0xFF5C8FC9),
-    Color(0xFFE06D83),
-    Color(0xFF8B75BF),
-    Color(0xFFE2B84B),
-    Color(0xFF4E9B9B),
-)
 
 data class PieSliceDescriptor(
     val item: CategoryTotal,
@@ -70,11 +68,19 @@ fun pieSliceDescriptors(items: List<CategoryTotal>): List<PieSliceDescriptor> {
     }
 }
 
+/**
+ * 分类占比饼图。
+ *
+ * 颜色跟着皮肤走：按金额降序取色板，所以占比最大的分类永远是该皮肤的主色；
+ * 小票/纸感在切片之间留缺口、纸感还带一圈细墨线外框，肥鱼留白边，薄荷连成一片。
+ */
 @Composable
 fun PieChart(
     items: List<CategoryTotal>,
     modifier: Modifier = Modifier,
 ) {
+    val palette = skinChartPalette
+    val gapColor = appVisualTokens.cardColor
     val descriptors = pieSliceDescriptors(items)
     val description = descriptors.joinToString("；", transform = PieSliceDescriptor::accessibilityText)
     Canvas(
@@ -83,21 +89,69 @@ fun PieChart(
             .semantics { contentDescription = description },
     ) {
         var startAngle = -90f
-        descriptors.forEach { descriptor ->
+        descriptors.forEachIndexed { index, descriptor ->
             val sweep = descriptor.sweepDegrees.toFloat()
-            drawArc(
-                color = categoryChartColor(descriptor.item.category),
-                startAngle = startAngle,
-                sweepAngle = sweep,
-                useCenter = true,
-            )
+            if (sweep > 0f) {
+                drawArc(
+                    color = palette.colorAt(index),
+                    startAngle = startAngle,
+                    sweepAngle = sweep,
+                    useCenter = true,
+                )
+                if (palette.sliceGapDegrees > 0f && sweep > palette.sliceGapDegrees * 2f) {
+                    // 缺口用卡片底色补，看起来就是从"纸"里切开的
+                    drawArc(
+                        color = gapColor,
+                        startAngle = startAngle + sweep - palette.sliceGapDegrees,
+                        sweepAngle = palette.sliceGapDegrees,
+                        useCenter = true,
+                    )
+                }
+            }
             startAngle += sweep
+        }
+        palette.rimColor?.let { rim ->
+            val stroke = 1.dp.toPx()
+            drawCircle(
+                color = rim,
+                radius = size.minDimension / 2f - stroke / 2f,
+                style = Stroke(stroke),
+            )
         }
     }
 }
 
-fun categoryChartColor(category: String): Color =
-    chartColors[Math.floorMod(category.hashCode(), chartColors.size)]
+/** 图例色块：圆点 / 方块 / 短墨线 / 像素块，跟皮肤语言一致。 */
+@Composable
+fun ChartLegendSwatch(
+    mark: ChartLegendMark,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    val side = if (mark == ChartLegendMark.RULE) 12.dp else 9.dp
+    Canvas(modifier.size(side)) {
+        when (mark) {
+            ChartLegendMark.CIRCLE -> drawCircle(color, radius = size.minDimension / 2f)
+
+            ChartLegendMark.SQUARE -> drawRect(color, size = Size(size.width, size.height))
+
+            ChartLegendMark.RULE -> drawRect(
+                color = color,
+                topLeft = Offset(0f, (size.height - 2.dp.toPx()) / 2f),
+                size = Size(size.width, 2.dp.toPx()),
+            )
+
+            ChartLegendMark.PIXEL -> {
+                drawRect(color, size = Size(size.width, size.height))
+                // 左上角一道浅色高光，读起来才像像素块而不是纯色方块
+                drawRect(
+                    color = Color.White.copy(alpha = 0.35f),
+                    size = Size(size.width * 0.42f, size.height * 0.42f),
+                )
+            }
+        }
+    }
+}
 
 internal fun formatUnsignedMoney(amountMinor: Long): String =
     "${amountMinor / 100}.${(amountMinor % 100).toString().padStart(2, '0')}"
