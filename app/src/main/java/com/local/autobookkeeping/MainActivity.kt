@@ -55,6 +55,8 @@ import com.local.autobookkeeping.ui.home.HomeScreen
 import com.local.autobookkeeping.ui.home.HomeViewModel
 import com.local.autobookkeeping.data.update.AppVersion
 import com.local.autobookkeeping.data.update.GithubUpdateChecker
+import com.local.autobookkeeping.data.update.ApkVerifier
+import com.local.autobookkeeping.data.update.HttpApkDownloader
 import com.local.autobookkeeping.data.update.LocalApkInstaller
 import com.local.autobookkeeping.ui.home.NotificationPermissionProvider
 import com.local.autobookkeeping.ui.ledger.LedgerScreen
@@ -277,6 +279,8 @@ internal fun AutoBookkeepingRoot(
                 },
                 backupOperations = backupOperations,
                 updateChecker = GithubUpdateChecker(BuildConfig.UPDATE_REPO),
+                apkDownloader = HttpApkDownloader(context.cacheDir),
+                apkVerifier = ApkVerifier { apk -> LocalApkInstaller.verify(context, apk) },
                 currentVersion = AppVersion(
                     name = BuildConfig.VERSION_NAME,
                     code = BuildConfig.VERSION_CODE,
@@ -727,6 +731,30 @@ internal fun AutoBookkeepingRoot(
                                 settingsViewModel.dismissBackupRestore()
                             },
                             onCheckUpdate = settingsViewModel::checkForUpdate,
+                            onDownloadAndInstall = { url ->
+                                if (LocalApkInstaller.canInstallPackages(context)) {
+                                    settingsViewModel.downloadAndInstall(url)
+                                } else {
+                                    settingsViewModel.reportInstallPermissionRequired()
+                                    runCatching {
+                                        context.startActivity(
+                                            LocalApkInstaller.unknownSourcesSettingsIntent(context),
+                                        )
+                                    }
+                                }
+                            },
+                            onInstallApk = { path ->
+                                val started = runCatching {
+                                    context.startActivity(
+                                        LocalApkInstaller.installIntent(context, java.io.File(path)),
+                                    )
+                                }.isSuccess
+                                if (started) {
+                                    settingsViewModel.clearInstallState()
+                                } else {
+                                    settingsViewModel.reportInstallLaunchFailure()
+                                }
+                            },
                             onOpenDownload = { url ->
                                 if (!openInBrowser(context, url)) {
                                     settingsViewModel.reportDownloadLaunchFailure()

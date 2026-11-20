@@ -9,7 +9,10 @@ import com.local.autobookkeeping.data.CategorySetting
 import com.local.autobookkeeping.data.SettingsOperations
 import com.local.autobookkeeping.data.SettingsValidationException
 import com.local.autobookkeeping.data.isValidBankPackage
+import com.local.autobookkeeping.data.update.ApkDownloader
+import com.local.autobookkeeping.data.update.ApkVerifier
 import com.local.autobookkeeping.data.update.AppVersion
+import com.local.autobookkeeping.data.update.LocalApkInstaller
 import com.local.autobookkeeping.data.update.UpdateCheckResult
 import com.local.autobookkeeping.data.update.UpdateChecker
 import com.local.autobookkeeping.data.update.UpdateSourceNotConfiguredException
@@ -58,6 +61,7 @@ data class SettingsUiState(
     val currentVersionCode: Int = 0,
     val updateState: UpdateCheckState = UpdateCheckState.Idle,
     val localUpdate: LocalUpdateState = LocalUpdateState.Idle,
+    val install: UpdateInstallState = UpdateInstallState.Idle,
 )
 
 /** 检查更新是低频操作，状态就这么几种，用密封接口比一串布尔值清楚。 */
@@ -77,6 +81,29 @@ sealed interface UpdateCheckState {
 
     /** 还没在 gradle.properties 里填 appUpdateRepo。 */
     data object Unconfigured : UpdateCheckState
+}
+
+/**
+ * 「应用内下载并安装」的进度：下载百分比 → 校验 → 交给系统安装器。
+ */
+sealed interface UpdateInstallState {
+    data object Idle : UpdateInstallState
+
+    data class Downloading(val percent: Int) : UpdateInstallState
+
+    data object Verifying : UpdateInstallState
+
+    /** 校验通过，等界面把 [apkPath] 交给系统安装器。 */
+    data class Ready(
+        val versionName: String,
+        val versionCode: Int,
+        val apkPath: String,
+    ) : UpdateInstallState
+
+    data class Failed(val message: String) : UpdateInstallState
+
+    /** 还没给「安装未知应用」权限。 */
+    data object PermissionRequired : UpdateInstallState
 }
 
 /**
@@ -109,6 +136,8 @@ class SettingsViewModel(
         false
     },
     private val updateChecker: UpdateChecker? = null,
+    private val apkDownloader: ApkDownloader? = null,
+    private val apkVerifier: ApkVerifier? = null,
     private val currentVersion: AppVersion = AppVersion(name = "", code = 0),
     // 保持在最后一个位置参数：大量测试用 `SettingsViewModel(repo) { ... }` 的尾随 lambda 形式。
     private val notificationAccess: NotificationAccessProvider,
@@ -200,6 +229,75 @@ class SettingsViewModel(
                 ),
             )
         }
+    }
+
+    /**
+     * 应用内更新：下载 → 校验 → 交给系统安装器。
+     *
+     * 下载走 [ApkDownloader]，写进应用私有缓存；校验复用 [LocalApkInstaller] 的三道闸，
+     * 校验不过的包直接删掉，不会留在手机里占地方。
+     */
+    fun downloadAndInstall(downloadUrl: String) {
+        val downloader = apkDownloader
+        val verifier = apkVerifier
+        if (downloader == null || verifier == null) {
+            mutableState.value = mutableState.value.copy(
+                install = UpdateInstallState.Failed("当前版本不支持应用内下载，请用浏览器下载"),
+            )
+            return
+        }
+        if (mutableState.value.install is UpdateInstallState.Downloading) return
+        mutableState.value = mutableState.value.copy(
+            install = UpdateInstallState.Downloading(0),
+        )
+        viewModelScope.launch {
+            val apk = downloader.download(downloadUrl) { percent ->
+                mutableState.value = mutableState.value.copy(
+                    install = UpdateInstallState.Downloading(percent),
+                )
+            }.getOrElse { failure ->
+                mutableState.value = mutableState.value.copy(
+                    install = UpdateInstallState.Failed(
+                        "下载失败：${failure.message ?: "网络异常"}",
+                    ),
+                )
+                return@launch
+            }
+            mutableState.value = mutableState.value.copy(install = UpdateInstallState.Verifying)
+            mutableState.value = mutableState.value.copy(
+                install = when (val prepared = verifier.verify(apk)) {
+                    is LocalApkInstaller.Prepared.Installable -> UpdateInstallState.Ready(
+                        versionName = prepared.versionName,
+                        versionCode = prepared.versionCode,
+                        apkPath = prepared.apk.absolutePath,
+                    )
+
+                    is LocalApkInstaller.Prepared.Rejected ->
+                        UpdateInstallState.Failed(prepared.message)
+
+                    is LocalApkInstaller.Prepared.Failed ->
+                        UpdateInstallState.Failed(prepared.message)
+                },
+            )
+        }
+    }
+
+    /** 调起安装器失败（系统里没有安装器组件）。 */
+    fun reportInstallLaunchFailure() {
+        mutableState.value = mutableState.value.copy(
+            install = UpdateInstallState.Failed("没有找到能安装 APK 的系统组件"),
+        )
+    }
+
+    /** 安装器已经拉起来，清掉进度，免得界面一直停在「正在安装」。 */
+    fun clearInstallState() {
+        mutableState.value = mutableState.value.copy(install = UpdateInstallState.Idle)
+    }
+
+    fun reportInstallPermissionRequired() {
+        mutableState.value = mutableState.value.copy(
+            install = UpdateInstallState.PermissionRequired,
+        )
     }
 
     fun refreshAutomaticAccess() {

@@ -26,6 +26,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -73,8 +74,10 @@ fun SettingsScreen(
     onConfirmBackupRestore: () -> Unit,
     onDismissBackupRestore: () -> Unit,
     onCheckUpdate: () -> Unit = {},
+    onDownloadAndInstall: (String) -> Unit = {},
     onOpenDownload: (String) -> Unit = {},
     onPickLocalApk: () -> Unit = {},
+    onInstallApk: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var newCategory by rememberSaveable { mutableStateOf("") }
@@ -83,6 +86,14 @@ fun SettingsScreen(
     var accountToRename by rememberSaveable { mutableStateOf<Long?>(null) }
     var showAutomaticSettings by rememberSaveable { mutableStateOf(false) }
     var showCategorySheet by rememberSaveable { mutableStateOf(false) }
+
+    // 校验通过后把 APK 路径交给外层去调起系统安装器，交完就清状态，避免旋转屏幕重复拉起。
+    val install = state.install
+    LaunchedEffect(install) {
+        if (install is UpdateInstallState.Ready) {
+            onInstallApk(install.apkPath)
+        }
+    }
 
     BackHandler(enabled = showAutomaticSettings) {
         showAutomaticSettings = false
@@ -325,10 +336,13 @@ fun SettingsScreen(
                     ) { Text(if (checking) "检查中…" else "检查更新") }
                     val available = state.updateState as? UpdateCheckState.Available
                     if (available != null) {
+                        val downloading = state.install is UpdateInstallState.Downloading ||
+                            state.install == UpdateInstallState.Verifying
                         Button(
-                            onClick = { onOpenDownload(available.downloadUrl) },
-                            modifier = Modifier.testTag(OPEN_DOWNLOAD_TAG),
-                        ) { Text("去下载") }
+                            onClick = { onDownloadAndInstall(available.downloadUrl) },
+                            enabled = !downloading,
+                            modifier = Modifier.testTag(DOWNLOAD_AND_INSTALL_TAG),
+                        ) { Text(if (downloading) "更新中…" else "下载并安装") }
                     }
                 }
                 updateStateMessage(state.updateState)?.let { message ->
@@ -345,7 +359,27 @@ fun SettingsScreen(
                             .padding(top = 6.dp),
                     )
                 }
-                // 网上下不动的时候还有这条路：手机上任意一个 APK，验完包名与签名直接交给系统装。
+                installStateMessage(state.install)?.let { (message, isError) ->
+                    Text(
+                        message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (isError) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                        modifier = Modifier
+                            .testTag(INSTALL_STATUS_TAG)
+                            .padding(top = 6.dp),
+                    )
+                }
+                (state.updateState as? UpdateCheckState.Available)?.let { available ->
+                    TextButton(
+                        onClick = { onOpenDownload(available.downloadUrl) },
+                        modifier = Modifier.testTag(OPEN_DOWNLOAD_TAG),
+                    ) { Text("改用浏览器下载") }
+                }
+                // 网上下不动的时候还有这条路：手机上任意一个 APK，验完包名与签名直接给系统装。
                 val verifying = state.localUpdate == LocalUpdateState.Verifying
                 OutlinedButton(
                     onClick = onPickLocalApk,
@@ -471,10 +505,23 @@ const val CATEGORY_SHEET_DONE_TAG = "settings-category-sheet-done"
 const val VERSION_CARD_TAG = "settings-version-card"
 const val VERSION_CURRENT_TAG = "settings-version-current"
 const val CHECK_UPDATE_TAG = "settings-check-update"
+const val DOWNLOAD_AND_INSTALL_TAG = "settings-download-and-install"
+const val INSTALL_STATUS_TAG = "settings-install-status"
 const val OPEN_DOWNLOAD_TAG = "settings-open-download"
 const val UPDATE_STATUS_TAG = "settings-update-status"
 const val PICK_LOCAL_APK_TAG = "settings-pick-local-apk"
 const val LOCAL_UPDATE_STATUS_TAG = "settings-local-update-status"
+
+/** 应用内下载安装的提示文案；第二项表示是不是错误。 */
+internal fun installStateMessage(state: UpdateInstallState): Pair<String, Boolean>? = when (state) {
+    UpdateInstallState.Idle -> null
+    is UpdateInstallState.Downloading -> "正在下载 ${state.percent}%…" to false
+    UpdateInstallState.Verifying -> "下载完成，正在校验安装包…" to false
+    is UpdateInstallState.Ready -> "校验通过：${state.versionName}（vc${state.versionCode}）" to false
+    is UpdateInstallState.Failed -> state.message to true
+    UpdateInstallState.PermissionRequired ->
+        "请先允许「肥鱼记账」安装未知来源应用，再回来点一次" to true
+}
 
 /** 本地更新的提示文案；第二项表示是不是错误（决定用红字还是主题色）。 */
 internal fun localUpdateMessage(state: LocalUpdateState): Pair<String, Boolean>? = when (state) {

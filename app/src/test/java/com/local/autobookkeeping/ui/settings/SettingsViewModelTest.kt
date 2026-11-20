@@ -5,7 +5,10 @@ import com.local.autobookkeeping.backup.RestoreResult
 import com.local.autobookkeeping.data.AccountSetting
 import com.local.autobookkeeping.data.CategorySetting
 import com.local.autobookkeeping.data.SettingsOperations
+import com.local.autobookkeeping.data.update.ApkDownloader
+import com.local.autobookkeeping.data.update.ApkVerifier
 import com.local.autobookkeeping.data.update.AppVersion
+import com.local.autobookkeeping.data.update.LocalApkInstaller
 import com.local.autobookkeeping.data.update.LatestRelease
 import com.local.autobookkeeping.data.update.UpdateCheckResult
 import com.local.autobookkeeping.data.update.UpdateChecker
@@ -21,6 +24,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
@@ -501,6 +505,93 @@ class SettingsViewModelTest {
             clearCalls += 1
             if (delayClear) clearRelease.await()
             transactionCount.value = 0
+        }
+    }
+
+
+    @Test
+    fun `download and install walks from progress to a verified package`() = runTest {
+        val viewModel = SettingsViewModel(
+            repository = FakeSettingsOperations(),
+            apkDownloader = FakeApkDownloader(Result.success(File("/cache/update/feiyu-download.apk"))),
+            apkVerifier = ApkVerifier {
+                LocalApkInstaller.Prepared.Installable(it, versionName = "1.3", versionCode = 4, replacesSameVersion = false)
+            },
+            notificationAccess = { true },
+        )
+
+        viewModel.downloadAndInstall("https://example.com/app.apk")
+        advanceUntilIdle()
+
+        val install = viewModel.state.value.install
+        assertInstanceOf(UpdateInstallState.Ready::class.java, install)
+        install as UpdateInstallState.Ready
+        assertEquals("1.3", install.versionName)
+        assertEquals(4, install.versionCode)
+        assertEquals(File("/cache/update/feiyu-download.apk").absolutePath, install.apkPath)
+    }
+
+    @Test
+    fun `download failure is reported as a failed install`() = runTest {
+        val viewModel = SettingsViewModel(
+            repository = FakeSettingsOperations(),
+            apkDownloader = FakeApkDownloader(Result.failure(IOException("HTTP 403"))),
+            apkVerifier = ApkVerifier { error("校验不该被调用") },
+            notificationAccess = { true },
+        )
+
+        viewModel.downloadAndInstall("https://example.com/app.apk")
+        advanceUntilIdle()
+
+        val install = viewModel.state.value.install
+        assertInstanceOf(UpdateInstallState.Failed::class.java, install)
+        assertTrue((install as UpdateInstallState.Failed).message.contains("HTTP 403"))
+    }
+
+    @Test
+    fun `rejected package never reaches the installer`() = runTest {
+        val viewModel = SettingsViewModel(
+            repository = FakeSettingsOperations(),
+            apkDownloader = FakeApkDownloader(Result.success(File("/cache/update/feiyu-download.apk"))),
+            apkVerifier = ApkVerifier {
+                LocalApkInstaller.Prepared.Rejected("安装包签名与已安装版本不一致，无法覆盖安装")
+            },
+            notificationAccess = { true },
+        )
+
+        viewModel.downloadAndInstall("https://example.com/app.apk")
+        advanceUntilIdle()
+
+        val install = viewModel.state.value.install
+        assertInstanceOf(UpdateInstallState.Failed::class.java, install)
+        assertTrue((install as UpdateInstallState.Failed).message.contains("签名"))
+    }
+
+    @Test
+    fun `install state is cleared after the system installer is launched`() = runTest {
+        val viewModel = SettingsViewModel(
+            repository = FakeSettingsOperations(),
+            apkDownloader = FakeApkDownloader(Result.success(File("/cache/update/feiyu-download.apk"))),
+            apkVerifier = ApkVerifier {
+                LocalApkInstaller.Prepared.Installable(it, "1.3", 4, replacesSameVersion = false)
+            },
+            notificationAccess = { true },
+        )
+        viewModel.downloadAndInstall("https://example.com/app.apk")
+        advanceUntilIdle()
+
+        viewModel.clearInstallState()
+
+        assertEquals(UpdateInstallState.Idle, viewModel.state.value.install)
+    }
+
+    private class FakeApkDownloader(
+        private val result: Result<File>,
+        private val progress: List<Int> = listOf(0, 60, 100),
+    ) : ApkDownloader {
+        override suspend fun download(url: String, onProgress: (Int) -> Unit): Result<File> {
+            progress.forEach(onProgress)
+            return result
         }
     }
 

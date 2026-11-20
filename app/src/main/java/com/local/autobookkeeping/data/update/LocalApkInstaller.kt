@@ -10,12 +10,19 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
+/** 把一个已落到本地的 APK 与已安装版本比对，决定能不能装。 */
+fun interface ApkVerifier {
+    fun verify(apk: File): LocalApkInstaller.Prepared
+}
+
 /**
- * 「从本地安装包更新」的执行端。
+ * 装包这一段的公共逻辑：校验磁盘上的 APK，再把它交给系统安装器。
  *
- * 文件选择器给的是 content://，系统安装器只认文件，所以先复制到 `cacheDir/update/`，
- * 校验通过后用 FileProvider 把它换成一个带临时授权的 content:// 交给安装器。
- * 整个流程不需要任何存储权限，也不需要把 APK 落到用户可以长期访问的地方。
+ * 两条路都汇到这里——「应用内下载」拿到的是 [HttpApkDownloader] 写下的缓存文件，
+ * 「从本地安装包更新」拿到的是文件选择器返回的 content://（先复制成文件）。
+ * 系统安装器只认文件，所以两边最后都走 FileProvider 换成一个带临时授权的 content://。
+ *
+ * 全程不申请存储权限：读走 SAF 或应用私有缓存，写出只到 `cache/update/`。
  */
 object LocalApkInstaller {
 
@@ -46,8 +53,31 @@ object LocalApkInstaller {
         Uri.parse("package:${context.packageName}"),
     ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
+    /** 校验一个已经在本地的 APK。下载与选文件两条路共用。 */
+    fun verify(context: Context, apk: File): Prepared {
+        if (!apk.isFile || apk.length() == 0L) {
+            return Prepared.Failed("安装包文件不存在或为空")
+        }
+        val candidate = ApkInspector.inspect(context, apk)
+            ?: return Prepared.Failed("这不像一个完整的 APK 安装包")
+        val installed = ApkInspector.installed(context)
+            ?: return Prepared.Failed("读不到已安装版本的信息")
+        return when (val verdict = judgeLocalApk(candidate, installed)) {
+            is LocalUpdateVerdict.Rejected -> {
+                apk.delete()
+                Prepared.Rejected(verdict.message)
+            }
+            is LocalUpdateVerdict.Installable -> Prepared.Installable(
+                apk = apk,
+                versionName = verdict.versionName,
+                versionCode = verdict.versionCode,
+                replacesSameVersion = verdict.replacesSameVersion,
+            )
+        }
+    }
+
     /**
-     * 把选中的文件复制出 cache，读出包信息并与已安装版本比对。
+     * 把文件选择器选中的文件复制到缓存再校验。
      *
      * 上一轮的包在这里删掉：安装过程中的 APK 一旦被覆盖或删除，系统会直接装失败。
      */
@@ -66,30 +96,7 @@ object LocalApkInstaller {
                     input.use { source ->
                         target.outputStream().use { output -> source.copyTo(output) }
                     }
-                    val candidate = ApkInspector.inspect(context, target)
-                    val installed = ApkInspector.installed(context)
-                    when {
-                        candidate == null -> {
-                            target.delete()
-                            Prepared.Failed("这不像一个完整的 APK 安装包")
-                        }
-                        installed == null -> {
-                            target.delete()
-                            Prepared.Failed("读不到已安装版本的信息")
-                        }
-                        else -> when (val verdict = judgeLocalApk(candidate, installed)) {
-                            is LocalUpdateVerdict.Rejected -> {
-                                target.delete()
-                                Prepared.Rejected(verdict.message)
-                            }
-                            is LocalUpdateVerdict.Installable -> Prepared.Installable(
-                                apk = target,
-                                versionName = verdict.versionName,
-                                versionCode = verdict.versionCode,
-                                replacesSameVersion = verdict.replacesSameVersion,
-                            )
-                        }
-                    }
+                    verify(context, target)
                 }
             }
         } catch (error: Exception) {

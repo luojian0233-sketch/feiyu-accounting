@@ -39,6 +39,8 @@ class SettingsVersionCardTest {
         onCheck: () -> Unit = {},
         onDownload: (String) -> Unit = {},
         onPickLocal: () -> Unit = {},
+        onDownloadAndInstall: (String) -> Unit = {},
+        onInstallApk: (String) -> Unit = {},
     ) {
         compose.setContent {
             SettingsScreen(
@@ -66,8 +68,10 @@ class SettingsVersionCardTest {
                 onConfirmBackupRestore = {},
                 onDismissBackupRestore = {},
                 onCheckUpdate = onCheck,
+                onDownloadAndInstall = onDownloadAndInstall,
                 onOpenDownload = onDownload,
                 onPickLocalApk = onPickLocal,
+                onInstallApk = onInstallApk,
             )
         }
         compose.onNodeWithTag("settings-list").performScrollToNode(hasTestTag(VERSION_CARD_TAG))
@@ -119,6 +123,63 @@ class SettingsVersionCardTest {
         )
 
         compose.onNodeWithTag(CHECK_UPDATE_TAG).assertIsNotEnabled()
+    }
+
+    @Test
+    fun `download and install button starts the in app flow with the asset url`() {
+        var started: String? = null
+        render(
+            state = SettingsUiState(
+                currentVersionName = "1.2",
+                currentVersionCode = 3,
+                updateState = UpdateCheckState.Available(
+                    versionName = "1.3",
+                    downloadUrl = "https://example.com/feiyu-1.3-vc4.apk",
+                    changelog = "",
+                ),
+            ),
+            onDownloadAndInstall = { started = it },
+        )
+
+        compose.onNodeWithTag(DOWNLOAD_AND_INSTALL_TAG).performClick()
+
+        assertEquals("https://example.com/feiyu-1.3-vc4.apk", started)
+    }
+
+    @Test
+    fun `downloading shows progress and locks the button`() {
+        render(
+            state = SettingsUiState(
+                currentVersionName = "1.2",
+                currentVersionCode = 3,
+                updateState = UpdateCheckState.Available(
+                    versionName = "1.3",
+                    downloadUrl = "https://example.com/feiyu-1.3-vc4.apk",
+                    changelog = "",
+                ),
+                install = UpdateInstallState.Downloading(42),
+            ),
+        )
+
+        compose.onNodeWithTag(INSTALL_STATUS_TAG).assertTextContains("42%", substring = true)
+        compose.onNodeWithTag(DOWNLOAD_AND_INSTALL_TAG).assertIsNotEnabled()
+    }
+
+    @Test
+    fun `ready install state hands the apk path to the installer exactly once`() {
+        val paths = mutableListOf<String>()
+        render(
+            state = SettingsUiState(
+                currentVersionName = "1.2",
+                currentVersionCode = 3,
+                install = UpdateInstallState.Ready("1.3", 4, "/cache/update/feiyu-download.apk"),
+            ),
+            onInstallApk = { paths += it },
+        )
+
+        compose.waitForIdle()
+
+        assertEquals(listOf("/cache/update/feiyu-download.apk"), paths)
     }
 
     @Test
