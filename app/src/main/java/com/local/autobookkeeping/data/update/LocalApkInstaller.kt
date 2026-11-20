@@ -6,8 +6,6 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import java.io.File
 
 /** 把一个已落到本地的 APK 与已安装版本比对，决定能不能装。 */
@@ -18,11 +16,10 @@ fun interface ApkVerifier {
 /**
  * 装包这一段的公共逻辑：校验磁盘上的 APK，再把它交给系统安装器。
  *
- * 两条路都汇到这里——「应用内下载」拿到的是 [HttpApkDownloader] 写下的缓存文件，
- * 「从本地安装包更新」拿到的是文件选择器返回的 content://（先复制成文件）。
- * 系统安装器只认文件，所以两边最后都走 FileProvider 换成一个带临时授权的 content://。
+ * 唯一来源是「应用内下载」：[HttpApkDownloader] 把 Release 资产写进 `cache/update/`，
+ * 校验通过后由 FileProvider 换成带临时授权的 content:// 交给系统安装器。
  *
- * 全程不申请存储权限：读走 SAF 或应用私有缓存，写出只到 `cache/update/`。
+ * 全程不申请存储权限：读写都只落在应用私有缓存里。
  */
 object LocalApkInstaller {
 
@@ -53,7 +50,7 @@ object LocalApkInstaller {
         Uri.parse("package:${context.packageName}"),
     ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
-    /** 校验一个已经在本地的 APK。下载与选文件两条路共用。 */
+    /** 校验一个已经在本地的 APK。 */
     fun verify(context: Context, apk: File): Prepared {
         if (!apk.isFile || apk.length() == 0L) {
             return Prepared.Failed("安装包文件不存在或为空")
@@ -73,34 +70,6 @@ object LocalApkInstaller {
                 versionCode = verdict.versionCode,
                 replacesSameVersion = verdict.replacesSameVersion,
             )
-        }
-    }
-
-    /**
-     * 把文件选择器选中的文件复制到缓存再校验。
-     *
-     * 上一轮的包在这里删掉：安装过程中的 APK 一旦被覆盖或删除，系统会直接装失败。
-     */
-    suspend fun prepare(context: Context, uri: Uri): Prepared = withContext(Dispatchers.IO) {
-        try {
-            val directory = File(context.cacheDir, "update")
-            directory.listFiles()?.forEach { it.delete() }
-            if (!directory.exists() && !directory.mkdirs()) {
-                Prepared.Failed("无法创建缓存目录")
-            } else {
-                val target = File(directory, "feiyu-local-update.apk")
-                val input = context.contentResolver.openInputStream(uri)
-                if (input == null) {
-                    Prepared.Failed("无法打开所选文件")
-                } else {
-                    input.use { source ->
-                        target.outputStream().use { output -> source.copyTo(output) }
-                    }
-                    verify(context, target)
-                }
-            }
-        } catch (error: Exception) {
-            Prepared.Failed("读取所选文件失败：${error.message ?: "未知错误"}")
         }
     }
 

@@ -40,9 +40,9 @@ class PrivacyContractTest {
      * 联网能力被有意收窄到「只看版本号」这一件事：只申请 INTERNET，
      * 不申请 ACCESS_NETWORK_STATE、不申请任何存储或读取类的权限。
      *
-     * 唯一的另一项是 REQUEST_INSTALL_PACKAGES：「从本地安装包更新」要把用户自己选的
-     * APK 交给系统安装器，系统要求这个权限。它只开放「调起安装器」，不给任何文件访问能力，
-     * 选文件仍走 SAF，读到的内容也只落到应用私有缓存。
+     * 唯一的另一项是 REQUEST_INSTALL_PACKAGES：「应用内下载并安装」要把自己下到的 APK
+     * 交给系统安装器，系统要求这个权限。它只开放「调起安装器」，不给任何文件访问能力，
+     * 下载与读包都只落在应用私有缓存 `cache/update/`。
      */
     @Test
     fun `manifest keeps network and install permissions to the update path only`() {

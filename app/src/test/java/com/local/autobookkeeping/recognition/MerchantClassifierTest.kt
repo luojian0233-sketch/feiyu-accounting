@@ -60,6 +60,36 @@ class MerchantClassifierTest {
     }
 
     @Test
+    fun `status fragments never reach the merchant rule table`() = runTest {
+        store.visibleCategories += "餐饮"
+        // 就算规则表里已经有这条脏规则（老版本写下的），也不能让它生效。
+        store.rule = MerchantRuleMatch("支付成功", "餐饮", null, priority = 0)
+
+        val classification = classifier.classify(telecomCandidate(merchant = "支付成功"))
+
+        assertNull(store.lastRuleLookup)
+        assertNull(classification.category)
+    }
+
+    @Test
+    fun `placeholder names never reach the merchant rule table`() = runTest {
+        store.visibleCategories += "餐饮"
+        store.rule = MerchantRuleMatch("其他", "餐饮", null, priority = 0)
+
+        assertNull(classifier.classify(telecomCandidate(merchant = "其他")).category)
+        assertNull(store.lastRuleLookup)
+    }
+
+    @Test
+    fun `real merchants still use their remembered rule`() = runTest {
+        store.visibleCategories += "餐饮"
+        store.rule = MerchantRuleMatch("星巴克", "餐饮", "零钱", priority = 0)
+
+        assertEquals("餐饮", classifier.classify(telecomCandidate(merchant = " 星巴克 ")).category)
+        assertEquals("星巴克", store.lastRuleLookup)
+    }
+
+    @Test
     fun `event categories are used only when visible`() = runTest {
         store.visibleCategories += setOf("退款", "红包")
 

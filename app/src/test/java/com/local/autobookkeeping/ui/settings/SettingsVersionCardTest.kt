@@ -38,7 +38,6 @@ class SettingsVersionCardTest {
         state: SettingsUiState,
         onCheck: () -> Unit = {},
         onDownload: (String) -> Unit = {},
-        onPickLocal: () -> Unit = {},
         onDownloadAndInstall: (String) -> Unit = {},
         onInstallApk: (String) -> Unit = {},
     ) {
@@ -70,7 +69,6 @@ class SettingsVersionCardTest {
                 onCheckUpdate = onCheck,
                 onDownloadAndInstall = onDownloadAndInstall,
                 onOpenDownload = onDownload,
-                onPickLocalApk = onPickLocal,
                 onInstallApk = onInstallApk,
             )
         }
@@ -182,39 +180,12 @@ class SettingsVersionCardTest {
         assertEquals(listOf("/cache/update/feiyu-download.apk"), paths)
     }
 
-    @Test
-    fun `version card offers a local apk path next to the online one`() {
-        var picked = false
-        render(
-            state = SettingsUiState(currentVersionName = "1.0", currentVersionCode = 1),
-            onPickLocal = { picked = true },
-        )
-
-        compose.onNodeWithTag(PICK_LOCAL_APK_TAG).performClick()
-
-        assertTrue(picked)
-    }
-
-    @Test
-    fun `rejected local package explains why above the button`() {
-        render(
-            state = SettingsUiState(
-                currentVersionName = "1.0",
-                currentVersionCode = 1,
-                localUpdate = LocalUpdateState.Rejected("安装包签名与已安装版本不一致，无法覆盖安装"),
-            ),
-        )
-
-        compose.onNodeWithTag(LOCAL_UPDATE_STATUS_TAG)
-            .assertTextContains("签名", substring = true)
-    }
-
     /**
-     * 目视验收：版本卡片现在有四行内容（当前版本、两个按钮、说明、状态），
-     * 挤不挤、红字够不够显眼，看截图比读断言快。落 build/screenshots/settings-version-card.png。
+     * 目视验收：版本卡片现在有「当前版本、检查更新、下载并安装、进度提示」几行，
+     * 挤不挤、进度文案够不够清楚，看截图比读断言快。落 build/screenshots/settings-version-card.png。
      */
     @Test
-    fun `version card screenshot shows both update paths`() {
+    fun `version card screenshot shows download progress`() {
         render(
             state = SettingsUiState(
                 currentVersionName = "1.2",
@@ -239,18 +210,5 @@ class SettingsVersionCardTest {
         FileOutputStream(File(directory, "settings-version-card.png")).use {
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
         }
-    }
-
-    @Test
-    fun `verifying local package keeps the button disabled`() {
-        render(
-            state = SettingsUiState(
-                currentVersionName = "1.0",
-                currentVersionCode = 1,
-                localUpdate = LocalUpdateState.Verifying,
-            ),
-        )
-
-        compose.onNodeWithTag(PICK_LOCAL_APK_TAG).assertIsNotEnabled()
     }
 }

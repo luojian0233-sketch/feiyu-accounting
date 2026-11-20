@@ -6,7 +6,6 @@ import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -315,40 +314,6 @@ internal fun AutoBookkeepingRoot(
         if (uri != null && settingsViewModel != null) {
             pendingRestoreUri = uri.toString()
             settingsViewModel.requestBackupRestoreConfirmation()
-        }
-    }
-    // 从本地安装包更新：选文件 → 复制到缓存 → 验包名/签名/版本 → 交给系统安装器。
-    val localApkLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument(),
-    ) { uri ->
-        val viewModel = settingsViewModel
-        if (uri != null && viewModel != null) {
-            viewModel.beginLocalUpdate()
-            scope.launch {
-                when (val prepared = LocalApkInstaller.prepare(context, uri)) {
-                    is LocalApkInstaller.Prepared.Installable -> {
-                        val launched = runCatching {
-                            context.startActivity(
-                                LocalApkInstaller.installIntent(context, prepared.apk),
-                            )
-                        }.isSuccess
-                        if (launched) {
-                            viewModel.reportLocalUpdateReady(
-                                prepared.versionName,
-                                prepared.versionCode,
-                            )
-                        } else {
-                            viewModel.reportLocalUpdateFailure("没有找到能安装 APK 的系统组件")
-                        }
-                    }
-
-                    is LocalApkInstaller.Prepared.Rejected ->
-                        viewModel.reportLocalUpdateRejected(prepared.message)
-
-                    is LocalApkInstaller.Prepared.Failed ->
-                        viewModel.reportLocalUpdateFailure(prepared.message)
-                }
-            }
         }
     }
     val homeState by homeViewModel.state.collectAsStateWithLifecycle()
@@ -760,23 +725,6 @@ internal fun AutoBookkeepingRoot(
                                     settingsViewModel.reportDownloadLaunchFailure()
                                 }
                             },
-                            onPickLocalApk = {
-                                if (LocalApkInstaller.canInstallPackages(context)) {
-                                    localApkLauncher.launch(
-                                        arrayOf(
-                                            LocalApkInstaller.APK_MIME_TYPE,
-                                            "application/octet-stream",
-                                        ),
-                                    )
-                                } else {
-                                    settingsViewModel.reportLocalUpdatePermissionRequired()
-                                    runCatching {
-                                        context.startActivity(
-                                            LocalApkInstaller.unknownSourcesSettingsIntent(context),
-                                        )
-                                    }
-                                }
-                            },
                         )
                     }
                 }
@@ -793,11 +741,10 @@ private fun PlaceholderScreen(text: String) {
 }
 
 /**
- * 网上的新版本交给浏览器下载。
+ * 应用内下载走不通时的兜底：把 Release 页面交给浏览器。
  *
- * App 自己不下载远端 APK、不做断点续传、不常驻下载服务——代价只是用户要多点两下。
- * 另一条路是「从本地安装包更新」：用户自己选手机里的 APK，App 只做复制与校验，
- * 再把文件交给系统安装器（见 [LocalApkInstaller]）。
+ * App 自己的下载器只处理一条直链（页面上那个 APK 资产），不做断点续传、不常驻服务；
+ * GitHub 偶发抽风时，浏览器这条路还能用。
  */
 private fun openInBrowser(context: android.content.Context, url: String): Boolean = try {
     context.startActivity(

@@ -60,7 +60,6 @@ data class SettingsUiState(
     val currentVersionName: String = "",
     val currentVersionCode: Int = 0,
     val updateState: UpdateCheckState = UpdateCheckState.Idle,
-    val localUpdate: LocalUpdateState = LocalUpdateState.Idle,
     val install: UpdateInstallState = UpdateInstallState.Idle,
 )
 
@@ -104,29 +103,6 @@ sealed interface UpdateInstallState {
 
     /** 还没给「安装未知应用」权限。 */
     data object PermissionRequired : UpdateInstallState
-}
-
-/**
- * 「从本地安装包更新」的进度。读包、验签、把文件交给系统安装器都是几秒内的事，
- * 所以没有进度百分比，只有所处阶段和最终结果。
- */
-sealed interface LocalUpdateState {
-    data object Idle : LocalUpdateState
-
-    /** 正在复制并校验选中的安装包。 */
-    data object Verifying : LocalUpdateState
-
-    /** 校验通过，已调起系统安装器。 */
-    data class Ready(val versionName: String, val versionCode: Int) : LocalUpdateState
-
-    /** 包名/签名/版本不满足覆盖安装的条件。 */
-    data class Rejected(val message: String) : LocalUpdateState
-
-    /** 还没给「安装未知应用」权限。 */
-    data object PermissionRequired : LocalUpdateState
-
-    /** 读不到文件、没有安装器之类的意外。 */
-    data class Failed(val message: String) : LocalUpdateState
 }
 
 class SettingsViewModel(
@@ -344,36 +320,6 @@ class SettingsViewModel(
     fun reportDownloadLaunchFailure() {
         mutableState.value = mutableState.value.copy(
             error = "无法打开浏览器，请稍后重试",
-        )
-    }
-
-    /** 用户点了「从本地安装包更新」，等文件选择器返回。 */
-    fun beginLocalUpdate() {
-        mutableState.value = mutableState.value.copy(localUpdate = LocalUpdateState.Verifying)
-    }
-
-    fun reportLocalUpdateReady(versionName: String, versionCode: Int) {
-        mutableState.value = mutableState.value.copy(
-            localUpdate = LocalUpdateState.Ready(versionName, versionCode),
-        )
-    }
-
-    fun reportLocalUpdateRejected(message: String) {
-        mutableState.value = mutableState.value.copy(
-            localUpdate = LocalUpdateState.Rejected(message),
-        )
-    }
-
-    /** 系统还没允许本应用安装未知来源，先把用户送去设置页。 */
-    fun reportLocalUpdatePermissionRequired() {
-        mutableState.value = mutableState.value.copy(
-            localUpdate = LocalUpdateState.PermissionRequired,
-        )
-    }
-
-    fun reportLocalUpdateFailure(message: String) {
-        mutableState.value = mutableState.value.copy(
-            localUpdate = LocalUpdateState.Failed(message),
         )
     }
 

@@ -623,7 +623,11 @@ private fun extractMerchant(
 private fun String.normalizeMerchant(): String? {
     val normalized = trim().replace(WHITESPACE, " ")
     return normalized.takeIf {
-        it.length in 2..64 && it.none(Char::isISOControl) && !CURRENCY_AMOUNT.containsMatchIn(it)
+        it.length in 2..64 &&
+            it.none(Char::isISOControl) &&
+            !CURRENCY_AMOUNT.containsMatchIn(it) &&
+            // 页面上的「支付成功」「已支付」是交易状态，不是收款方。
+            isLearnableMerchant(it)
     }
 }
 

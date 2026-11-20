@@ -1,6 +1,7 @@
 package com.local.autobookkeeping.notification
 
 import com.local.autobookkeeping.domain.model.Direction
+import com.local.autobookkeeping.recognition.isLearnableMerchant
 import java.math.BigDecimal
 import java.security.MessageDigest
 import java.time.Instant
@@ -301,6 +302,8 @@ private fun sameClause(text: String, first: IntRange, second: IntRange): Boolean
 
 private fun extractMerchant(text: String): String? = MERCHANT_PATTERNS.asSequence()
     .mapNotNull { pattern -> pattern.find(text)?.groupValues?.get(1)?.trim() }
+    // 「商户：支付成功」这种把状态词填进商户位的通知真实存在，认出来也别当商户。
+    .filter(::isLearnableMerchant)
     .firstOrNull()
 
 private fun String.rangesOf(keyword: String): List<IntRange> {

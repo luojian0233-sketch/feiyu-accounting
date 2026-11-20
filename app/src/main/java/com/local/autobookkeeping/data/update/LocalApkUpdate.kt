@@ -13,7 +13,7 @@ data class ApkIdentity(
     val signerSha256: String? = null,
 )
 
-/** 本地安装包为什么不能装。 */
+/** 安装包为什么不能装。 */
 enum class LocalUpdateRejection {
     /** 包名不是本应用。 */
     ForeignPackage,

@@ -6,6 +6,7 @@ import com.local.autobookkeeping.data.db.AppDatabase
 import com.local.autobookkeeping.data.db.MerchantRuleEntity
 import com.local.autobookkeeping.data.db.RecognitionReceiptEntity
 import com.local.autobookkeeping.data.db.TransactionDao
+import com.local.autobookkeeping.domain.model.CATEGORY_UNSURE
 import com.local.autobookkeeping.domain.model.CaptureChannel
 import com.local.autobookkeeping.domain.model.Direction
 import com.local.autobookkeeping.domain.model.PaymentPlatform
@@ -13,6 +14,7 @@ import com.local.autobookkeeping.domain.model.RecognitionCandidate
 import com.local.autobookkeeping.domain.model.RecognitionReceipt
 import com.local.autobookkeeping.domain.model.Transaction
 import com.local.autobookkeeping.domain.model.TransactionEventKind
+import com.local.autobookkeeping.recognition.isLearnableMerchant
 import java.time.Instant
 import java.util.Locale
 
@@ -174,7 +176,10 @@ class RoomRecognitionStore(
         account: String?,
     ) {
         val merchantPattern = normalizeMerchant(merchant)
-        if (merchantPattern.isBlank()) return
+        // 「支付成功」「1」「其他」这类抽取残渣不配成为规则：它们不是某家店，
+        // 记下来只会让以后每一笔同款通知都被静默归到这一笔的分类里。
+        if (!isLearnableMerchant(merchantPattern)) return
+        if (category.isBlank() || category == CATEGORY_UNSURE) return
         val existing = dao.findMerchantRuleByPattern(merchantPattern)
         val row = MerchantRuleEntity(
             id = existing?.id ?: 0,
