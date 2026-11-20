@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -38,7 +37,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -245,12 +243,11 @@ private fun CategoryChoiceCell(
             contentAlignment = Alignment.Center,
         ) {
             if (choice.name.trim() == CATEGORY_WHALE_FEED) {
+                // 素材是带透明留白的像素立绘，圆裁会把发梢切掉，直接铺满槽位即可。
                 Image(
                     painter = painterResource(R.drawable.category_whale_feed),
                     contentDescription = null,
-                    modifier = Modifier
-                        .size(24.dp)
-                        .clip(CircleShape),
+                    modifier = Modifier.size(ICON_SLOT_HEIGHT),
                 )
             } else {
                 Text(
