@@ -540,7 +540,7 @@ private fun updateStateMessage(state: UpdateCheckState): String? = when (state) 
     UpdateCheckState.Checking -> "正在检查…"
     UpdateCheckState.UpToDate -> "已是最新版本"
     is UpdateCheckState.Available ->
-        "发现新版本 ${state.versionName}，点击「去下载」在浏览器中打开"
+        "发现新版本 ${state.versionName}，点「下载并安装」直接在应用内更新"
     is UpdateCheckState.Failed -> state.message
     UpdateCheckState.Unconfigured -> "尚未配置更新源（appUpdateRepo）"
 }

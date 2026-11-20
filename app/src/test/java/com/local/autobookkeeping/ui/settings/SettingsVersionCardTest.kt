@@ -219,8 +219,12 @@ class SettingsVersionCardTest {
             state = SettingsUiState(
                 currentVersionName = "1.2",
                 currentVersionCode = 3,
-                updateState = UpdateCheckState.UpToDate,
-                localUpdate = LocalUpdateState.Rejected("安装包比已安装版本更旧（1.1 < 1.2）"),
+                updateState = UpdateCheckState.Available(
+                    versionName = "1.3",
+                    downloadUrl = "https://example.com/feiyu-1.3-vc4.apk",
+                    changelog = "",
+                ),
+                install = UpdateInstallState.Downloading(42),
             ),
         )
 
