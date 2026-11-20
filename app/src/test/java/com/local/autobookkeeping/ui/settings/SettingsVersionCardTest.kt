@@ -1,5 +1,8 @@
 package com.local.autobookkeeping.ui.settings
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
@@ -15,12 +18,16 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+import java.io.File
+import java.io.FileOutputStream
 
 /**
  * 版本卡片压在设置页最末尾，是低频但必须能一眼看懂的东西：
  * 现在装的是哪版、有没有新版、新版在哪下。
  */
 @RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [35], qualifiers = "w411dp-h891dp-xxhdpi")
 class SettingsVersionCardTest {
 
@@ -31,6 +38,7 @@ class SettingsVersionCardTest {
         state: SettingsUiState,
         onCheck: () -> Unit = {},
         onDownload: (String) -> Unit = {},
+        onPickLocal: () -> Unit = {},
     ) {
         compose.setContent {
             SettingsScreen(
@@ -59,6 +67,7 @@ class SettingsVersionCardTest {
                 onDismissBackupRestore = {},
                 onCheckUpdate = onCheck,
                 onOpenDownload = onDownload,
+                onPickLocalApk = onPickLocal,
             )
         }
         compose.onNodeWithTag("settings-list").performScrollToNode(hasTestTag(VERSION_CARD_TAG))
@@ -110,5 +119,73 @@ class SettingsVersionCardTest {
         )
 
         compose.onNodeWithTag(CHECK_UPDATE_TAG).assertIsNotEnabled()
+    }
+
+    @Test
+    fun `version card offers a local apk path next to the online one`() {
+        var picked = false
+        render(
+            state = SettingsUiState(currentVersionName = "1.0", currentVersionCode = 1),
+            onPickLocal = { picked = true },
+        )
+
+        compose.onNodeWithTag(PICK_LOCAL_APK_TAG).performClick()
+
+        assertTrue(picked)
+    }
+
+    @Test
+    fun `rejected local package explains why above the button`() {
+        render(
+            state = SettingsUiState(
+                currentVersionName = "1.0",
+                currentVersionCode = 1,
+                localUpdate = LocalUpdateState.Rejected("安装包签名与已安装版本不一致，无法覆盖安装"),
+            ),
+        )
+
+        compose.onNodeWithTag(LOCAL_UPDATE_STATUS_TAG)
+            .assertTextContains("签名", substring = true)
+    }
+
+    /**
+     * 目视验收：版本卡片现在有四行内容（当前版本、两个按钮、说明、状态），
+     * 挤不挤、红字够不够显眼，看截图比读断言快。落 build/screenshots/settings-version-card.png。
+     */
+    @Test
+    fun `version card screenshot shows both update paths`() {
+        render(
+            state = SettingsUiState(
+                currentVersionName = "1.2",
+                currentVersionCode = 3,
+                updateState = UpdateCheckState.UpToDate,
+                localUpdate = LocalUpdateState.Rejected("安装包比已安装版本更旧（1.1 < 1.2）"),
+            ),
+        )
+
+        val view = compose.activity.findViewById<View>(android.R.id.content)
+        val bitmap = Bitmap.createBitmap(
+            view.width.coerceAtLeast(1),
+            view.height.coerceAtLeast(1),
+            Bitmap.Config.ARGB_8888,
+        )
+        view.draw(Canvas(bitmap))
+        val directory = File("build/screenshots").apply { mkdirs() }
+        FileOutputStream(File(directory, "settings-version-card.png")).use {
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
+        }
+    }
+
+    @Test
+    fun `verifying local package keeps the button disabled`() {
+        render(
+            state = SettingsUiState(
+                currentVersionName = "1.0",
+                currentVersionCode = 1,
+                localUpdate = LocalUpdateState.Verifying,
+            ),
+        )
+
+        compose.onNodeWithTag(PICK_LOCAL_APK_TAG).assertIsNotEnabled()
     }
 }

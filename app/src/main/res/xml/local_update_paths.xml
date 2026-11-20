@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 只对系统安装器开放缓存里的更新包目录。 -->
+<paths>
+    <cache-path
+        name="local_update"
+        path="update/" />
+</paths>

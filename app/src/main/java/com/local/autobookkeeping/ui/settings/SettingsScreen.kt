@@ -74,6 +74,7 @@ fun SettingsScreen(
     onDismissBackupRestore: () -> Unit,
     onCheckUpdate: () -> Unit = {},
     onOpenDownload: (String) -> Unit = {},
+    onPickLocalApk: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var newCategory by rememberSaveable { mutableStateOf("") }
@@ -344,6 +345,35 @@ fun SettingsScreen(
                             .padding(top = 6.dp),
                     )
                 }
+                // 网上下不动的时候还有这条路：手机上任意一个 APK，验完包名与签名直接交给系统装。
+                val verifying = state.localUpdate == LocalUpdateState.Verifying
+                OutlinedButton(
+                    onClick = onPickLocalApk,
+                    enabled = !verifying,
+                    modifier = Modifier
+                        .testTag(PICK_LOCAL_APK_TAG)
+                        .padding(top = 10.dp),
+                ) { Text(if (verifying) "校验中…" else "从本地安装包更新") }
+                Text(
+                    "选手机里下载好的 APK，校验包名与签名后调用系统安装器，不会卸载现有数据。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                localUpdateMessage(state.localUpdate)?.let { (message, isError) ->
+                    Text(
+                        message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (isError) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                        modifier = Modifier
+                            .testTag(LOCAL_UPDATE_STATUS_TAG)
+                            .padding(top = 6.dp),
+                    )
+                }
             }
         }
     }
@@ -443,6 +473,20 @@ const val VERSION_CURRENT_TAG = "settings-version-current"
 const val CHECK_UPDATE_TAG = "settings-check-update"
 const val OPEN_DOWNLOAD_TAG = "settings-open-download"
 const val UPDATE_STATUS_TAG = "settings-update-status"
+const val PICK_LOCAL_APK_TAG = "settings-pick-local-apk"
+const val LOCAL_UPDATE_STATUS_TAG = "settings-local-update-status"
+
+/** 本地更新的提示文案；第二项表示是不是错误（决定用红字还是主题色）。 */
+internal fun localUpdateMessage(state: LocalUpdateState): Pair<String, Boolean>? = when (state) {
+    LocalUpdateState.Idle -> null
+    LocalUpdateState.Verifying -> "正在读取并校验安装包…" to false
+    is LocalUpdateState.Ready ->
+        "已调起系统安装器：${state.versionName}（vc${state.versionCode}），按提示完成覆盖安装" to false
+    is LocalUpdateState.Rejected -> state.message to true
+    LocalUpdateState.PermissionRequired ->
+        "请先允许「肥鱼记账」安装未知来源应用，再回来点一次" to true
+    is LocalUpdateState.Failed -> state.message to true
+}
 
 private fun updateStateMessage(state: UpdateCheckState): String? = when (state) {
     UpdateCheckState.Idle -> null

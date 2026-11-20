@@ -6,6 +6,7 @@ import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -54,6 +55,7 @@ import com.local.autobookkeeping.ui.home.HomeScreen
 import com.local.autobookkeeping.ui.home.HomeViewModel
 import com.local.autobookkeeping.data.update.AppVersion
 import com.local.autobookkeeping.data.update.GithubUpdateChecker
+import com.local.autobookkeeping.data.update.LocalApkInstaller
 import com.local.autobookkeeping.ui.home.NotificationPermissionProvider
 import com.local.autobookkeeping.ui.ledger.LedgerScreen
 import com.local.autobookkeeping.ui.ledger.LedgerViewModel
@@ -309,6 +311,40 @@ internal fun AutoBookkeepingRoot(
         if (uri != null && settingsViewModel != null) {
             pendingRestoreUri = uri.toString()
             settingsViewModel.requestBackupRestoreConfirmation()
+        }
+    }
+    // 从本地安装包更新：选文件 → 复制到缓存 → 验包名/签名/版本 → 交给系统安装器。
+    val localApkLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        val viewModel = settingsViewModel
+        if (uri != null && viewModel != null) {
+            viewModel.beginLocalUpdate()
+            scope.launch {
+                when (val prepared = LocalApkInstaller.prepare(context, uri)) {
+                    is LocalApkInstaller.Prepared.Installable -> {
+                        val launched = runCatching {
+                            context.startActivity(
+                                LocalApkInstaller.installIntent(context, prepared.apk),
+                            )
+                        }.isSuccess
+                        if (launched) {
+                            viewModel.reportLocalUpdateReady(
+                                prepared.versionName,
+                                prepared.versionCode,
+                            )
+                        } else {
+                            viewModel.reportLocalUpdateFailure("没有找到能安装 APK 的系统组件")
+                        }
+                    }
+
+                    is LocalApkInstaller.Prepared.Rejected ->
+                        viewModel.reportLocalUpdateRejected(prepared.message)
+
+                    is LocalApkInstaller.Prepared.Failed ->
+                        viewModel.reportLocalUpdateFailure(prepared.message)
+                }
+            }
         }
     }
     val homeState by homeViewModel.state.collectAsStateWithLifecycle()
@@ -696,6 +732,23 @@ internal fun AutoBookkeepingRoot(
                                     settingsViewModel.reportDownloadLaunchFailure()
                                 }
                             },
+                            onPickLocalApk = {
+                                if (LocalApkInstaller.canInstallPackages(context)) {
+                                    localApkLauncher.launch(
+                                        arrayOf(
+                                            LocalApkInstaller.APK_MIME_TYPE,
+                                            "application/octet-stream",
+                                        ),
+                                    )
+                                } else {
+                                    settingsViewModel.reportLocalUpdatePermissionRequired()
+                                    runCatching {
+                                        context.startActivity(
+                                            LocalApkInstaller.unknownSourcesSettingsIntent(context),
+                                        )
+                                    }
+                                }
+                            },
                         )
                     }
                 }
@@ -712,10 +765,11 @@ private fun PlaceholderScreen(text: String) {
 }
 
 /**
- * 新版本交给浏览器下载。
+ * 网上的新版本交给浏览器下载。
  *
- * App 自己不下载、不持有 APK、不申请安装权限——这条路少掉整套 FileProvider 与
- * 未知来源授权，代价只是用户要多点两下。
+ * App 自己不下载远端 APK、不做断点续传、不常驻下载服务——代价只是用户要多点两下。
+ * 另一条路是「从本地安装包更新」：用户自己选手机里的 APK，App 只做复制与校验，
+ * 再把文件交给系统安装器（见 [LocalApkInstaller]）。
  */
 private fun openInBrowser(context: android.content.Context, url: String): Boolean = try {
     context.startActivity(

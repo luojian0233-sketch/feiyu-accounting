@@ -3,6 +3,9 @@
     <!-- 只为「检查更新」联网：App 的账本数据仍然全部留在本机。
          ACCESS_NETWORK_STATE 不需要，请求失败直接提示即可。 -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 「从本地安装包更新」要把缓存里的 APK 交给系统安装器；仍不申请任何存储权限，
+         选文件走 SAF 的文件选择器，不需要读写外部存储。 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
@@ -71,5 +74,16 @@
             android:name=".recognition.tile.ProjectionCaptureService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+        <!-- 本地更新时把缓存里的 APK 通过 content:// 交给系统安装器，
+             只暴露 cache/update/ 一个目录，不对外开放整个应用私有目录。 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.localupdate"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/local_update_paths" />
+        </provider>
     </application>
 </manifest>
