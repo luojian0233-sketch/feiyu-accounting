@@ -1,9 +1,12 @@
 package com.local.autobookkeeping.domain.model
 
+/** 肥鱼皮肤的彩蛋分类，图标是立绘里裁下来的头像（`R.drawable.category_whale_feed`）。 */
+const val CATEGORY_WHALE_FEED = "鲸鱼饲料"
+
 private val EXPENSE_BUILT_IN_CATEGORY_NAMES = listOf(
     "餐饮", "交通", "日用", "购物", "零食", "饮品", "蔬菜", "水果",
     "服饰", "娱乐", "美容", "通讯", "医疗", "学习", "游戏", "住房",
-    "礼品", "宠物", "汽车", "数码", "办公", "运动", "捐赠", "彩票",
+    "礼品", "宠物", CATEGORY_WHALE_FEED, "汽车", "数码", "办公", "运动", "捐赠", "彩票",
     "红包", "礼金", "转账", "其他",
 )
 
@@ -13,6 +16,15 @@ private val INCOME_BUILT_IN_CATEGORY_NAMES = listOf(
 
 internal val BUILT_IN_CATEGORY_NAMES =
     (EXPENSE_BUILT_IN_CATEGORY_NAMES + INCOME_BUILT_IN_CATEGORY_NAMES).distinct()
+
+/**
+ * 老库升级时要补进去的新内置分类。
+ *
+ * [AppDatabase] 的 `onCreate` 只在新装时跑，已经存在的库拿不到新增分类，
+ * 所以每次打开再按这张清单幂等插一遍。只列新增项、不是整份内置清单：
+ * 否则用户删掉的分类会在每次启动时复活。
+ */
+internal val BUILT_IN_CATEGORY_NAMES_ADDED_AFTER_SEED = listOf(CATEGORY_WHALE_FEED)
 
 /**
  * 金额和方向都已经判准、但分类还判不出来的记录先落在这里。

@@ -7,6 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.local.autobookkeeping.domain.model.BUILT_IN_CATEGORY_NAMES
+import com.local.autobookkeeping.domain.model.BUILT_IN_CATEGORY_NAMES_ADDED_AFTER_SEED
 import com.local.autobookkeeping.domain.model.CATEGORY_UNSURE
 import com.local.autobookkeeping.domain.model.LEGACY_PENDING_CATEGORY
 
@@ -88,6 +89,14 @@ abstract class AppDatabase : RoomDatabase() {
          * 三步都幂等，每次打开跑一遍没有副作用。
          */
         override fun onOpen(db: SupportSQLiteDatabase) {
+            // 新增的内置分类只补真正缺的，用户手动删掉的会在下次启动复活 —— 数量极少，可接受。
+            BUILT_IN_CATEGORY_NAMES_ADDED_AFTER_SEED.forEach { name ->
+                db.execSQL(
+                    "INSERT OR IGNORE INTO categories (name, displayOrder, hidden) " +
+                        "VALUES (?, (SELECT COALESCE(MAX(displayOrder), -1) + 1 FROM categories), 0)",
+                    arrayOf<Any>(name),
+                )
+            }
             db.execSQL(
                 "INSERT OR IGNORE INTO categories (name, displayOrder, hidden) " +
                     "VALUES (?, (SELECT COALESCE(MAX(displayOrder), -1) + 1 FROM categories), 0)",

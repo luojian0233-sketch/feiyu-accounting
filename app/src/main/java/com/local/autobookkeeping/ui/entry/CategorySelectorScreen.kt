@@ -1,9 +1,11 @@
 package com.local.autobookkeeping.ui.entry
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,11 +14,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -34,20 +38,27 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.local.autobookkeeping.R
 import com.local.autobookkeeping.domain.model.BUILT_IN_CATEGORY_NAMES
+import com.local.autobookkeeping.domain.model.CATEGORY_WHALE_FEED
+
+/** 图标槽位固定高度：emoji 与手绘图标混排时标签不会上下跳。 */
+private val ICON_SLOT_HEIGHT = 24.dp
 
 private val DEFAULT_CATEGORY_ICONS = mapOf(
     "餐饮" to "🍜", "交通" to "🚕", "日用" to "🧴", "购物" to "🛍",
     "零食" to "🍦", "饮品" to "🥤", "蔬菜" to "🥬", "水果" to "🍓",
     "服饰" to "👕", "娱乐" to "🎵", "美容" to "💄", "通讯" to "☎",
     "医疗" to "💊", "学习" to "🎓", "游戏" to "🎮", "红包" to "🧧",
-    "住房" to "🏠", "礼品" to "🎁", "宠物" to "🐾", "汽车" to "🚗",
-    "数码" to "📷", "办公" to "💼", "运动" to "🏓", "礼金" to "✉",
+    "住房" to "🏠", "礼品" to "🎁", "宠物" to "🐾", "鲸鱼饲料" to "🐳",
+    "汽车" to "🚗", "数码" to "📷", "办公" to "💼", "运动" to "🏓", "礼金" to "✉",
     "捐赠" to "❤", "彩票" to "🎫", "转账" to "⇄", "其他" to "•••",
     "工资" to "💰", "奖金" to "🏆", "理财" to "📈", "分红" to "💹",
     "退款" to "↩",
@@ -229,12 +240,27 @@ private fun CategoryChoiceCell(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Text(
-            text = categoryIconLabel(choice.name),
-            color = contentColor,
-            style = MaterialTheme.typography.titleMedium,
-            textAlign = TextAlign.Center,
-        )
+        Box(
+            modifier = Modifier.height(ICON_SLOT_HEIGHT),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (choice.name.trim() == CATEGORY_WHALE_FEED) {
+                Image(
+                    painter = painterResource(R.drawable.category_whale_feed),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clip(CircleShape),
+                )
+            } else {
+                Text(
+                    text = categoryIconLabel(choice.name),
+                    color = contentColor,
+                    style = MaterialTheme.typography.titleMedium,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
         Text(
             text = if (choice.historicalOnly) "${choice.name}（历史分类）" else choice.name,
             color = contentColor,
