@@ -37,6 +37,8 @@ fun interface AccessibilityAccessProvider {
     fun isEnabled(): Boolean
 }
 
+const val TRANSACTION_COUNT_UNKNOWN = -1
+
 data class SettingsUiState(
     val theme: ThemeStyle = DEFAULT_THEME_STYLE,
     val autoBookkeepingEnabled: Boolean = false,
@@ -46,7 +48,9 @@ data class SettingsUiState(
     val bankPackageDraft: String = "",
     val categories: List<CategorySetting> = emptyList(),
     val accounts: List<AccountSetting> = emptyList(),
-    val transactionCount: Int = 0,
+    // -1 表示「还没读到」：设置页刚打开的那一帧，Room 的计数 Flow 还没发首值，
+    // 直接显示 0 会让人以为账目被清了。未知就明说未知。
+    val transactionCount: Int = TRANSACTION_COUNT_UNKNOWN,
     val notificationAccessEnabled: Boolean = false,
     val accessibilityAccessEnabled: Boolean = false,
     val automaticAccessMessage: String = "通知读取和页面识别服务未开启",

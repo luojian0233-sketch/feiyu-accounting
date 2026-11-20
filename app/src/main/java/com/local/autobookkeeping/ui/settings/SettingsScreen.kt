@@ -294,7 +294,11 @@ fun SettingsScreen(
             AppSectionCard {
                 SectionTitle("清空账本")
                 Text(
-                    "当前共有 ${state.transactionCount} 笔交易。此操作不可恢复；主题、通知来源、分类和账户设置会保留。",
+                    if (state.transactionCount == TRANSACTION_COUNT_UNKNOWN) {
+                        "正在读取账本…"
+                    } else {
+                        "当前共有 ${state.transactionCount} 笔交易。此操作不可恢复；主题、通知来源、分类和账户设置会保留。"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 OutlinedButton(
